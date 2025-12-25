@@ -20,7 +20,7 @@ export function CreateShipmentForm({
   action: (formData: FormData) => void;
   canWrite: boolean;
 }) {
-  const [customerPartyId, setCustomerPartyId] = useState("");
+  const [customerPartyIds, setCustomerPartyIds] = useState<string[]>([]);
   const [transportMode, setTransportMode] = useState("SEA");
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
@@ -42,15 +42,16 @@ export function CreateShipmentForm({
 
   const abortRef = useRef<AbortController | null>(null);
 
+  const primaryCustomerId = customerPartyIds[0] ?? "";
   const shouldSuggest = useMemo(() => {
     return (
-      !!customerPartyId &&
+      !!primaryCustomerId &&
       !!transportMode &&
       origin.trim().length > 0 &&
       destination.trim().length > 0 &&
       !!shipmentType
     );
-  }, [customerPartyId, transportMode, origin, destination, shipmentType]);
+  }, [primaryCustomerId, transportMode, origin, destination, shipmentType]);
 
   useEffect(() => {
     if (!TransportModes.includes(transportMode as never)) return;
@@ -84,7 +85,7 @@ export function CreateShipmentForm({
             origin,
             destination,
             shipmentType,
-            customerPartyId: Number(customerPartyId),
+            customerPartyId: Number(primaryCustomerId),
           }),
           signal: ctrl.signal,
         });
@@ -102,7 +103,7 @@ export function CreateShipmentForm({
 
     return () => clearTimeout(timer);
   }, [
-    customerPartyId,
+    customerPartyIds,
     transportMode,
     origin,
     destination,
@@ -111,11 +112,15 @@ export function CreateShipmentForm({
     shouldSuggest,
   ]);
 
+  const customerHint =
+    customerPartyIds.length > 1
+      ? "Template suggestion uses the first selected customer."
+      : "Fill mode + route + type + customer to get a suggestion.";
   const templateHint = suggested
     ? `Suggested: ${suggested.name}`
     : shouldSuggest && !suggesting
       ? "No matching rule (select manually)."
-      : "Fill mode + route + type + customer to get a suggestion.";
+      : customerHint;
 
   const requiredTemplates = templates.length > 0;
 
@@ -123,24 +128,29 @@ export function CreateShipmentForm({
     <form action={action} className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block">
-          <div className="mb-1 text-sm font-medium text-zinc-800">Customer</div>
+          <div className="mb-1 text-sm font-medium text-zinc-800">Customers</div>
           <select
-            name="customerPartyId"
-            value={customerPartyId}
-            onChange={(e) => setCustomerPartyId(e.target.value)}
+            name="customerPartyIds"
+            multiple
+            value={customerPartyIds}
+            onChange={(e) =>
+              setCustomerPartyIds(
+                Array.from(e.target.selectedOptions).map((opt) => opt.value),
+              )
+            }
             disabled={!canWrite}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
             required
           >
-            <option value="" disabled>
-              Select customer...
-            </option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
           </select>
+          <div className="mt-1 text-xs text-zinc-500">
+            Hold Ctrl or Cmd to select multiple customers.
+          </div>
           {customers.length === 0 ? (
             <div className="mt-2 text-xs text-red-700">
               No customers yet. Create a customer in Parties first.

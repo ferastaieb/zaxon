@@ -12,6 +12,7 @@ import type {
 } from "@/lib/domain";
 import { getDb, inTransaction, nowIso } from "@/lib/db";
 import { parseChecklistGroupsJson, type ChecklistGroup } from "@/lib/checklists";
+import type { PartyRow } from "@/lib/data/parties";
 import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
 import { listTemplateSteps } from "@/lib/data/workflows";
@@ -46,7 +47,7 @@ export type ShipmentListRow = {
   id: number;
   shipment_code: string;
   job_ids: string | null;
-  customer_name: string;
+  customer_names: string | null;
   transport_mode: TransportMode;
   origin: string;
   destination: string;
@@ -167,7 +168,9 @@ export function listShipmentsForUser(input: {
   }
 
   if (input.customerId) {
-    where.push("s.customer_party_id = ?");
+    where.push(
+      "EXISTS (SELECT 1 FROM shipment_customers scf WHERE scf.shipment_id = s.id AND scf.customer_party_id = ?)",
+    );
     params.push(input.customerId);
   }
   if (input.transportMode) {
@@ -182,7 +185,12 @@ export function listShipmentsForUser(input: {
   const q = input.q?.trim();
   if (q) {
     where.push(
-      `(s.shipment_code LIKE ? OR LOWER(c.name) LIKE ? OR s.container_number LIKE ? OR s.bl_number LIKE ?
+      `(s.shipment_code LIKE ? OR EXISTS (
+          SELECT 1
+          FROM shipment_customers scq
+          JOIN parties cq ON cq.id = scq.customer_party_id
+          WHERE scq.shipment_id = s.id AND LOWER(cq.name) LIKE ?
+        ) OR s.container_number LIKE ? OR s.bl_number LIKE ?
         OR EXISTS (
           SELECT 1 FROM shipment_job_ids sj
           WHERE sj.shipment_id = s.id AND sj.job_id LIKE ?
@@ -203,7 +211,12 @@ export function listShipmentsForUser(input: {
           FROM shipment_job_ids sj
           WHERE sj.shipment_id = s.id
         ) AS job_ids,
-        c.name AS customer_name,
+        (
+          SELECT REPLACE(group_concat(DISTINCT c2.name), ',', ', ')
+          FROM shipment_customers sc2
+          JOIN parties c2 ON c2.id = sc2.customer_party_id
+          WHERE sc2.shipment_id = s.id
+        ) AS customer_names,
         s.transport_mode,
         s.origin,
         s.destination,
@@ -213,7 +226,6 @@ export function listShipmentsForUser(input: {
         s.etd,
         s.eta
       FROM shipments s
-      JOIN parties c ON c.id = s.customer_party_id
       LEFT JOIN shipment_access sa ON sa.shipment_id = s.id AND sa.user_id = ?
       ${whereSql}
       ORDER BY s.last_update_at DESC
@@ -224,15 +236,38 @@ export function listShipmentsForUser(input: {
   );
 }
 
-export function getShipment(shipmentId: number): (ShipmentRow & { customer_name: string }) | null {
+export function getShipment(
+  shipmentId: number,
+): (ShipmentRow & { customer_names: string | null }) | null {
   const db = getDb();
-  return queryOne<ShipmentRow & { customer_name: string }>(
+  return queryOne<ShipmentRow & { customer_names: string | null }>(
     `
-      SELECT s.*, c.name AS customer_name
+      SELECT
+        s.*,
+        (
+          SELECT REPLACE(group_concat(DISTINCT c2.name), ',', ', ')
+          FROM shipment_customers sc2
+          JOIN parties c2 ON c2.id = sc2.customer_party_id
+          WHERE sc2.shipment_id = s.id
+        ) AS customer_names
       FROM shipments s
-      JOIN parties c ON c.id = s.customer_party_id
       WHERE s.id = ?
       LIMIT 1
+    `,
+    [shipmentId],
+    db,
+  );
+}
+
+export function listShipmentCustomers(shipmentId: number) {
+  const db = getDb();
+  return queryAll<PartyRow>(
+    `
+      SELECT p.*
+      FROM shipment_customers sc
+      JOIN parties p ON p.id = sc.customer_party_id
+      WHERE sc.shipment_id = ?
+      ORDER BY p.name ASC
     `,
     [shipmentId],
     db,
@@ -316,7 +351,7 @@ export function grantShipmentAccess(db: DatabaseSync, input: { shipmentId: numbe
 }
 
 export function createShipment(input: {
-  customerPartyId: number;
+  customerPartyIds: number[];
   transportMode: TransportMode;
   origin: string;
   destination: string;
@@ -337,6 +372,18 @@ export function createShipment(input: {
   const ts = nowIso();
 
   return inTransaction(db, () => {
+    const customerIds = Array.from(
+      new Set(
+        input.customerPartyIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    );
+    const primaryCustomerId = customerIds[0];
+    if (!primaryCustomerId) {
+      throw new Error("Shipment must have at least one customer");
+    }
+
     const insert = execute(
       `
         INSERT INTO shipments (
@@ -365,7 +412,7 @@ export function createShipment(input: {
       `,
       [
         generatePendingShipmentCode(),
-        input.customerPartyId,
+        primaryCustomerId,
         input.transportMode,
         input.origin,
         input.destination,
@@ -395,6 +442,18 @@ export function createShipment(input: {
       [finalShipmentCode(shipmentId), shipmentId],
       db,
     );
+
+    for (const customerPartyId of customerIds) {
+      execute(
+        `
+          INSERT OR IGNORE INTO shipment_customers (
+            shipment_id, customer_party_id, created_at, created_by_user_id
+          ) VALUES (?, ?, ?, ?)
+        `,
+        [shipmentId, customerPartyId, ts, input.createdByUserId],
+        db,
+      );
+    }
 
     if (input.jobIds?.length) {
       for (const jobId of input.jobIds) {

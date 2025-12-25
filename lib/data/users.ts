@@ -15,6 +15,14 @@ export type DbUser = {
   updated_at: string;
 };
 
+export type UserSummaryRow = {
+  user_id: number;
+  goods_count: number;
+  inventory_goods_count: number;
+  inventory_total_quantity: number;
+  shipment_count: number;
+};
+
 export function countUsers(): number {
   const db = getDb();
   const row = queryOne<{ count: number }>(
@@ -35,6 +43,46 @@ export function listUsers(): Pick<
       SELECT id, name, phone, role, disabled, created_at
       FROM users
       ORDER BY created_at DESC
+    `,
+    [],
+    db,
+  );
+}
+
+export function listUserSummaries(): UserSummaryRow[] {
+  const db = getDb();
+  return queryAll<UserSummaryRow>(
+    `
+      SELECT
+        u.id AS user_id,
+        COALESCE(g.goods_count, 0) AS goods_count,
+        COALESCE(ib.inventory_goods_count, 0) AS inventory_goods_count,
+        COALESCE(ib.inventory_total_quantity, 0) AS inventory_total_quantity,
+        CASE
+          WHEN u.role IN ('ADMIN', 'FINANCE') THEN (
+            SELECT COUNT(*) FROM shipments
+          )
+          ELSE COALESCE(sa.shipment_count, 0)
+        END AS shipment_count
+      FROM users u
+      LEFT JOIN (
+        SELECT owner_user_id, COUNT(*) AS goods_count
+        FROM goods
+        GROUP BY owner_user_id
+      ) g ON g.owner_user_id = u.id
+      LEFT JOIN (
+        SELECT owner_user_id,
+          COUNT(*) AS inventory_goods_count,
+          COALESCE(SUM(quantity), 0) AS inventory_total_quantity
+        FROM inventory_balances
+        GROUP BY owner_user_id
+      ) ib ON ib.owner_user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COUNT(DISTINCT shipment_id) AS shipment_count
+        FROM shipment_access
+        GROUP BY user_id
+      ) sa ON sa.user_id = u.id
+      ORDER BY u.created_at DESC
     `,
     [],
     db,

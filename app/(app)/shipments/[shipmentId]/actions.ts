@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 
-import { assertCanWrite, requireUser } from "@/lib/auth";
+import { assertCanWrite, requireAdmin, requireUser } from "@/lib/auth";
 import {
   checklistDateKey,
   checklistDocType,
@@ -27,8 +27,16 @@ import {
   deleteShipment,
   getShipment,
   grantShipmentAccess,
+  listShipmentCustomers,
   updateShipmentWorkflowGlobals,
 } from "@/lib/data/shipments";
+import {
+  addShipmentGood,
+  applyShipmentGoodsAllocations,
+  createGood,
+  deleteShipmentGood,
+  getGoodForUser,
+} from "@/lib/data/goods";
 import { getShipmentStep, updateShipmentStep } from "@/lib/data/steps";
 import { createTask, updateTask } from "@/lib/data/tasks";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
@@ -58,6 +66,7 @@ import {
   parseStepFieldValues,
   schemaFromLegacyFields,
   stepFieldDocType,
+  type StepFieldDefinition,
   type StepFieldSchema,
 } from "@/lib/stepFields";
 import { parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
@@ -143,6 +152,65 @@ function isNumeric(value: string | undefined): boolean {
   return /^[0-9]+$/.test(value);
 }
 
+function collectShipmentGoodsAllocations(
+  schema: StepFieldSchema,
+  values: Record<string, unknown>,
+) {
+  const allocations = new Map<number, number>();
+
+  const walk = (fields: StepFieldDefinition[], current: Record<string, unknown>) => {
+    for (const field of fields) {
+      const fieldValue = current[field.id];
+      if (field.type === "shipment_goods") {
+        if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
+          for (const [key, entry] of Object.entries(fieldValue)) {
+            const match = /^good-(\d+)$/.exec(key);
+            if (!match) continue;
+            const shipmentGoodId = Number(match[1]);
+            if (!Number.isFinite(shipmentGoodId)) continue;
+            if (typeof entry !== "string") continue;
+            const parsed = Number(entry);
+            if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) continue;
+            allocations.set(shipmentGoodId, parsed);
+          }
+        }
+        continue;
+      }
+      if (field.type === "group") {
+        if (field.repeatable) {
+          const items = Array.isArray(fieldValue) ? fieldValue : [];
+          for (const item of items) {
+            if (item && typeof item === "object" && !Array.isArray(item)) {
+              walk(field.fields, item as Record<string, unknown>);
+            }
+          }
+        } else if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
+          walk(field.fields, fieldValue as Record<string, unknown>);
+        }
+        continue;
+      }
+      if (field.type === "choice") {
+        if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
+          const choiceValues = fieldValue as Record<string, unknown>;
+          for (const option of field.options) {
+            const optionValue = choiceValues[option.id];
+            if (optionValue && typeof optionValue === "object" && !Array.isArray(optionValue)) {
+              walk(option.fields, optionValue as Record<string, unknown>);
+            }
+          }
+        }
+        continue;
+      }
+    }
+  };
+
+  walk(schema.fields, values);
+  return Array.from(allocations.entries()).map(([shipmentGoodId, takenQuantity]) => ({
+    shipmentGoodId,
+    takenQuantity,
+  }));
+}
+
 export async function updateStepAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
@@ -204,6 +272,11 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
       }
     }
   }
+
+  const shipmentGoodsAllocations = collectShipmentGoodsAllocations(
+    fieldSchema,
+    mergedValues as Record<string, unknown>,
+  );
 
   const checklistUploads: Array<{ documentType: string; file: File }> = [];
   for (const group of checklistGroups) {
@@ -290,6 +363,11 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     }
   }
 
+  const shouldApplyGoodsAllocations =
+    statusToApply === "DONE" &&
+    status !== current.status &&
+    shipmentGoodsAllocations.length > 0;
+
   const identifiers = extractShipmentIdentifiers(
     collectFlatFieldValues(fieldSchema, mergedValues),
   );
@@ -339,7 +417,8 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     });
   }
 
-  const updated = inTransaction(getDb(), () => {
+  const db = getDb();
+  const updated = inTransaction(db, () => {
     const updatedStep = updateShipmentStep({
       stepId,
       status: statusToApply,
@@ -348,6 +427,18 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
       relatedPartyId,
     });
     if (!updatedStep) return null;
+
+    if (shouldApplyGoodsAllocations) {
+      applyShipmentGoodsAllocations(
+        {
+          shipmentId,
+          stepId,
+          ownerUserId: user.id,
+          allocations: shipmentGoodsAllocations,
+        },
+        db,
+      );
+    }
 
     if (identifiers.containerNumber || identifiers.blNumber) {
       execute(
@@ -592,6 +683,109 @@ export async function removeShipmentJobIdAction(
       data: { jobId: row.job_id },
     });
   });
+
+  refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: true,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function createGoodAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  requireShipmentAccess(user, shipmentId);
+
+  const name = String(formData.get("name") ?? "").trim();
+  const origin = String(formData.get("origin") ?? "").trim();
+  const unitType = String(formData.get("unitType") ?? "").trim();
+  if (!name || !origin || !unitType) redirect(`/shipments/${shipmentId}?error=invalid`);
+
+  createGood({
+    ownerUserId: user.id,
+    name,
+    origin,
+    unitType,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function addShipmentGoodAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  requireShipmentAccess(user, shipmentId);
+
+  const goodId = Number(formData.get("goodId") ?? 0);
+  const quantityRaw = String(formData.get("quantity") ?? "").trim();
+  const quantity = quantityRaw ? Number(quantityRaw) : 0;
+  const appliesToAllCustomers = String(formData.get("appliesToAllCustomers") ?? "") === "1";
+  const customerPartyIdRaw = String(formData.get("customerPartyId") ?? "").trim();
+  const customerPartyId =
+    appliesToAllCustomers || !customerPartyIdRaw ? null : Number(customerPartyIdRaw);
+
+  if (!goodId || !Number.isFinite(quantity) || !Number.isInteger(quantity) || quantity <= 0) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  const good = getGoodForUser(user.id, goodId);
+  if (!good) redirect(`/shipments/${shipmentId}?error=invalid`);
+
+  if (!appliesToAllCustomers && !customerPartyId) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  if (customerPartyId) {
+    const shipmentCustomers = listShipmentCustomers(shipmentId);
+    const isShipmentCustomer = shipmentCustomers.some((c) => c.id === customerPartyId);
+    if (!isShipmentCustomer) redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  addShipmentGood({
+    shipmentId,
+    ownerUserId: user.id,
+    goodId,
+    quantity,
+    customerPartyId,
+    appliesToAllCustomers,
+    createdByUserId: user.id,
+  });
+
+  refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: true,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function deleteShipmentGoodAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  requireShipmentAccess(user, shipmentId);
+
+  const shipmentGoodId = Number(formData.get("shipmentGoodId") ?? 0);
+  if (!shipmentGoodId) redirect(`/shipments/${shipmentId}?error=invalid`);
+
+  const existing = queryOne<{ id: number }>(
+    "SELECT id FROM shipment_goods_allocations WHERE shipment_good_id = ? LIMIT 1",
+    [shipmentGoodId],
+  );
+  if (existing) redirect(`/shipments/${shipmentId}?error=goods_allocated`);
+
+  deleteShipmentGood({ shipmentGoodId, ownerUserId: user.id });
 
   refreshShipmentDerivedState({
     shipmentId,
@@ -1010,8 +1204,7 @@ export async function resolveExceptionAction(
 }
 
 export async function deleteShipmentAction(shipmentId: number) {
-  const user = await requireUser();
-  assertCanWrite(user);
+  const user = await requireAdmin();
   requireShipmentAccess(user, shipmentId);
 
   const existing = getShipment(shipmentId);

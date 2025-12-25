@@ -1,4 +1,11 @@
-export type StepFieldType = "text" | "date" | "number" | "file" | "group" | "choice";
+export type StepFieldType =
+  | "text"
+  | "date"
+  | "number"
+  | "file"
+  | "group"
+  | "choice"
+  | "shipment_goods";
 
 export type StepFieldSchema = {
   version: 1;
@@ -8,7 +15,8 @@ export type StepFieldSchema = {
 export type StepFieldDefinition =
   | StepFieldBase
   | StepFieldGroup
-  | StepFieldChoice;
+  | StepFieldChoice
+  | StepFieldShipmentGoods;
 
 export type StepFieldBase = {
   id: string;
@@ -33,6 +41,13 @@ export type StepFieldChoice = {
   type: "choice";
   required?: boolean;
   options: StepFieldChoiceOption[];
+};
+
+export type StepFieldShipmentGoods = {
+  id: string;
+  label: string;
+  type: "shipment_goods";
+  required?: boolean;
 };
 
 export type StepFieldChoiceOption = {
@@ -259,6 +274,9 @@ function collectFlatValues(
       }
       continue;
     }
+    if (field.type === "shipment_goods") {
+      continue;
+    }
     if (field.type === "group") {
       if (field.repeatable) {
         const items = Array.isArray(fieldValue) ? fieldValue : [];
@@ -303,6 +321,16 @@ function collectMissingForFields(
     if (field.type === "file") {
       const docType = stepFieldDocType(context.stepId, encodedPath);
       if (field.required && !context.docTypes.has(docType)) {
+        missing.add(encodedPath);
+      }
+      continue;
+    }
+
+    if (field.type === "shipment_goods") {
+      const value = getValueAtPath(context.values, fieldPath);
+      const entries = isPlainObject(value) ? Object.values(value) : [];
+      const hasValue = entries.some(hasStringValue);
+      if (field.required && !hasValue) {
         missing.add(encodedPath);
       }
       continue;
@@ -418,6 +446,15 @@ function hasAnyFieldValue(
       const encodedPath = encodeFieldPath(fieldPath);
       const docType = stepFieldDocType(context.stepId, encodedPath);
       if (context.docTypes.has(docType)) return true;
+      continue;
+    }
+    if (field.type === "shipment_goods") {
+      const value = container[field.id];
+      if (isPlainObject(value)) {
+        for (const entry of Object.values(value)) {
+          if (hasStringValue(entry)) return true;
+        }
+      }
       continue;
     }
     if (field.type === "group") {

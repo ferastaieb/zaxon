@@ -22,7 +22,9 @@ export default async function NewShipmentPage() {
     const user = await requireUser();
     assertCanWrite(user);
 
-    const customerPartyId = Number(formData.get("customerPartyId") ?? 0);
+    const customerPartyIds = (formData.getAll("customerPartyIds") ?? [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
     const transportMode = String(formData.get("transportMode") ?? "") as TransportMode;
     const origin = String(formData.get("origin") ?? "").trim();
     const destination = String(formData.get("destination") ?? "").trim();
@@ -54,7 +56,7 @@ export default async function NewShipmentPage() {
     let workflowTemplateId = workflowTemplateIdRaw ? Number(workflowTemplateIdRaw) : null;
 
     if (
-      !customerPartyId ||
+      customerPartyIds.length === 0 ||
       !TransportModes.includes(transportMode) ||
       !ShipmentTypes.includes(shipmentType) ||
       !origin ||
@@ -65,12 +67,13 @@ export default async function NewShipmentPage() {
     }
 
     if (!workflowTemplateId) {
+      const primaryCustomerId = customerPartyIds[0] ?? 0;
       const suggested = suggestTemplate({
         transportMode,
         origin,
         destination,
         shipmentType,
-        customerPartyId,
+        customerPartyId: primaryCustomerId,
       });
       workflowTemplateId = suggested?.id ?? null;
     }
@@ -78,7 +81,7 @@ export default async function NewShipmentPage() {
     if (!workflowTemplateId) redirect("/shipments/new?error=template");
 
     const created = createShipment({
-      customerPartyId,
+      customerPartyIds,
       transportMode,
       origin,
       destination,

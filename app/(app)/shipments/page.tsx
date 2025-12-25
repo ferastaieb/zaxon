@@ -192,7 +192,9 @@ export default async function ShipmentsPage({
                       </div>
                     ) : null}
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">{s.customer_name}</td>
+                  <td className="py-2 pr-4 text-zinc-700">
+                    {s.customer_names ?? "—"}
+                  </td>
                   <td className="py-2 pr-4 text-zinc-700">
                     {transportModeLabel(s.transport_mode)}
                   </td>

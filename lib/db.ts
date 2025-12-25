@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 declare global {
   var __logisticDb: DatabaseSync | undefined;
@@ -184,6 +184,70 @@ function migrateToV1(db: DatabaseSync) {
       UNIQUE (shipment_id, sort_order)
     );
 
+    CREATE TABLE IF NOT EXISTS shipment_customers (
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      customer_party_id INTEGER NOT NULL REFERENCES parties(id),
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      PRIMARY KEY (shipment_id, customer_party_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS goods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (owner_user_id, name, origin)
+    );
+
+    CREATE TABLE IF NOT EXISTS shipment_goods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      customer_party_id INTEGER REFERENCES parties(id),
+      applies_to_all_customers INTEGER NOT NULL DEFAULT 0,
+      quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shipment_goods_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_good_id INTEGER NOT NULL REFERENCES shipment_goods(id) ON DELETE CASCADE,
+      step_id INTEGER NOT NULL REFERENCES shipment_steps(id) ON DELETE CASCADE,
+      taken_quantity INTEGER NOT NULL,
+      inventory_quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      UNIQUE (shipment_good_id, step_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      shipment_id INTEGER REFERENCES shipments(id) ON DELETE SET NULL,
+      shipment_good_id INTEGER REFERENCES shipment_goods(id) ON DELETE SET NULL,
+      step_id INTEGER REFERENCES shipment_steps(id) ON DELETE SET NULL,
+      direction TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_balances (
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      quantity INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (owner_user_id, good_id)
+    );
+
     CREATE TABLE IF NOT EXISTS shipment_exceptions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
@@ -282,6 +346,13 @@ function migrateToV1(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_docs_shipment ON documents(shipment_id);
     CREATE INDEX IF NOT EXISTS idx_activity_shipment ON activities(shipment_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_id, is_read);
+    CREATE INDEX IF NOT EXISTS idx_shipment_customers_customer ON shipment_customers(customer_party_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_goods_shipment ON shipment_goods(shipment_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_goods_owner ON shipment_goods(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_goods_owner ON goods(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_owner ON inventory_transactions(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_good ON inventory_transactions(good_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_shipment ON inventory_transactions(shipment_id);
   `);
 }
 
@@ -503,6 +574,93 @@ function migrateToV8(db: DatabaseSync) {
   }
 }
 
+function migrateToV9(db: DatabaseSync) {
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS shipment_customers (
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      customer_party_id INTEGER NOT NULL REFERENCES parties(id),
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      PRIMARY KEY (shipment_id, customer_party_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS goods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      origin TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (owner_user_id, name, origin)
+    );
+
+    CREATE TABLE IF NOT EXISTS shipment_goods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      customer_party_id INTEGER REFERENCES parties(id),
+      applies_to_all_customers INTEGER NOT NULL DEFAULT 0,
+      quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shipment_goods_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_good_id INTEGER NOT NULL REFERENCES shipment_goods(id) ON DELETE CASCADE,
+      step_id INTEGER NOT NULL REFERENCES shipment_steps(id) ON DELETE CASCADE,
+      taken_quantity INTEGER NOT NULL,
+      inventory_quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      UNIQUE (shipment_good_id, step_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      shipment_id INTEGER REFERENCES shipments(id) ON DELETE SET NULL,
+      shipment_good_id INTEGER REFERENCES shipment_goods(id) ON DELETE SET NULL,
+      step_id INTEGER REFERENCES shipment_steps(id) ON DELETE SET NULL,
+      direction TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_balances (
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      good_id INTEGER NOT NULL REFERENCES goods(id),
+      quantity INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (owner_user_id, good_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shipment_customers_customer ON shipment_customers(customer_party_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_goods_shipment ON shipment_goods(shipment_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_goods_owner ON shipment_goods(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_goods_owner ON goods(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_owner ON inventory_transactions(owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_good ON inventory_transactions(good_id);
+    CREATE INDEX IF NOT EXISTS idx_inventory_tx_shipment ON inventory_transactions(shipment_id);
+  `);
+
+  db.exec(`
+    INSERT OR IGNORE INTO shipment_customers (
+      shipment_id, customer_party_id, created_at, created_by_user_id
+    )
+    SELECT id, customer_party_id, created_at, created_by_user_id
+    FROM shipments
+    WHERE customer_party_id IS NOT NULL
+  `);
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("PRAGMA user_version").get() as
     | { user_version?: number }
@@ -519,6 +677,7 @@ function migrate(db: DatabaseSync) {
   if (currentVersion < 6) migrateToV6(db);
   if (currentVersion < 7) migrateToV7(db);
   if (currentVersion < 8) migrateToV8(db);
+  if (currentVersion < 9) migrateToV9(db);
 
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }

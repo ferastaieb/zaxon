@@ -19,6 +19,7 @@ const fieldTypes: Array<{ value: StepFieldType; label: string }> = [
   { value: "file", label: "File" },
   { value: "group", label: "Group" },
   { value: "choice", label: "Choice" },
+  { value: "shipment_goods", label: "Shipment goods" },
 ];
 
 function createId(prefix: string) {

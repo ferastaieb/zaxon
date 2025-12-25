@@ -15,11 +15,18 @@ import {
   getShipment,
   getTrackingTokenForShipment,
   listShipmentJobIds,
+  listShipmentCustomers,
   listShipmentSteps,
   parseFieldValues,
   parseRequiredDocumentTypes,
   parseRequiredFields,
 } from "@/lib/data/shipments";
+import {
+  listGoodsForUser,
+  listInventoryBalances,
+  listInventoryTransactionsForShipmentCustomers,
+  listShipmentGoods,
+} from "@/lib/data/goods";
 import { listParties } from "@/lib/data/parties";
 import { listTasks } from "@/lib/data/tasks";
 import { listActiveUsers } from "@/lib/data/users";
@@ -53,6 +60,17 @@ export default async function ShipmentDetailsPage({
 
   const shipment = getShipment(id);
   if (!shipment) redirect("/shipments");
+  const shipmentCustomers = listShipmentCustomers(id);
+  const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
+  const shipmentGoods = listShipmentGoods({ shipmentId: id, ownerUserId: user.id });
+  const goods = listGoodsForUser(user.id);
+  const inventoryBalances = listInventoryBalances(user.id);
+  const inventoryTransactions = listInventoryTransactionsForShipmentCustomers({
+    ownerUserId: user.id,
+    shipmentId: id,
+    canAccessAllShipments,
+    limit: 200,
+  });
 
   const template = shipment.workflow_template_id
     ? getWorkflowTemplate(shipment.workflow_template_id)
@@ -148,6 +166,11 @@ export default async function ShipmentDetailsPage({
     <ShipmentView
       user={user}
       shipment={shipment}
+      shipmentCustomers={shipmentCustomers}
+      shipmentGoods={shipmentGoods}
+      goods={goods}
+      inventoryBalances={inventoryBalances}
+      inventoryTransactions={inventoryTransactions}
       steps={steps}
       internalSteps={internalSteps}
       trackingSteps={trackingSteps}

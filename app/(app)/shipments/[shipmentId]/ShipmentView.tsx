@@ -35,8 +35,11 @@ import type { WorkflowGlobalVariable, WorkflowGlobalValues } from "@/lib/workflo
 import {
     addCommentAction,
     addShipmentJobIdsAction,
+    addShipmentGoodAction,
+    createGoodAction,
     createTaskAction,
     deleteShipmentAction,
+    deleteShipmentGoodAction,
     logExceptionAction,
     removeShipmentJobIdAction,
     requestDocumentAction,
@@ -54,7 +57,12 @@ import {
 
 interface ShipmentViewProps {
     user: any; // Replace with actual User type
-    shipment: any; // Replace with ShipmentRow & { customer_name: string }
+    shipment: any; // Replace with ShipmentRow & { customer_names: string | null }
+    shipmentCustomers: any[];
+    shipmentGoods: any[];
+    goods: any[];
+    inventoryBalances: any[];
+    inventoryTransactions: any[];
     steps: any[];
     internalSteps: any[];
     trackingSteps: any[];
@@ -112,6 +120,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const {
         user,
         shipment,
+        shipmentCustomers,
+        shipmentGoods,
+        goods,
+        inventoryBalances,
+        inventoryTransactions,
         steps,
         internalSteps,
         trackingSteps,
@@ -141,10 +154,15 @@ export default function ShipmentView(props: ShipmentViewProps) {
         errorStepId,
     } = props;
 
-    const [activeTab, setActiveTab] = useState<"overview" | "workflow" | "tasks" | "documents" | "exceptions" | "activity">("overview");
+    const [activeTab, setActiveTab] = useState<"overview" | "workflow" | "goods" | "tasks" | "documents" | "exceptions" | "activity">("overview");
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
-    const trackingLink = trackingToken ? `/track/${trackingToken}` : "—";
+    const canDelete = user.role === "ADMIN";
+    const trackingLink = trackingToken ? `/track/${trackingToken}` : "-";
+    const customerLabel =
+        shipmentCustomers.length > 0
+            ? shipmentCustomers.map((c: any) => c.name).join(", ")
+            : shipment.customer_names ?? "-";
 
     // Helper to check if a doc type is received (using the array passed from server)
     const isDocReceived = (type: string) => receivedDocTypes.includes(type);
@@ -192,7 +210,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 {shipment.shipment_code}
                             </h1>
                             <div className="mt-1 flex items-center gap-2 text-sm text-zinc-600">
-                                <span className="font-medium text-zinc-900">{shipment.customer_name}</span>
+                                <span className="font-medium text-zinc-900">{customerLabel}</span>
                                 <span className="text-zinc-300">•</span>
                                 <span>{transportModeLabel(shipment.transport_mode)}</span>
                                 <span className="text-zinc-300">•</span>
@@ -202,7 +220,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         <div className="flex items-center gap-3">
                             <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
                             <Badge tone={riskTone(shipment.risk)}>{riskLabel(shipment.risk)}</Badge>
-                            {canEdit ? (
+                            {canDelete ? (
                                 <form action={deleteShipmentAction.bind(null, shipment.id)}>
                                     <button
                                         type="submit"
@@ -225,6 +243,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         {[
                             { id: "overview", label: "Overview" },
                             { id: "workflow", label: "Workflow" },
+                            { id: "goods", label: "Goods", count: shipmentGoods.length },
                             { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
                             { id: "documents", label: "Documents", count: docs.length },
                             { id: "exceptions", label: "Exceptions", count: exceptions.length, alert: exceptions.some((e: any) => e.status === "OPEN") },
@@ -270,6 +289,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     {error === "exception_tasks_open" && (
                         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
                             Complete the exception steps before resolving the exception.
+                        </div>
+                    )}
+                    {error === "goods_allocated" && (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
+                            Cannot delete this goods line because allocations were already applied.
                         </div>
                     )}
                     {workflowBlocked && primaryBlockingException && (
@@ -506,6 +530,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             customers={customers}
                                             suppliers={suppliers}
                                             brokers={brokers}
+                                            shipmentGoods={shipmentGoods}
                                             setActiveTab={setActiveTab}
                                         />
                                     ))}
@@ -533,9 +558,288 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             customers={customers}
                                             suppliers={suppliers}
                                             brokers={brokers}
+                                            shipmentGoods={shipmentGoods}
                                             setActiveTab={setActiveTab}
                                         />
                                     ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "goods" && (
+                        <div className="grid gap-6 lg:grid-cols-3">
+                            <div className="lg:col-span-2 space-y-6">
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <h3 className="text-lg font-semibold text-zinc-900">Shipment goods</h3>
+                                        <div className="text-xs text-zinc-500">Quantities are integers.</div>
+                                    </div>
+                                    {shipmentGoods.length ? (
+                                        <div className="mt-4 overflow-x-auto">
+                                            <table className="min-w-full text-left text-sm">
+                                                <thead className="text-xs text-zinc-500">
+                                                    <tr>
+                                                        <th className="py-2 pr-4">Good</th>
+                                                        <th className="py-2 pr-4">Origin</th>
+                                                        <th className="py-2 pr-4">Quantity</th>
+                                                        <th className="py-2 pr-4">Customer</th>
+                                                        <th className="py-2 pr-4">Allocation</th>
+                                                        <th className="py-2 pr-4"></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-zinc-100">
+                                                    {shipmentGoods.map((sg) => {
+                                                        const allocated =
+                                                            sg.allocated_at ||
+                                                            sg.allocated_quantity > 0 ||
+                                                            sg.inventory_quantity > 0;
+                                                        return (
+                                                            <tr key={sg.id}>
+                                                                <td className="py-2 pr-4 font-medium text-zinc-900">
+                                                                    {sg.good_name}
+                                                                </td>
+                                                                <td className="py-2 pr-4 text-zinc-700">
+                                                                    {sg.good_origin}
+                                                                </td>
+                                                                <td className="py-2 pr-4 text-zinc-700">
+                                                                    {sg.quantity} {sg.unit_type}
+                                                                </td>
+                                                                <td className="py-2 pr-4 text-zinc-700">
+                                                                    {sg.applies_to_all_customers
+                                                                        ? "All customers"
+                                                                        : sg.customer_name ?? "-"}
+                                                                </td>
+                                                                <td className="py-2 pr-4 text-zinc-700">
+                                                                    {allocated
+                                                                        ? `Taken ${sg.allocated_quantity}, Inventory ${sg.inventory_quantity}`
+                                                                        : "Pending"}
+                                                                </td>
+                                                                <td className="py-2 pr-4 text-right">
+                                                                    <form
+                                                                        action={deleteShipmentGoodAction.bind(
+                                                                            null,
+                                                                            shipment.id,
+                                                                        )}
+                                                                    >
+                                                                        <input
+                                                                            type="hidden"
+                                                                            name="shipmentGoodId"
+                                                                            value={sg.id}
+                                                                        />
+                                                                        <button
+                                                                            type="submit"
+                                                                            disabled={!canEdit || allocated}
+                                                                            className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                        >
+                                                                            Delete
+                                                                        </button>
+                                                                    </form>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div className="mt-4 text-sm text-zinc-500">
+                                            No goods added to this shipment yet.
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <h3 className="text-lg font-semibold text-zinc-900">Inventory balances</h3>
+                                    {inventoryBalances.length ? (
+                                        <div className="mt-4 space-y-2">
+                                            {inventoryBalances.map((b) => (
+                                                <div
+                                                    key={b.good_id}
+                                                    className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                                                >
+                                                    <div>
+                                                        <div className="font-medium text-zinc-900">{b.good_name}</div>
+                                                        <div className="text-xs text-zinc-500">{b.good_origin}</div>
+                                                    </div>
+                                                    <div className="font-medium text-zinc-900">
+                                                        {b.quantity} {b.unit_type}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="mt-4 text-sm text-zinc-500">
+                                            No inventory balances yet.
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <h3 className="text-lg font-semibold text-zinc-900">
+                                        Inventory transactions
+                                    </h3>
+                                    {inventoryTransactions.length ? (
+                                        <div className="mt-4 overflow-x-auto">
+                                            <table className="min-w-full text-left text-sm">
+                                                <thead className="text-xs text-zinc-500">
+                                                    <tr>
+                                                        <th className="py-2 pr-4">Date</th>
+                                                        <th className="py-2 pr-4">Good</th>
+                                                        <th className="py-2 pr-4">Customer</th>
+                                                        <th className="py-2 pr-4">Direction</th>
+                                                        <th className="py-2 pr-4">Quantity</th>
+                                                        <th className="py-2 pr-4">Shipment</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-zinc-100">
+                                                    {inventoryTransactions.map((tx) => (
+                                                        <tr key={tx.id}>
+                                                            <td className="py-2 pr-4 text-zinc-700">
+                                                                {new Date(tx.created_at).toLocaleString()}
+                                                            </td>
+                                                            <td className="py-2 pr-4 text-zinc-700">
+                                                                {tx.good_name} ({tx.good_origin})
+                                                            </td>
+                                                            <td className="py-2 pr-4 text-zinc-700">
+                                                                {tx.customer_party_id
+                                                                    ? tx.customer_name ?? "-"
+                                                                    : "All customers"}
+                                                            </td>
+                                                            <td className="py-2 pr-4">
+                                                                <Badge tone={tx.direction === "IN" ? "green" : "red"}>
+                                                                    {tx.direction}
+                                                                </Badge>
+                                                            </td>
+                                                            <td className="py-2 pr-4 text-zinc-700">
+                                                                {tx.quantity} {tx.unit_type}
+                                                            </td>
+                                                            <td className="py-2 pr-4 text-zinc-700">
+                                                                {tx.shipment_code ?? "-"}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div className="mt-4 text-sm text-zinc-500">
+                                            No inventory transactions yet.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <h3 className="font-semibold text-zinc-900">Add goods to shipment</h3>
+                                    <form
+                                        action={addShipmentGoodAction.bind(null, shipment.id)}
+                                        className="mt-4 space-y-3"
+                                    >
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Good</div>
+                                            <select
+                                                name="goodId"
+                                                disabled={!canEdit || goods.length === 0}
+                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                                required
+                                            >
+                                                <option value="">Select good...</option>
+                                                {goods.map((g) => (
+                                                    <option key={g.id} value={g.id}>
+                                                        {g.name} - {g.origin} ({g.unit_type})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Quantity</div>
+                                            <input
+                                                name="quantity"
+                                                type="number"
+                                                min={1}
+                                                step={1}
+                                                disabled={!canEdit}
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                                placeholder="0"
+                                                required
+                                            />
+                                        </label>
+                                        <label className="flex items-center gap-2 text-sm text-zinc-700">
+                                            <input type="checkbox" name="appliesToAllCustomers" value="1" />
+                                            Shared for all customers
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Customer</div>
+                                            <select
+                                                name="customerPartyId"
+                                                disabled={!canEdit}
+                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                            >
+                                                <option value="">Select customer...</option>
+                                                {shipmentCustomers.map((c: any) => (
+                                                    <option key={c.id} value={c.id}>
+                                                        {c.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <div className="mt-1 text-xs text-zinc-500">
+                                                Leave blank if the line is shared for all customers.
+                                            </div>
+                                        </label>
+                                        <button
+                                            type="submit"
+                                            disabled={!canEdit || goods.length === 0}
+                                            className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                        >
+                                            Add goods
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <h3 className="font-semibold text-zinc-900">Create good</h3>
+                                    <form
+                                        action={createGoodAction.bind(null, shipment.id)}
+                                        className="mt-4 space-y-3"
+                                    >
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Name</div>
+                                            <input
+                                                name="name"
+                                                disabled={!canEdit}
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                                required
+                                            />
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Origin</div>
+                                            <input
+                                                name="origin"
+                                                disabled={!canEdit}
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                                required
+                                            />
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">Unit type</div>
+                                            <input
+                                                name="unitType"
+                                                disabled={!canEdit}
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
+                                                placeholder="pallet, kg, box..."
+                                                required
+                                            />
+                                        </label>
+                                        <button
+                                            type="submit"
+                                            disabled={!canEdit}
+                                            className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                        >
+                                            Create good
+                                        </button>
+                                    </form>
                                 </div>
                             </div>
                         </div>
@@ -734,6 +1038,7 @@ function StepFieldInputs({
     latestReceivedDocByType,
     workflowGlobalValues,
     docTypes,
+    shipmentGoods,
 }: {
     stepId: number;
     schema: StepFieldSchema;
@@ -743,6 +1048,7 @@ function StepFieldInputs({
     latestReceivedDocByType: Record<string, any>;
     workflowGlobalValues: WorkflowGlobalValues;
     docTypes: Set<string>;
+    shipmentGoods: any[];
 }) {
     const [groupCounts, setGroupCounts] = useState<Record<string, number>>({});
     const [groupRemovals, setGroupRemovals] = useState<Record<string, number[]>>({});
@@ -804,6 +1110,71 @@ function StepFieldInputs({
                             </div>
                         ) : null}
                     </label>
+                );
+            }
+
+            if (field.type === "shipment_goods") {
+                const goodsValues = toRecord(fieldValues[field.id]);
+                const blockClasses = showMissing
+                    ? "border-red-200 bg-red-50"
+                    : "border-zinc-200 bg-white";
+
+                return (
+                    <div key={fieldKey} className={`rounded-lg border p-3 ${blockClasses}`}>
+                        <div className="text-xs font-medium text-zinc-700">{field.label}</div>
+                        {shipmentGoods.length ? (
+                            <div className="mt-2 space-y-2">
+                                {shipmentGoods.map((sg) => {
+                                    const key = `good-${sg.id}`;
+                                    const raw = goodsValues[key];
+                                    const value = typeof raw === "string" ? raw : "";
+                                    const allocated =
+                                        sg.allocated_at ||
+                                        sg.allocated_quantity > 0 ||
+                                        sg.inventory_quantity > 0;
+                                    const customerLabel = sg.applies_to_all_customers
+                                        ? "All customers"
+                                        : sg.customer_name ?? "-";
+                                    return (
+                                        <div
+                                            key={sg.id}
+                                            className={`rounded-lg border px-3 py-2 text-xs ${allocated ? "border-zinc-200 bg-zinc-50 text-zinc-400" : "border-zinc-200 bg-white"}`}
+                                        >
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div>
+                                                    <div className="font-medium text-zinc-900">{sg.good_name}</div>
+                                                    <div className="text-[11px] text-zinc-500">
+                                                        {sg.good_origin} - {sg.quantity} {sg.unit_type} - {customerLabel}
+                                                    </div>
+                                                </div>
+                                                {allocated ? <Badge tone="green">Allocated</Badge> : null}
+                                            </div>
+                                            <label className="mt-2 block">
+                                                <div className="mb-1 text-[11px] font-medium text-zinc-600">
+                                                    Taken amount
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    name={fieldInputName([...fieldPath, key])}
+                                                    defaultValue={value}
+                                                    min={0}
+                                                    max={sg.quantity}
+                                                    step={1}
+                                                    disabled={!canEdit || disabled || allocated}
+                                                    className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
+                                                    placeholder="0"
+                                                />
+                                            </label>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="mt-2 text-xs text-zinc-500">
+                                No goods lines available for this shipment.
+                            </div>
+                        )}
+                    </div>
                 );
             }
 
@@ -1201,6 +1572,7 @@ function StepCard({
     customers,
     suppliers,
     brokers,
+    shipmentGoods,
     setActiveTab,
 }: any) {
     const fieldSchema = getStepFieldSchema(step);
@@ -1406,6 +1778,7 @@ function StepCard({
                         latestReceivedDocByType={latestReceivedDocByType}
                         workflowGlobalValues={workflowGlobalValues}
                         docTypes={docTypes}
+                        shipmentGoods={shipmentGoods}
                     />
                 ) : null}
 

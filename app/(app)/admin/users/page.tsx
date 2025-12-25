@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { Roles, roleLabel, type Role } from "@/lib/domain";
 import { hashPassword } from "@/lib/auth";
-import { createUser, listUsers, setUserDisabled } from "@/lib/data/users";
+import { createUser, listUsers, listUserSummaries, setUserDisabled } from "@/lib/data/users";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -26,6 +26,8 @@ export default async function UsersAdminPage({
   const error = readParam(resolved, "error");
 
   const users = listUsers();
+  const summaries = listUserSummaries();
+  const summaryById = new Map(summaries.map((s) => [s.user_id, s]));
 
   async function createUserAction(formData: FormData) {
     "use server";
@@ -155,44 +157,65 @@ export default async function UsersAdminPage({
                   <th className="py-2 pr-3">Name</th>
                   <th className="py-2 pr-3">Phone</th>
                   <th className="py-2 pr-3">Role</th>
+                  <th className="py-2 pr-3">Goods</th>
+                  <th className="py-2 pr-3">Inventory</th>
+                  <th className="py-2 pr-3">Shipments</th>
                   <th className="py-2 pr-3">Status</th>
                   <th className="py-2 pr-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="py-2 pr-3 font-medium text-zinc-900">
-                      {u.name}
-                    </td>
-                    <td className="py-2 pr-3 text-zinc-700">{u.phone}</td>
-                    <td className="py-2 pr-3 text-zinc-700">
-                      {roleLabel(u.role)}
-                    </td>
-                    <td className="py-2 pr-3 text-zinc-700">
-                      {u.disabled ? "Disabled" : "Active"}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <form action={toggleDisabledAction}>
-                        <input type="hidden" name="userId" value={u.id} />
-                        <input
-                          type="hidden"
-                          name="disabled"
-                          value={u.disabled ? "0" : "1"}
-                        />
-                        <button
-                          type="submit"
-                          className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                        >
-                          {u.disabled ? "Enable" : "Disable"}
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
+                {users.map((u) => {
+                  const summary = summaryById.get(u.id) ?? {
+                    goods_count: 0,
+                    inventory_goods_count: 0,
+                    inventory_total_quantity: 0,
+                    shipment_count: 0,
+                  };
+                  return (
+                    <tr key={u.id}>
+                      <td className="py-2 pr-3 font-medium text-zinc-900">
+                        {u.name}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-700">{u.phone}</td>
+                      <td className="py-2 pr-3 text-zinc-700">
+                        {roleLabel(u.role)}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-700">
+                        {summary.goods_count}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-700">
+                        {summary.inventory_goods_count} items /{" "}
+                        {summary.inventory_total_quantity}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-700">
+                        {summary.shipment_count}
+                      </td>
+                      <td className="py-2 pr-3 text-zinc-700">
+                        {u.disabled ? "Disabled" : "Active"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <form action={toggleDisabledAction}>
+                          <input type="hidden" name="userId" value={u.id} />
+                          <input
+                            type="hidden"
+                            name="disabled"
+                            value={u.disabled ? "0" : "1"}
+                          />
+                          <button
+                            type="submit"
+                            className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          >
+                            {u.disabled ? "Enable" : "Disable"}
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {users.length === 0 ? (
                   <tr>
-                    <td className="py-6 text-sm text-zinc-500" colSpan={5}>
+                    <td className="py-6 text-sm text-zinc-500" colSpan={8}>
                       No users yet.
                     </td>
                   </tr>
