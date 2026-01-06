@@ -5,6 +5,16 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const SCHEMA_VERSION = 11;
+const DEFAULT_DB_FILENAME = "logistic.sqlite";
+
+function isAwsRuntime(): boolean {
+  return Boolean(
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.AWS_EXECUTION_ENV ||
+      process.env.AWS_REGION ||
+      process.env.AMPLIFY_APP_ID,
+  );
+}
 
 declare global {
   var __logisticDb: DatabaseSync | undefined;
@@ -13,8 +23,21 @@ declare global {
 function getDbPath(): string {
   return (
     process.env.SQLITE_PATH ??
-    path.join(process.cwd(), "data", "logistic.sqlite")
+    (isAwsRuntime()
+      ? path.join("/tmp", DEFAULT_DB_FILENAME)
+      : path.join(process.cwd(), "data", DEFAULT_DB_FILENAME))
   );
+}
+
+function ensureDbFile(dbPath: string) {
+  if (dbPath === ":memory:") return;
+  if (fs.existsSync(dbPath)) return;
+
+  const seedPath = path.join(process.cwd(), "data", DEFAULT_DB_FILENAME);
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  if (dbPath !== seedPath && fs.existsSync(seedPath)) {
+    fs.copyFileSync(seedPath, dbPath);
+  }
 }
 
 function migrateToV1(db: DatabaseSync) {
@@ -754,7 +777,7 @@ export function getDb(): DatabaseSync {
   }
 
   const dbPath = getDbPath();
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  ensureDbFile(dbPath);
 
   const db = new DatabaseSync(dbPath);
   migrate(db);
