@@ -86,10 +86,8 @@ export async function isTrackingSessionValid(trackingToken: string): Promise<boo
 
   if (Date.parse(row.expires_at) <= Date.now()) {
     deleteTrackingSession(token);
-    await clearTrackingSessionCookie();
     return false;
   }
 
   return true;
 }
-

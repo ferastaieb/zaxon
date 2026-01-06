@@ -138,19 +138,16 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   );
 
   if (!row) {
-    await clearSessionCookie();
     return null;
   }
 
   if (row.disabled) {
     deleteSession(token);
-    await clearSessionCookie();
     return null;
   }
 
   if (Date.parse(row.expires_at) <= Date.now()) {
     deleteSession(token);
-    await clearSessionCookie();
     return null;
   }
 
