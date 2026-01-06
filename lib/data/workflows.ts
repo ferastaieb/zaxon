@@ -7,6 +7,7 @@ import type { Role, ShipmentType, TransportMode } from "@/lib/domain";
 import { getDb, inTransaction, nowIso } from "@/lib/db";
 import type { ChecklistGroup } from "@/lib/checklists";
 import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
+import { mapStopCountdownPaths, parseStepFieldSchema } from "@/lib/stepFields";
 
 export type WorkflowTemplateRow = {
   id: number;
@@ -34,6 +35,7 @@ export type WorkflowTemplateStepRow = {
   is_external: 0 | 1;
   checklist_groups_json: string;
   field_schema_json: string;
+  depends_on_step_ids_json: string;
   group_id: string | null;
   group_label: string | null;
   group_template_id: number | null;
@@ -183,6 +185,7 @@ export function addTemplateStep(input: {
   customerVisible?: boolean;
   isExternal?: boolean;
   checklistGroups?: ChecklistGroup[];
+  dependsOnStepIds?: number[];
   groupId?: string | null;
   groupLabel?: string | null;
   groupTemplateId?: number | null;
@@ -203,11 +206,11 @@ export function addTemplateStep(input: {
         template_id, sort_order, name, owner_role,
         required_fields_json, required_document_types_json,
         sla_hours, customer_visible, is_external, checklist_groups_json,
-        field_schema_json, group_id, group_label, group_template_id,
+        field_schema_json, depends_on_step_ids_json, group_id, group_label, group_template_id,
         customer_completion_message_template,
         created_at, updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       input.templateId,
@@ -221,6 +224,7 @@ export function addTemplateStep(input: {
       input.isExternal ? 1 : 0,
       JSON.stringify(input.checklistGroups ?? []),
       input.fieldSchemaJson ?? "{}",
+      JSON.stringify(input.dependsOnStepIds ?? []),
       input.groupId ?? null,
       input.groupLabel ?? null,
       input.groupTemplateId ?? null,
@@ -245,6 +249,7 @@ export function updateTemplateStep(input: {
   customerVisible?: boolean;
   isExternal?: boolean;
   checklistGroups?: ChecklistGroup[];
+  dependsOnStepIds?: number[];
   customerCompletionMessageTemplate?: string | null;
 }) {
   const db = getDb();
@@ -260,6 +265,7 @@ export function updateTemplateStep(input: {
           is_external = ?,
           checklist_groups_json = ?,
           field_schema_json = ?,
+          depends_on_step_ids_json = ?,
           customer_completion_message_template = ?,
           updated_at = ?
       WHERE id = ?
@@ -274,6 +280,7 @@ export function updateTemplateStep(input: {
       input.isExternal ? 1 : 0,
       JSON.stringify(input.checklistGroups ?? []),
       input.fieldSchemaJson ?? "{}",
+      JSON.stringify(input.dependsOnStepIds ?? []),
       input.customerCompletionMessageTemplate ?? null,
       nowIso(),
       input.stepId,
@@ -305,19 +312,20 @@ export function addSubworkflowSteps(input: {
     db,
   );
   let nextOrder = (row?.max_order ?? 0) + 1;
+  const stepIdMap = new Map<number, number>();
 
   for (const step of steps) {
-    execute(
+    const inserted = execute(
       `
         INSERT INTO workflow_template_steps (
           template_id, sort_order, name, owner_role,
           required_fields_json, required_document_types_json,
           sla_hours, customer_visible, is_external, checklist_groups_json,
-          field_schema_json, group_id, group_label, group_template_id,
+          field_schema_json, depends_on_step_ids_json, group_id, group_label, group_template_id,
           customer_completion_message_template,
           created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         input.templateId,
@@ -331,6 +339,7 @@ export function addSubworkflowSteps(input: {
         step.is_external,
         step.checklist_groups_json,
         step.field_schema_json ?? "{}",
+        step.depends_on_step_ids_json ?? "[]",
         groupId,
         groupLabel,
         input.subworkflowTemplateId,
@@ -340,7 +349,42 @@ export function addSubworkflowSteps(input: {
       ],
       db,
     );
+    const insertedId = inserted.lastInsertRowid;
+    if (insertedId) {
+      stepIdMap.set(step.id, insertedId);
+    }
     nextOrder += 1;
+  }
+
+  if (stepIdMap.size) {
+    for (const step of steps) {
+      const mappedId = stepIdMap.get(step.id);
+      if (!mappedId) continue;
+      const rawDeps = jsonParse(step.depends_on_step_ids_json, [] as number[]);
+      if (!rawDeps.length) continue;
+      const mappedDeps = rawDeps
+        .map((id) => stepIdMap.get(id))
+        .filter((id): id is number => !!id);
+      execute(
+        "UPDATE workflow_template_steps SET depends_on_step_ids_json = ? WHERE id = ?",
+        [JSON.stringify(mappedDeps), mappedId],
+        db,
+      );
+    }
+    for (const step of steps) {
+      const mappedId = stepIdMap.get(step.id);
+      if (!mappedId) continue;
+      const schema = parseStepFieldSchema(step.field_schema_json);
+      if (!schema.fields.length) continue;
+      const mappedSchema = mapStopCountdownPaths(schema, (id) => stepIdMap.get(id) ?? null);
+      if (JSON.stringify(schema) !== JSON.stringify(mappedSchema)) {
+        execute(
+          "UPDATE workflow_template_steps SET field_schema_json = ? WHERE id = ?",
+          [JSON.stringify(mappedSchema), mappedId],
+          db,
+        );
+      }
+    }
   }
 
   return groupId;

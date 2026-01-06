@@ -3,13 +3,18 @@ import { redirect } from "next/navigation";
 
 import { GlobalVariablesBuilder } from "@/components/workflows/GlobalVariablesBuilder";
 import { StepFieldBuilder } from "@/components/workflows/StepFieldBuilder";
+import { StepVisibilityToggle } from "@/components/workflows/StepVisibilityToggle";
 import { requireAdmin } from "@/lib/auth";
 import { DocumentTypes, Roles, type Role } from "@/lib/domain";
 import {
   parseChecklistGroupsInput,
   parseChecklistGroupsJson,
 } from "@/lib/checklists";
-import { parseStepFieldSchema, schemaFromLegacyFields } from "@/lib/stepFields";
+import {
+  collectBooleanFieldOptions,
+  parseStepFieldSchema,
+  schemaFromLegacyFields,
+} from "@/lib/stepFields";
 import { parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
 import {
   addTemplateStep,
@@ -28,6 +33,46 @@ import {
   updateWorkflowTemplate,
 } from "@/lib/data/workflows";
 
+function parseDependsOn(value: string | null | undefined): number[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => Number(entry))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  } catch {
+    return [];
+  }
+}
+
+function buildExternalBooleanOptions(
+  steps: Array<{
+    id: number;
+    name: string;
+    sort_order: number;
+    field_schema_json: string | null;
+  }>,
+  excludeStepId?: number | null,
+): Array<{ label: string; value: string }> {
+  const options: Array<{ label: string; value: string }> = [];
+  for (const step of steps) {
+    if (excludeStepId && step.id === excludeStepId) continue;
+    const schema = parseStepFieldSchema(step.field_schema_json);
+    const boolOptions = collectBooleanFieldOptions(schema.fields);
+    for (const option of boolOptions) {
+      const label = option.label
+        ? `${step.sort_order}. ${step.name} / ${option.label}`
+        : `${step.sort_order}. ${step.name} / (checkbox)`;
+      options.push({
+        label,
+        value: `step:${step.id}:${option.encodedPath}`,
+      });
+    }
+  }
+  return options;
+}
+
 export default async function WorkflowTemplateDetailsPage({
   params,
   searchParams,
@@ -43,6 +88,7 @@ export default async function WorkflowTemplateDetailsPage({
   if (!template) redirect("/workflows");
 
   const steps = listTemplateSteps(template.id);
+  const externalBooleanOptions = buildExternalBooleanOptions(steps);
   const globalVariables = parseWorkflowGlobalVariables(
     template.global_variables_json,
   );
@@ -100,6 +146,9 @@ export default async function WorkflowTemplateDetailsPage({
     const slaHours = slaHoursRaw ? Number(slaHoursRaw) : null;
     const customerVisible = String(formData.get("customerVisible") ?? "") === "1";
     const isExternal = String(formData.get("isExternal") ?? "") === "1";
+    const dependsOn = (formData.getAll("dependsOn") ?? [])
+      .map((entry) => Number(entry))
+      .filter((id) => Number.isFinite(id) && id > 0);
     const fieldSchemaRaw = String(formData.get("fieldSchema") ?? "");
     const fieldSchema = parseStepFieldSchema(fieldSchemaRaw);
     const checklistGroups = formData.has("checklistGroups")
@@ -116,6 +165,7 @@ export default async function WorkflowTemplateDetailsPage({
       customerVisible: isExternal ? true : customerVisible,
       isExternal,
       checklistGroups,
+      dependsOnStepIds: dependsOn,
       fieldSchemaJson: JSON.stringify(fieldSchema),
       requiredFields: [],
       requiredDocumentTypes: [],
@@ -139,6 +189,9 @@ export default async function WorkflowTemplateDetailsPage({
     const slaHours = slaHoursRaw ? Number(slaHoursRaw) : null;
     const customerVisible = String(formData.get("customerVisible") ?? "") === "1";
     const isExternal = String(formData.get("isExternal") ?? "") === "1";
+    const dependsOn = (formData.getAll("dependsOn") ?? [])
+      .map((entry) => Number(entry))
+      .filter((id) => Number.isFinite(id) && id > 0 && id !== stepId);
     const checklistGroups = formData.has("checklistGroups")
       ? parseChecklistGroupsInput(String(formData.get("checklistGroups") ?? ""))
       : null;
@@ -168,6 +221,7 @@ export default async function WorkflowTemplateDetailsPage({
       customerVisible: isExternal ? true : customerVisible,
       isExternal,
       checklistGroups: resolvedChecklistGroups,
+      dependsOnStepIds: dependsOn,
       customerCompletionMessageTemplate: customerMessageTemplate,
     });
     redirect(`/workflows/${templateId}`);
@@ -384,14 +438,29 @@ export default async function WorkflowTemplateDetailsPage({
                 />
               </label>
             </div>
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input type="checkbox" name="customerVisible" value="1" />
-              Visible in customer portal
-            </label>
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input type="checkbox" name="isExternal" value="1" />
-              External tracking step (always customer visible)
-            </label>
+            <StepVisibilityToggle />
+            {steps.length ? (
+              <div>
+                <div className="mb-1 text-sm font-medium text-zinc-800">
+                  Depends on steps
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {steps.map((step) => (
+                    <label
+                      key={`add-dep-${step.id}`}
+                      className="flex items-center gap-2 text-sm text-zinc-700"
+                    >
+                      <input
+                        type="checkbox"
+                        name="dependsOn"
+                        value={step.id}
+                      />
+                      {step.sort_order}. {step.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div>
               <div className="mb-1 text-sm font-medium text-zinc-800">
                 Step fields
@@ -400,6 +469,7 @@ export default async function WorkflowTemplateDetailsPage({
                 name="fieldSchema"
                 initialSchema={{ version: 1, fields: [] }}
                 globalVariables={globalVariables}
+                externalBooleanOptions={externalBooleanOptions}
               />
             </div>
             <button
@@ -461,6 +531,7 @@ export default async function WorkflowTemplateDetailsPage({
             const requiredDocs = new Set(parseRequiredDocumentTypes(s));
             const schemaFromStep = parseStepFieldSchema(s.field_schema_json);
             const legacyFields = parseRequiredFields(s);
+            const dependsOn = new Set(parseDependsOn(s.depends_on_step_ids_json));
             const stepSchema =
               schemaFromStep.fields.length > 0
                 ? schemaFromStep
@@ -587,27 +658,39 @@ export default async function WorkflowTemplateDetailsPage({
                       />
                     </label>
 
-                    <label className="flex items-center gap-2 pt-7 text-sm text-zinc-700">
-                      <input
-                        type="checkbox"
-                        name="customerVisible"
-                        value="1"
-                        defaultChecked={!!s.customer_visible}
-                      />
-                      Customer visible
-                    </label>
-                    <label className="flex items-center gap-2 pt-7 text-sm text-zinc-700">
-                      <input
-                        type="checkbox"
-                        name="isExternal"
-                        value="1"
-                        defaultChecked={!!s.is_external}
-                      />
-                      External tracking (always customer visible)
-                    </label>
                   </div>
+                  <StepVisibilityToggle
+                    defaultIsExternal={!!s.is_external}
+                    defaultCustomerVisible={!!s.customer_visible}
+                  />
 
                   <div className="space-y-3">
+                    {steps.length > 1 ? (
+                      <div>
+                        <div className="mb-1 text-sm font-medium text-zinc-800">
+                          Depends on steps
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {steps
+                            .filter((step) => step.id !== s.id)
+                            .map((step) => (
+                              <label
+                                key={`dep-${s.id}-${step.id}`}
+                                className="flex items-center gap-2 text-sm text-zinc-700"
+                              >
+                                <input
+                                  type="checkbox"
+                                  name="dependsOn"
+                                  value={step.id}
+                                  defaultChecked={dependsOn.has(step.id)}
+                                />
+                                {step.sort_order}. {step.name}
+                              </label>
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div>
                       <div className="mb-1 text-sm font-medium text-zinc-800">
                         Step fields
@@ -616,6 +699,7 @@ export default async function WorkflowTemplateDetailsPage({
                         name="fieldSchema"
                         initialSchema={stepSchema}
                         globalVariables={globalVariables}
+                        externalBooleanOptions={buildExternalBooleanOptions(steps, s.id)}
                       />
                     </div>
 

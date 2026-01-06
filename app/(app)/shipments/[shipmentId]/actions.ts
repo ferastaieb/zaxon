@@ -26,10 +26,12 @@ import {
 import {
   deleteShipment,
   getShipment,
+  getShipmentByCode,
   grantShipmentAccess,
   listShipmentCustomers,
   updateShipmentWorkflowGlobals,
 } from "@/lib/data/shipments";
+import { createShipmentLink, deleteShipmentLink } from "@/lib/data/shipmentLinks";
 import {
   addShipmentGood,
   applyShipmentGoodsAllocations,
@@ -51,17 +53,19 @@ import {
   type TaskStatus,
 } from "@/lib/domain";
 import { getDb, inTransaction, nowIso } from "@/lib/db";
-import { requireShipmentAccess } from "@/lib/permissions";
+import { canUserAccessShipment, requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import {
   applyStepFieldRemovals,
   applyStepFieldUpdates,
   collectFlatFieldValues,
   collectMissingFieldPaths,
+  decodeFieldPath,
   encodeFieldPath,
   extractStepFieldRemovals,
   extractStepFieldUpdates,
   extractStepFieldUploads,
+  parseStopCountdownPath,
   parseStepFieldSchema,
   parseStepFieldValues,
   schemaFromLegacyFields,
@@ -69,7 +73,10 @@ import {
   type StepFieldDefinition,
   type StepFieldSchema,
 } from "@/lib/stepFields";
-import { parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
+import {
+  parseWorkflowGlobalValues,
+  parseWorkflowGlobalVariables,
+} from "@/lib/workflowGlobals";
 import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
 import { removeShipmentUploads, saveUpload } from "@/lib/storage";
 
@@ -80,6 +87,41 @@ function normalizeFieldLabel(label: string) {
     .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const SHIPMENT_TAB_IDS = new Set([
+  "overview",
+  "connections",
+  "workflow",
+  "tracking",
+  "goods",
+  "tasks",
+  "documents",
+  "exceptions",
+  "activity",
+]);
+
+function normalizeShipmentTab(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return SHIPMENT_TAB_IDS.has(trimmed) ? trimmed : null;
+}
+
+function appendTabParam(url: string, tab: string | null) {
+  if (!tab) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}tab=${encodeURIComponent(tab)}`;
+}
+
+function resolveShipmentId(rawValue: string) {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return null;
+  const numericId = Number(trimmed);
+  if (Number.isFinite(numericId) && numericId > 0) {
+    return numericId;
+  }
+  const byCode = getShipmentByCode(trimmed.toUpperCase());
+  return byCode?.id ?? null;
 }
 
 function extractShipmentIdentifiers(fieldValues: Record<string, string>) {
@@ -152,6 +194,168 @@ function isNumeric(value: string | undefined): boolean {
   return /^[0-9]+$/.test(value);
 }
 
+const COUNTDOWN_FREEZE_KEY = "__countdown_freeze__";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") return false;
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function getValueAtPath(values: Record<string, unknown>, path: string[]): unknown {
+  let current: unknown = values;
+  for (const segment of path) {
+    if (!current) return undefined;
+    if (Array.isArray(current)) {
+      if (!isNumeric(segment)) return undefined;
+      current = current[Number(segment)];
+      continue;
+    }
+    if (!isPlainObject(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function isTruthyBooleanValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function getFreezeMap(values: Record<string, unknown>): Record<string, string> {
+  const raw = values[COUNTDOWN_FREEZE_KEY];
+  if (!isPlainObject(raw)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    if (typeof entry === "string") {
+      result[key] = entry;
+    }
+  }
+  return result;
+}
+
+function applyCountdownFreezeMap(
+  fields: StepFieldDefinition[],
+  values: Record<string, unknown>,
+  freezeMap: Record<string, string>,
+  basePath: string[],
+  resolveStopValue: (stopPath: string) => unknown,
+) {
+  const now = nowIso();
+  for (const field of fields) {
+    const fieldPath = [...basePath, field.id];
+
+    if (
+      field.type === "number" &&
+      field.linkToGlobal &&
+      field.stopCountdownPath
+    ) {
+      const encodedPath = encodeFieldPath(fieldPath);
+      const stopValue = resolveStopValue(field.stopCountdownPath);
+      if (isTruthyBooleanValue(stopValue)) {
+        if (!freezeMap[encodedPath]) {
+          freezeMap[encodedPath] = now;
+        }
+      } else if (freezeMap[encodedPath]) {
+        delete freezeMap[encodedPath];
+      }
+    }
+
+    if (field.type === "group") {
+      const groupValue = values[field.id];
+      if (field.repeatable) {
+        const items = Array.isArray(groupValue) ? groupValue : [];
+        items.forEach((item, index) => {
+          if (!isPlainObject(item)) return;
+          applyCountdownFreezeMap(
+            field.fields,
+            item as Record<string, unknown>,
+            freezeMap,
+            [...fieldPath, String(index)],
+            resolveStopValue,
+          );
+        });
+      } else if (isPlainObject(groupValue)) {
+        applyCountdownFreezeMap(
+          field.fields,
+          groupValue as Record<string, unknown>,
+          freezeMap,
+          fieldPath,
+          resolveStopValue,
+        );
+      }
+      continue;
+    }
+
+    if (field.type === "choice") {
+      const choiceValue = values[field.id];
+      if (!isPlainObject(choiceValue)) continue;
+      const choiceValues = choiceValue as Record<string, unknown>;
+      for (const option of field.options) {
+        const optionValue = choiceValues[option.id];
+        if (!isPlainObject(optionValue)) continue;
+        applyCountdownFreezeMap(
+          option.fields,
+          optionValue as Record<string, unknown>,
+          freezeMap,
+          [...fieldPath, option.id],
+          resolveStopValue,
+        );
+      }
+    }
+  }
+}
+
+function applyLinkedGlobalUpdates(
+  fields: StepFieldDefinition[],
+  values: Record<string, unknown>,
+  globals: Record<string, string>,
+  allowedGlobalIds: Set<string>,
+) {
+  const walk = (items: StepFieldDefinition[], current: Record<string, unknown>) => {
+    for (const field of items) {
+      if (field.type === "date" && field.linkToGlobal) {
+        const raw = current[field.id];
+        if (typeof raw === "string") {
+          const trimmed = raw.trim();
+          if (trimmed && allowedGlobalIds.has(field.linkToGlobal)) {
+            globals[field.linkToGlobal] = trimmed;
+          }
+        }
+        continue;
+      }
+      if (field.type === "group") {
+        const groupValue = current[field.id];
+        if (field.repeatable) {
+          const itemsValue = Array.isArray(groupValue) ? groupValue : [];
+          for (const item of itemsValue) {
+            if (isPlainObject(item)) {
+              walk(field.fields, item as Record<string, unknown>);
+            }
+          }
+        } else if (isPlainObject(groupValue)) {
+          walk(field.fields, groupValue as Record<string, unknown>);
+        }
+        continue;
+      }
+      if (field.type === "choice") {
+        const choiceValue = current[field.id];
+        if (isPlainObject(choiceValue)) {
+          const choiceValues = choiceValue as Record<string, unknown>;
+          for (const option of field.options) {
+            const optionValue = choiceValues[option.id];
+            if (isPlainObject(optionValue)) {
+              walk(option.fields, optionValue as Record<string, unknown>);
+            }
+          }
+        }
+      }
+    }
+  };
+
+  walk(fields, values);
+}
+
 function collectShipmentGoodsAllocations(
   schema: StepFieldSchema,
   values: Record<string, unknown>,
@@ -215,6 +419,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
   requireShipmentAccess(user, shipmentId);
+  const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
 
   const stepId = Number(formData.get("stepId") ?? 0);
   const status = String(formData.get("status") ?? "") as StepStatus;
@@ -228,19 +433,31 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
       relatedPartyId = null;
     } else {
       const parsed = Number(relatedPartyIdRaw);
-      if (!Number.isFinite(parsed)) redirect(`/shipments/${shipmentId}?error=invalid`);
+      if (!Number.isFinite(parsed)) {
+        redirect(
+          appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab),
+        );
+      }
       relatedPartyId = parsed;
     }
   }
 
   if (!stepId || !StepStatuses.includes(status)) {
-    redirect(`/shipments/${shipmentId}?error=invalid`);
+    redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
 
   const current = getShipmentStep(stepId);
   if (!current || current.shipment_id !== shipmentId) {
-    redirect(`/shipments/${shipmentId}?error=invalid`);
+    redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
+
+  const shipmentRow = queryOne<{
+    workflow_template_id: number | null;
+    workflow_global_values_json: string;
+  }>(
+    "SELECT workflow_template_id, workflow_global_values_json FROM shipments WHERE id = ? LIMIT 1",
+    [shipmentId],
+  );
 
   const requiredDocs = jsonParse(
     current.required_document_types_json,
@@ -260,6 +477,35 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   const fieldRemovals = extractStepFieldRemovals(formData);
   let mergedValues = applyStepFieldUpdates(existingValues, fieldUpdates);
   mergedValues = applyStepFieldRemovals(mergedValues, fieldRemovals);
+  const freezeMap = getFreezeMap(mergedValues as Record<string, unknown>);
+  const stopValueCache = new Map<number, Record<string, unknown>>([
+    [stepId, mergedValues as Record<string, unknown>],
+  ]);
+  const resolveStopValue = (stopPath: string) => {
+    const parsed = parseStopCountdownPath(stopPath);
+    if (!parsed) return null;
+    const targetStepId = parsed.stepId ?? stepId;
+    let source = stopValueCache.get(targetStepId);
+    if (!source) {
+      const other = queryOne<{ field_values_json: string }>(
+        "SELECT field_values_json FROM shipment_steps WHERE id = ? AND shipment_id = ?",
+        [targetStepId, shipmentId],
+      );
+      source = other
+        ? (parseStepFieldValues(other.field_values_json) as Record<string, unknown>)
+        : {};
+      stopValueCache.set(targetStepId, source);
+    }
+    return getValueAtPath(source, parsed.path);
+  };
+  applyCountdownFreezeMap(
+    fieldSchema.fields,
+    mergedValues as Record<string, unknown>,
+    freezeMap,
+    [],
+    resolveStopValue,
+  );
+  (mergedValues as Record<string, unknown>)[COUNTDOWN_FREEZE_KEY] = freezeMap;
 
   const checklistGroups = parseChecklistGroupsJson(current.checklist_groups_json);
 
@@ -303,6 +549,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   let statusToApply: StepStatus | undefined = status;
   let missingRequirements = false;
   let blockedByException = false;
+  let blockedByDependencies = false;
 
   const blockingException = queryOne<{ id: number }>(
     `
@@ -319,6 +566,29 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   if (blockingException && status !== current.status) {
     blockedByException = true;
     statusToApply = undefined;
+  }
+
+  const dependencyIds = jsonParse(current.depends_on_step_ids_json, [] as number[]);
+  if (dependencyIds.length && status !== current.status) {
+    const placeholders = dependencyIds.map(() => "?").join(", ");
+    const deps = queryAll<{ id: number; status: StepStatus }>(
+      `
+        SELECT id, status
+        FROM shipment_steps
+        WHERE shipment_id = ? AND id IN (${placeholders})
+      `,
+      [shipmentId, ...dependencyIds],
+    );
+    const unmet = new Set(dependencyIds);
+    for (const dep of deps) {
+      if (dep.status === "DONE") {
+        unmet.delete(dep.id);
+      }
+    }
+    if (unmet.size > 0) {
+      blockedByDependencies = true;
+      statusToApply = undefined;
+    }
   }
 
   if (statusToApply === "DONE" && status !== current.status) {
@@ -428,6 +698,82 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     });
     if (!updatedStep) return null;
 
+    const stepRows = queryAll<{
+      id: number;
+      field_schema_json: string | null;
+      field_values_json: string | null;
+    }>(
+      "SELECT id, field_schema_json, field_values_json FROM shipment_steps WHERE shipment_id = ?",
+      [shipmentId],
+      db,
+    );
+    if (stepRows.length) {
+      const valuesCache = new Map<number, Record<string, unknown>>();
+      for (const row of stepRows) {
+        valuesCache.set(
+          row.id,
+          row.id === stepId
+            ? (mergedValues as Record<string, unknown>)
+            : (parseStepFieldValues(row.field_values_json) as Record<string, unknown>),
+        );
+      }
+      const resolveStopValue = (stopPath: string) => {
+        const parsed = parseStopCountdownPath(stopPath);
+        if (!parsed) return null;
+        const targetStepId = parsed.stepId ?? stepId;
+        const source = valuesCache.get(targetStepId) ?? {};
+        return getValueAtPath(source, parsed.path);
+      };
+
+      for (const row of stepRows) {
+        if (row.id === stepId) continue;
+        const schema = parseStepFieldSchema(row.field_schema_json);
+        if (!schema.fields.length) continue;
+        const values = valuesCache.get(row.id) ?? {};
+        const existingFreezeMap = getFreezeMap(values);
+        const nextFreezeMap = { ...existingFreezeMap };
+        applyCountdownFreezeMap(
+          schema.fields,
+          values,
+          nextFreezeMap,
+          [],
+          resolveStopValue,
+        );
+        if (JSON.stringify(existingFreezeMap) !== JSON.stringify(nextFreezeMap)) {
+          values[COUNTDOWN_FREEZE_KEY] = nextFreezeMap;
+          updateShipmentStep({
+            stepId: row.id,
+            fieldValuesJson: JSON.stringify(values),
+            db,
+          });
+        }
+      }
+    }
+
+    if (shipmentRow?.workflow_template_id) {
+      const template = getWorkflowTemplate(shipmentRow.workflow_template_id);
+      if (template) {
+        const globals = parseWorkflowGlobalVariables(
+          template.global_variables_json,
+        );
+        const allowedGlobalIds = new Set(globals.map((g) => g.id));
+        const existingGlobals = parseWorkflowGlobalValues(
+          shipmentRow.workflow_global_values_json,
+        );
+        const nextGlobals = { ...existingGlobals };
+
+        applyLinkedGlobalUpdates(fieldSchema.fields, mergedValues, nextGlobals, allowedGlobalIds);
+
+        if (JSON.stringify(existingGlobals) !== JSON.stringify(nextGlobals)) {
+          updateShipmentWorkflowGlobals({
+            shipmentId,
+            valuesJson: JSON.stringify(nextGlobals),
+            updatedByUserId: user.id,
+          });
+        }
+      }
+    }
+
     if (shouldApplyGoodsAllocations) {
       applyShipmentGoodsAllocations(
         {
@@ -510,9 +856,11 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
       shipmentId,
       type: "STEP_UPDATED",
       message: statusToApply
-        ? `Step "${updatedStep.name}" → ${stepStatusLabel(statusToApply)}`
+        ? `Step "${updatedStep.name}" -> ${stepStatusLabel(statusToApply)}`
         : blockedByException
           ? `Step "${updatedStep.name}" saved (blocked by exception)`
+          : blockedByDependencies
+            ? `Step "${updatedStep.name}" saved (blocked by dependencies)`
           : `Step "${updatedStep.name}" requirements saved`,
       actorUserId: user.id,
       data: {
@@ -524,7 +872,9 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
 
     return updatedStep;
   });
-  if (!updated) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!updated) {
+    redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
+  }
 
   refreshShipmentDerivedState({
     shipmentId,
@@ -533,16 +883,33 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   });
 
   if (blockedByException) {
-    redirect(`/shipments/${shipmentId}?error=blocked_by_exception&stepId=${stepId}`);
+    redirect(
+      appendTabParam(
+        `/shipments/${shipmentId}?error=blocked_by_exception&stepId=${stepId}`,
+        returnTab,
+      ),
+    );
+  }
+
+  if (blockedByDependencies) {
+    redirect(
+      appendTabParam(
+        `/shipments/${shipmentId}?error=blocked_by_dependencies&stepId=${stepId}`,
+        returnTab,
+      ),
+    );
   }
 
   if (missingRequirements) {
     redirect(
-      `/shipments/${shipmentId}?error=missing_requirements&stepId=${stepId}`,
+      appendTabParam(
+        `/shipments/${shipmentId}?error=missing_requirements&stepId=${stepId}`,
+        returnTab,
+      ),
     );
   }
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(appendTabParam(`/shipments/${shipmentId}`, returnTab));
 }
 
 export async function updateWorkflowGlobalsAction(
@@ -552,9 +919,12 @@ export async function updateWorkflowGlobalsAction(
   const user = await requireUser();
   assertCanWrite(user);
   requireShipmentAccess(user, shipmentId);
+  const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
 
   const shipment = getShipment(shipmentId);
-  if (!shipment) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!shipment) {
+    redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
+  }
 
   const template = shipment.workflow_template_id
     ? getWorkflowTemplate(shipment.workflow_template_id)
@@ -583,7 +953,7 @@ export async function updateWorkflowGlobalsAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(appendTabParam(`/shipments/${shipmentId}`, returnTab));
 }
 
 export async function addShipmentJobIdsAction(
@@ -688,6 +1058,79 @@ export async function removeShipmentJobIdAction(
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function createShipmentLinkAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  requireShipmentAccess(user, shipmentId);
+
+  const connectedRaw = String(formData.get("connectedShipment") ?? "");
+  const connectedShipmentId = resolveShipmentId(connectedRaw);
+  if (!connectedShipmentId || connectedShipmentId === shipmentId) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  if (!canUserAccessShipment(user, connectedShipmentId)) {
+    redirect("/forbidden");
+  }
+
+  const currentCustomers = listShipmentCustomers(shipmentId).map((c) => c.id);
+  const otherCustomers = listShipmentCustomers(connectedShipmentId).map((c) => c.id);
+  const hasSharedCustomer = currentCustomers.some((id) =>
+    otherCustomers.includes(id),
+  );
+  if (!hasSharedCustomer) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  const shipmentLabel = String(formData.get("shipmentLabel") ?? "").trim();
+  const connectedLabel = String(formData.get("connectedLabel") ?? "").trim();
+
+  createShipmentLink({
+    shipmentId,
+    connectedShipmentId,
+    shipmentLabel: shipmentLabel || null,
+    connectedLabel: connectedLabel || null,
+    createdByUserId: user.id,
+  });
+
+  refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: false,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function deleteShipmentLinkAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  requireShipmentAccess(user, shipmentId);
+
+  const connectedShipmentId = Number(formData.get("connectedShipmentId") ?? 0);
+  if (!connectedShipmentId) redirect(`/shipments/${shipmentId}?error=invalid`);
+
+  if (!canUserAccessShipment(user, connectedShipmentId)) {
+    redirect("/forbidden");
+  }
+
+  deleteShipmentLink({ shipmentId, connectedShipmentId });
+
+  refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: false,
   });
 
   redirect(`/shipments/${shipmentId}`);
@@ -1017,13 +1460,30 @@ export async function updateDocumentFlagsAction(
   redirect(`/shipments/${shipmentId}`);
 }
 
-export async function requestDocumentAction(shipmentId: number, formData: FormData) {
+export async function requestDocumentAction(
+  shipmentId: number,
+  documentTypeOrFormData: string | FormData,
+  maybeFormData?: FormData,
+) {
   const user = await requireUser();
   assertCanWrite(user);
   requireShipmentAccess(user, shipmentId);
-
-  const documentType = String(formData.get("documentType") ?? "").trim();
-  const message = String(formData.get("message") ?? "").trim() || null;
+  const formData =
+    documentTypeOrFormData instanceof FormData
+      ? documentTypeOrFormData
+      : maybeFormData instanceof FormData
+        ? maybeFormData
+        : null;
+  let documentType =
+    typeof documentTypeOrFormData === "string"
+      ? documentTypeOrFormData.trim()
+      : "";
+  const message = formData
+    ? String(formData.get("message") ?? "").trim() || null
+    : null;
+  if (formData && !documentType) {
+    documentType = String(formData.get("documentType") ?? "").trim();
+  }
   if (!documentType) redirect(`/shipments/${shipmentId}?error=invalid`);
 
   const requestId = createDocumentRequest({

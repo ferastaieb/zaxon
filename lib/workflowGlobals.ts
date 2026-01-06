@@ -1,4 +1,4 @@
-export type WorkflowGlobalVariableType = "text" | "date" | "number";
+export type WorkflowGlobalVariableType = "date";
 
 export type WorkflowGlobalVariable = {
   id: string;
@@ -32,9 +32,8 @@ export function parseWorkflowGlobalVariables(
       if (!isPlainObject(entry)) return null;
       const id = typeof entry.id === "string" ? entry.id : "";
       const label = typeof entry.label === "string" ? entry.label : "";
-      const type = entry.type as WorkflowGlobalVariableType;
+      const type = "date" as WorkflowGlobalVariableType;
       if (!id || !label) return null;
-      if (type !== "text" && type !== "date" && type !== "number") return null;
       return { id, label, type };
     })
     .filter((entry): entry is WorkflowGlobalVariable => !!entry);

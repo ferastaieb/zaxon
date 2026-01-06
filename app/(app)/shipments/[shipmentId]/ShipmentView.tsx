@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
 import {
@@ -22,6 +23,7 @@ import {
     encodeFieldPath,
     fieldInputName,
     fieldRemovalName,
+    parseStopCountdownPath,
     parseStepFieldDocType,
     parseStepFieldSchema,
     parseStepFieldValues,
@@ -29,6 +31,7 @@ import {
     stepFieldDocType,
     type StepFieldDefinition,
     type StepFieldSchema,
+    type StepFieldValue,
     type StepFieldValues,
 } from "@/lib/stepFields";
 import type { WorkflowGlobalVariable, WorkflowGlobalValues } from "@/lib/workflowGlobals";
@@ -37,9 +40,11 @@ import {
     addShipmentJobIdsAction,
     addShipmentGoodAction,
     createGoodAction,
+    createShipmentLinkAction,
     createTaskAction,
     deleteShipmentAction,
     deleteShipmentGoodAction,
+    deleteShipmentLinkAction,
     logExceptionAction,
     removeShipmentJobIdAction,
     requestDocumentAction,
@@ -60,9 +65,12 @@ interface ShipmentViewProps {
     shipment: any; // Replace with ShipmentRow & { customer_names: string | null }
     shipmentCustomers: any[];
     shipmentGoods: any[];
+    allocationGoods: any[];
     goods: any[];
     inventoryBalances: any[];
     inventoryTransactions: any[];
+    connectableShipments: any[];
+    connectedShipments: any[];
     steps: any[];
     internalSteps: any[];
     trackingSteps: any[];
@@ -109,11 +117,67 @@ function stepTone(status: StepStatus) {
     return "zinc";
 }
 
+function stepStatusStyles(status: StepStatus) {
+    if (status === "DONE") {
+        return {
+            border: "border-l-green-500",
+            header: "bg-green-50",
+            dot: "bg-green-500",
+        };
+    }
+    if (status === "IN_PROGRESS") {
+        return {
+            border: "border-l-blue-500",
+            header: "bg-blue-50",
+            dot: "bg-blue-500",
+        };
+    }
+    if (status === "BLOCKED") {
+        return {
+            border: "border-l-red-500",
+            header: "bg-red-50",
+            dot: "bg-red-500",
+        };
+    }
+    return {
+        border: "border-l-amber-400",
+        header: "bg-amber-50",
+        dot: "bg-amber-400",
+    };
+}
+
 function taskTone(status: TaskStatus) {
     if (status === "DONE") return "green";
     if (status === "IN_PROGRESS") return "blue";
     if (status === "BLOCKED") return "red";
     return "zinc";
+}
+
+type ShipmentTabId =
+    | "overview"
+    | "connections"
+    | "workflow"
+    | "tracking"
+    | "goods"
+    | "tasks"
+    | "documents"
+    | "exceptions"
+    | "activity";
+
+const SHIPMENT_TABS: ShipmentTabId[] = [
+    "overview",
+    "connections",
+    "workflow",
+    "tracking",
+    "goods",
+    "tasks",
+    "documents",
+    "exceptions",
+    "activity",
+];
+
+function isShipmentTab(value: string | null): value is ShipmentTabId {
+    return value !== null && SHIPMENT_TABS.includes(value as ShipmentTabId);
 }
 
 export default function ShipmentView(props: ShipmentViewProps) {
@@ -122,9 +186,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
         shipment,
         shipmentCustomers,
         shipmentGoods,
+        allocationGoods,
         goods,
         inventoryBalances,
         inventoryTransactions,
+        connectableShipments,
+        connectedShipments,
         steps,
         internalSteps,
         trackingSteps,
@@ -154,7 +221,38 @@ export default function ShipmentView(props: ShipmentViewProps) {
         errorStepId,
     } = props;
 
-    const [activeTab, setActiveTab] = useState<"overview" | "workflow" | "goods" | "tasks" | "documents" | "exceptions" | "activity">("overview");
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const pathname = usePathname();
+    const tabParam = searchParams.get("tab");
+    const [activeTab, setActiveTab] = useState<ShipmentTabId>(() =>
+        isShipmentTab(tabParam) ? tabParam : "overview",
+    );
+    const [timelinePreviewTab, setTimelinePreviewTab] = useState<
+        "workflow" | "tracking"
+    >("workflow");
+
+    useEffect(() => {
+        if (isShipmentTab(tabParam)) {
+            setActiveTab(tabParam);
+            return;
+        }
+        if (!tabParam) {
+            setActiveTab("overview");
+        }
+    }, [tabParam]);
+
+    const setTab = (tab: ShipmentTabId) => {
+        setActiveTab(tab);
+        const params = new URLSearchParams(searchParams.toString());
+        if (tab === "overview") {
+            params.delete("tab");
+        } else {
+            params.set("tab", tab);
+        }
+        const next = params.toString();
+        router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    };
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
     const canDelete = user.role === "ADMIN";
@@ -180,6 +278,111 @@ export default function ShipmentView(props: ShipmentViewProps) {
         return new Map<number, any>(steps.map((s) => [s.id, s]));
     }, [steps]);
 
+    const isStepBlockedByDependencies = (step: any) => {
+        const dependencyIds = parseDependsOn(step);
+        if (!dependencyIds.length) return false;
+        return dependencyIds.some((id) => {
+            const dep = stepById.get(id);
+            return !dep || dep.status !== "DONE";
+        });
+    };
+
+    const defaultOpenInternalStepId = useMemo(() => {
+        const doable = internalSteps.find(
+            (s) =>
+                s.status !== "DONE" &&
+                !workflowBlocked &&
+                !isStepBlockedByDependencies(s),
+        );
+        if (doable) return doable.id;
+        const next = internalSteps.find((s) => s.status !== "DONE");
+        return next?.id ?? internalSteps[0]?.id ?? null;
+    }, [internalSteps, workflowBlocked, stepById]);
+
+    const defaultOpenTrackingStepId = useMemo(() => {
+        const doable = trackingSteps.find(
+            (s) =>
+                s.status !== "DONE" &&
+                !workflowBlocked &&
+                !isStepBlockedByDependencies(s),
+        );
+        if (doable) return doable.id;
+        const next = trackingSteps.find((s) => s.status !== "DONE");
+        return next?.id ?? trackingSteps[0]?.id ?? null;
+    }, [trackingSteps, workflowBlocked, stepById]);
+
+    const [openInternalStepId, setOpenInternalStepId] = useState<number | null>(
+        () => defaultOpenInternalStepId ?? null,
+    );
+    const [openTrackingStepId, setOpenTrackingStepId] = useState<number | null>(
+        () => defaultOpenTrackingStepId ?? null,
+    );
+    const [hasTouchedInternal, setHasTouchedInternal] = useState(false);
+    const [hasTouchedTracking, setHasTouchedTracking] = useState(false);
+    const [dirtyFormIds, setDirtyFormIds] = useState<string[]>([]);
+    const dirtyCount = dirtyFormIds.length;
+
+    const markFormDirty = (formId: string) => {
+        setDirtyFormIds((prev) => (prev.includes(formId) ? prev : [...prev, formId]));
+    };
+
+    const clearFormDirty = (formId: string) => {
+        setDirtyFormIds((prev) => prev.filter((id) => id !== formId));
+    };
+
+    const handleGlobalSave = () => {
+        if (!dirtyCount) return;
+        const formId = dirtyFormIds[0];
+        const form = document.getElementById(formId) as HTMLFormElement | null;
+        if (form) form.requestSubmit();
+    };
+
+    useEffect(() => {
+        if (hasTouchedInternal) return;
+        if (!openInternalStepId && defaultOpenInternalStepId) {
+            setOpenInternalStepId(defaultOpenInternalStepId);
+        }
+    }, [defaultOpenInternalStepId, openInternalStepId, hasTouchedInternal]);
+
+    useEffect(() => {
+        if (hasTouchedTracking) return;
+        if (!openTrackingStepId && defaultOpenTrackingStepId) {
+            setOpenTrackingStepId(defaultOpenTrackingStepId);
+        }
+    }, [defaultOpenTrackingStepId, openTrackingStepId, hasTouchedTracking]);
+
+    useEffect(() => {
+        if (!errorStepId) return;
+        const step = stepById.get(errorStepId);
+        if (!step) return;
+        if (step.is_external) {
+            setOpenTrackingStepId(errorStepId);
+        } else {
+            setOpenInternalStepId(errorStepId);
+        }
+    }, [errorStepId, stepById]);
+
+    const openStep = (stepId: number) => {
+        const step = stepById.get(stepId);
+        if (!step) return;
+        if (step.is_external) {
+            setHasTouchedTracking(true);
+            setTab("tracking");
+            setOpenTrackingStepId(stepId);
+        } else {
+            setHasTouchedInternal(true);
+            setTab("workflow");
+            setOpenInternalStepId(stepId);
+        }
+        setTimeout(
+            () =>
+                document
+                    .getElementById(`step-${stepId}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            100,
+        );
+    };
+
     const formatDocumentType = (docType: string) => {
         const parsed = parseStepFieldDocType(docType);
         if (!parsed) return docType;
@@ -191,6 +394,43 @@ export default function ShipmentView(props: ShipmentViewProps) {
         const label = describeFieldPath(schema, segments);
         if (!label) return `${step.name} / ${docType}`;
         return `${step.name} / ${label}`;
+    };
+
+    const renderStepper = (items: any[], openId: number | null) => {
+        if (!items.length) return null;
+        const doneCount = items.filter((s) => s.status === "DONE").length;
+        return (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-zinc-900">Progress</h3>
+                    <span className="text-xs text-zinc-500">
+                        {doneCount}/{items.length} done
+                    </span>
+                </div>
+                <div className="mt-4 flex items-center gap-3 overflow-x-auto pb-2">
+                    {items.map((s) => {
+                        const styles = stepStatusStyles(s.status);
+                        const isActive = openId === s.id;
+                        return (
+                            <button
+                                key={`stepper-${s.id}`}
+                                type="button"
+                                onClick={() => openStep(s.id)}
+                                className={`flex min-w-[140px] items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition ${isActive
+                                    ? "border-zinc-900 bg-zinc-900 text-white"
+                                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+                                    }`}
+                            >
+                                <span className={`h-2.5 w-2.5 rounded-full ${styles.dot}`} />
+                                <span className="truncate">
+                                    {s.sort_order}. {s.name}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -242,7 +482,9 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     <div className="mt-6 flex items-center gap-1 overflow-x-auto pb-1">
                         {[
                             { id: "overview", label: "Overview" },
+                            { id: "connections", label: "Connections", count: connectedShipments.length },
                             { id: "workflow", label: "Workflow" },
+                            { id: "tracking", label: "Tracking" },
                             { id: "goods", label: "Goods", count: shipmentGoods.length },
                             { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
                             { id: "documents", label: "Documents", count: docs.length },
@@ -251,7 +493,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         ].map((tab) => (
                             <button
                                 key={tab.id}
-                                onClick={() => setActiveTab(tab.id as any)}
+                                onClick={() => setTab(tab.id as ShipmentTabId)}
                                 className={`group relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.id
                                     ? "bg-zinc-100 text-zinc-900"
                                     : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
@@ -270,6 +512,65 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             </button>
                         ))}
                     </div>
+                    {workflowGlobals.length ? (
+                        <details className="mt-4 rounded-xl border border-zinc-200 bg-white/90 p-3 text-xs shadow-sm">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-medium text-zinc-600">
+                                        Global dates
+                                    </span>
+                                    {workflowGlobals.map((variable) => {
+                                        const value = workflowGlobalValues[variable.id];
+                                        return (
+                                            <span
+                                                key={variable.id}
+                                                className="rounded-full border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700"
+                                            >
+                                                {variable.label}: {value || "Not set"}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                                <span className="text-zinc-500">Edit</span>
+                            </summary>
+                            <form
+                                action={updateWorkflowGlobalsAction.bind(null, shipment.id)}
+                                className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                            >
+                                <input type="hidden" name="tab" value={activeTab} />
+                                {workflowGlobals.map((variable) => (
+                                    <label key={variable.id} className="block">
+                                        <div className="mb-1 text-[11px] font-medium text-zinc-600">
+                                            {variable.label}
+                                        </div>
+                                        <input
+                                            type="date"
+                                            name={`global:${variable.id}`}
+                                            defaultValue={workflowGlobalValues[variable.id] ?? ""}
+                                            disabled={!canEdit}
+                                            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
+                                        />
+                                    </label>
+                                ))}
+                                <div className="flex items-center justify-between gap-3 sm:col-span-2 lg:col-span-3">
+                                    {!canEdit ? (
+                                        <span className="text-[11px] text-zinc-500">
+                                            Finance role is view-only.
+                                        </span>
+                                    ) : (
+                                        <span />
+                                    )}
+                                    <button
+                                        type="submit"
+                                        disabled={!canEdit}
+                                        className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                                    >
+                                        Save dates
+                                    </button>
+                                </div>
+                            </form>
+                        </details>
+                    ) : null}
                 </div>
             </div>
 
@@ -286,6 +587,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             Workflow is blocked by an open exception. Resolve the exception to continue updating shipment steps.
                         </div>
                     )}
+                    {error === "blocked_by_dependencies" && (
+                        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
+                            This step is blocked by earlier steps. Complete the dependencies first.
+                        </div>
+                    )}
                     {error === "exception_tasks_open" && (
                         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
                             Complete the exception steps before resolving the exception.
@@ -299,7 +605,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     {workflowBlocked && primaryBlockingException && (
                         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
                             Workflow blocked by <span className="font-medium">{primaryBlockingException.exception_name}</span>.{" "}
-                            <button onClick={() => setActiveTab("exceptions")} className="font-medium underline hover:text-red-800">
+                            <button onClick={() => setTab("exceptions")} className="font-medium underline hover:text-red-800">
                                 View exception
                             </button>
                         </div>
@@ -332,11 +638,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                             <Badge tone={stepTone(s.status)}>{stepStatusLabel(s.status)}</Badge>
                                                         </div>
                                                         <button
-                                                            onClick={() => {
-                                                                setActiveTab("workflow");
-                                                                // Ideally scroll to step
-                                                                setTimeout(() => document.getElementById(`step-${s.id}`)?.scrollIntoView({ behavior: 'smooth' }), 100);
-                                                            }}
+                                                            onClick={() => openStep(s.id)}
                                                             className="absolute inset-0 rounded-xl ring-inset focus:ring-2 focus:ring-zinc-900"
                                                         />
                                                     </div>
@@ -363,7 +665,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                         </div>
                                                         <button
                                                             onClick={() => {
-                                                                setActiveTab("tasks");
+                                                                setTab("tasks");
                                                                 setTimeout(() => document.getElementById(`task-${t.id}`)?.scrollIntoView({ behavior: 'smooth' }), 100);
                                                             }}
                                                             className="absolute inset-0 rounded-xl ring-inset focus:ring-2 focus:ring-zinc-900"
@@ -378,23 +680,99 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     </div>
                                 </div>
 
-                                {/* Quick Stats / Timeline Preview */}
+                                {/* Timeline / Tracking Preview */}
                                 <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h2 className="text-base font-semibold text-zinc-900">Timeline Preview</h2>
-                                    <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
-                                        {internalSteps.map((s) => (
-                                            <div key={s.id} className={`flex h-2 flex-1 rounded-full ${s.status === "DONE" ? "bg-green-500" :
-                                                s.status === "IN_PROGRESS" ? "bg-blue-500" :
-                                                    s.status === "BLOCKED" ? "bg-red-500" : "bg-zinc-200"
-                                                }`} title={`${s.name}: ${stepStatusLabel(s.status)}`} />
-                                        ))}
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <h2 className="text-base font-semibold text-zinc-900">Timeline</h2>
+                                        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 text-xs">
+                                            <button
+                                                onClick={() => setTimelinePreviewTab("workflow")}
+                                                className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "workflow"
+                                                    ? "bg-white text-zinc-900 shadow"
+                                                    : "text-zinc-500 hover:text-zinc-800"
+                                                    }`}
+                                            >
+                                                Internal
+                                            </button>
+                                            <button
+                                                onClick={() => setTimelinePreviewTab("tracking")}
+                                                className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "tracking"
+                                                    ? "bg-white text-zinc-900 shadow"
+                                                    : "text-zinc-500 hover:text-zinc-800"
+                                                    }`}
+                                            >
+                                                Tracking
+                                            </button>
+                                        </div>
                                     </div>
+
+                                    {timelinePreviewTab === "workflow" ? (
+                                        <>
+                                            <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
+                                                {internalSteps.map((s) => (
+                                                    <div
+                                                        key={s.id}
+                                                        className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
+                                                            ? "bg-green-500"
+                                                            : s.status === "IN_PROGRESS"
+                                                                ? "bg-blue-500"
+                                                                : s.status === "BLOCKED"
+                                                                    ? "bg-red-500"
+                                                                    : "bg-zinc-200"
+                                                            }`}
+                                                        title={`${s.name}: ${stepStatusLabel(s.status)}`}
+                                                    />
+                                                ))}
+                                            </div>
+                                            {internalSteps.length === 0 ? (
+                                                <div className="mt-3 text-sm text-zinc-500 italic">
+                                                    No internal steps yet.
+                                                </div>
+                                            ) : null}
+                                        </>
+                                    ) : (
+                                        <>
+                                            {trackingSteps.length ? (
+                                                <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
+                                                    {trackingSteps.map((s) => (
+                                                        <div
+                                                            key={s.id}
+                                                            className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
+                                                                ? "bg-green-500"
+                                                                : s.status === "IN_PROGRESS"
+                                                                    ? "bg-blue-500"
+                                                                    : s.status === "BLOCKED"
+                                                                        ? "bg-red-500"
+                                                                        : "bg-zinc-200"
+                                                                }`}
+                                                            title={`${s.name}: ${stepStatusLabel(s.status)}`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 text-sm text-zinc-500 italic">
+                                                    No tracking steps yet.
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+
                                     <div className="mt-2 text-right">
-                                        <button onClick={() => setActiveTab("workflow")} className="text-sm font-medium text-zinc-900 hover:underline">
-                                            View full workflow →
+                                        <button
+                                            onClick={() =>
+                                                setTab(
+                                                    timelinePreviewTab === "workflow"
+                                                        ? "workflow"
+                                                        : "tracking",
+                                                )
+                                            }
+                                            className="text-sm font-medium text-zinc-900 hover:underline"
+                                        >
+                                            View {timelinePreviewTab === "workflow" ? "workflow" : "tracking"} steps
                                         </button>
                                     </div>
                                 </div>
+
                             </div>
 
                             <div className="space-y-6">
@@ -464,106 +842,324 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         </div>
                     )}
 
-                    {activeTab === "workflow" && (
-                        <div className="space-y-8">
-                            {workflowGlobals.length ? (
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="text-base font-semibold text-zinc-900">
-                                        Workflow variables
-                                    </h3>
-                                    <form
-                                        action={updateWorkflowGlobalsAction.bind(null, shipment.id)}
-                                        className="mt-4 space-y-4"
-                                    >
-                                        <div className="grid gap-4 md:grid-cols-2">
-                                            {workflowGlobals.map((variable) => (
-                                                <label key={variable.id} className="block">
-                                                    <div className="mb-1 text-sm font-medium text-zinc-800">
-                                                        {variable.label}
+                    {activeTab === "connections" && (
+                        <div className="space-y-6">
+                            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <h2 className="text-base font-semibold text-zinc-900">
+                                            Connected shipments
+                                        </h2>
+                                        <p className="mt-1 text-sm text-zinc-500">
+                                            Quick overview of related shipments.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {connectedShipments.length ? (
+                                    <div className="mt-4 space-y-4">
+                                        {connectedShipments.map((link: any) => {
+                                            const goodsPreview = (link.goods ?? []).slice(0, 3);
+                                            const docsPreview = (link.docs ?? []).slice(0, 3);
+                                            return (
+                                                <div
+                                                    key={link.connected_shipment_id}
+                                                    className="rounded-xl border border-zinc-200 bg-white p-4"
+                                                >
+                                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                                        <div>
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <div className="text-sm font-semibold text-zinc-900">
+                                                                    {link.connected_shipment_code}
+                                                                </div>
+                                                                <Badge tone="zinc">
+                                                                    {overallStatusLabel(
+                                                                        link.connected_overall_status,
+                                                                    )}
+                                                                </Badge>
+                                                                <Badge tone={riskTone(link.connected_risk)}>
+                                                                    {riskLabel(link.connected_risk)}
+                                                                </Badge>
+                                                            </div>
+                                                            <div className="mt-1 text-xs text-zinc-500">
+                                                                {link.connected_origin} - {link.connected_destination}
+                                                            </div>
+                                                            <div className="mt-1 text-xs text-zinc-500">
+                                                                Customers: {link.connected_customer_names ?? "-"}
+                                                            </div>
+                                                            <div className="mt-1 text-xs text-zinc-500">
+                                                                Cargo: {link.connected_cargo_description}
+                                                            </div>
+                                                            {(link.shipment_label || link.connected_label) ? (
+                                                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-600">
+                                                                    {link.shipment_label ? (
+                                                                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
+                                                                            This: {link.shipment_label}
+                                                                        </span>
+                                                                    ) : null}
+                                                                    {link.connected_label ? (
+                                                                        <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700">
+                                                                            Connected: {link.connected_label}
+                                                                        </span>
+                                                                    ) : null}
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <Link
+                                                                href={`/shipments/${link.connected_shipment_id}`}
+                                                                className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                                                            >
+                                                                Open
+                                                            </Link>
+                                                            {link.trackingToken ? (
+                                                                <Link
+                                                                    href={`/track/${link.trackingToken}`}
+                                                                    className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                                                                >
+                                                                    Tracking
+                                                                </Link>
+                                                            ) : null}
+                                                            {canEdit ? (
+                                                                <form
+                                                                    action={deleteShipmentLinkAction.bind(
+                                                                        null,
+                                                                        shipment.id,
+                                                                    )}
+                                                                >
+                                                                    <input
+                                                                        type="hidden"
+                                                                        name="connectedShipmentId"
+                                                                        value={link.connected_shipment_id}
+                                                                    />
+                                                                    <button
+                                                                        type="submit"
+                                                                        className="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                                                                    >
+                                                                        Remove
+                                                                    </button>
+                                                                </form>
+                                                            ) : null}
+                                                        </div>
                                                     </div>
-                                                    <input
-                                                        name={`global:${variable.id}`}
-                                                        defaultValue={workflowGlobalValues[variable.id] ?? ""}
-                                                        type={variable.type === "date" ? "date" : variable.type === "number" ? "number" : "text"}
-                                                        disabled={!canEdit}
-                                                        className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                    />
-                                                </label>
-                                            ))}
+
+                                                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                                        <div>
+                                                            <div className="text-xs font-medium text-zinc-600">
+                                                                Goods
+                                                            </div>
+                                                            {goodsPreview.length ? (
+                                                                <ul className="mt-2 space-y-1 text-xs text-zinc-700">
+                                                                    {goodsPreview.map((g: any) => (
+                                                                        <li key={g.id}>
+                                                                            {g.good_name} - {g.quantity} {g.unit_type}
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            ) : (
+                                                                <div className="mt-2 text-xs text-zinc-500">
+                                                                    No goods lines.
+                                                                </div>
+                                                            )}
+                                                            {link.goods?.length > goodsPreview.length ? (
+                                                                <div className="mt-1 text-xs text-zinc-400">
+                                                                    And {link.goods.length - goodsPreview.length} more goods
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+
+                                                        <div>
+                                                            <div className="text-xs font-medium text-zinc-600">
+                                                                Documents
+                                                            </div>
+                                                            {docsPreview.length ? (
+                                                                <ul className="mt-2 space-y-1 text-xs text-zinc-700">
+                                                                    {docsPreview.map((d: any) => (
+                                                                        <li key={d.id}>{d.document_type}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            ) : (
+                                                                <div className="mt-2 text-xs text-zinc-500">
+                                                                    No documents yet.
+                                                                </div>
+                                                            )}
+                                                            {link.docs?.length > docsPreview.length ? (
+                                                                <div className="mt-1 text-xs text-zinc-400">
+                                                                    And {link.docs.length - docsPreview.length} more documents
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="mt-4 text-sm text-zinc-500">
+                                        No connected shipments yet.
+                                    </div>
+                                )}
+
+                                {canEdit ? (
+                                    <form
+                                        action={createShipmentLinkAction.bind(null, shipment.id)}
+                                        className="mt-6 grid gap-3 md:grid-cols-4"
+                                    >
+                                        <label className="block md:col-span-2">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                Connect shipment
+                                            </div>
+                                            <input
+                                                name="connectedShipment"
+                                                list="connectable-shipments"
+                                                placeholder="Search shipments by ID or code"
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                                                required
+                                            />
+                                            <datalist id="connectable-shipments">
+                                                {connectableShipments.map((s: any) => (
+                                                    <option
+                                                        key={s.id}
+                                                        value={s.shipment_code}
+                                                    >
+                                                        {s.shipment_code} — {s.origin} to {s.destination}
+                                                        {s.customer_names ? ` (${s.customer_names})` : ""}
+                                                    </option>
+                                                ))}
+                                            </datalist>
+                                            {connectableShipments.length === 0 ? (
+                                                <div className="mt-1 text-xs text-zinc-500">
+                                                    No shipments share a customer with this shipment.
+                                                </div>
+                                            ) : null}
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                Label (this)
+                                            </div>
+                                            <input
+                                                name="shipmentLabel"
+                                                placeholder="Import"
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                                            />
+                                        </label>
+                                        <label className="block">
+                                            <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                Label (connected)
+                                            </div>
+                                            <input
+                                                name="connectedLabel"
+                                                placeholder="Export"
+                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                                            />
+                                        </label>
+                                        <div className="md:col-span-4">
+                                            <button
+                                                type="submit"
+                                                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                            >
+                                                Add connection
+                                            </button>
                                         </div>
-                                        <button
-                                            type="submit"
-                                            disabled={!canEdit}
-                                            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                                        >
-                                            Save variables
-                                        </button>
                                     </form>
+                                ) : null}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "workflow" && (
+                        <div className="space-y-4">
+                            <h3 className="text-lg font-semibold text-zinc-900">Internal Workflow</h3>
+                            <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
+                                {renderStepper(internalSteps, openInternalStepId)}
+                            </div>
+
+                            <div className="space-y-4">
+                                {internalSteps.map((s) => (
+                                    <StepCard
+                                        key={s.id}
+                                        step={s}
+                                        user={user}
+                                        shipment={shipment}
+                                        canEdit={canEdit}
+                                        workflowBlocked={workflowBlocked}
+                                        receivedDocTypes={receivedDocTypes}
+                                        openDocRequestTypes={openDocRequestTypes}
+                                        latestReceivedDocByType={latestReceivedDocByType}
+                                        workflowGlobalValues={workflowGlobalValues}
+                                        highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
+                                        highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
+                                        partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
+                                        customers={customers}
+                                        suppliers={suppliers}
+                                        brokers={brokers}
+                                        allocationGoods={allocationGoods}
+                                        setTab={setTab}
+                                        tabId="workflow"
+                                        stepsById={stepById}
+                                        workflowGlobals={workflowGlobals}
+                                        isOpen={openInternalStepId === s.id}
+                                        onToggle={() => {
+                                            setHasTouchedInternal(true);
+                                            setOpenInternalStepId((prev) =>
+                                                prev === s.id ? null : s.id,
+                                            );
+                                        }}
+                                        onDirty={markFormDirty}
+                                        onClean={clearFormDirty}
+                                        isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "tracking" && (
+                        <div className="space-y-4">
+                            <h3 className="text-lg font-semibold text-zinc-900">Tracking milestones</h3>
+                            <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
+                                {renderStepper(trackingSteps, openTrackingStepId)}
+                            </div>
+                            {trackingSteps.map((s) => (
+                                <StepCard
+                                    key={s.id}
+                                    step={s}
+                                    user={user}
+                                    shipment={shipment}
+                                    canEdit={canEdit}
+                                    workflowBlocked={workflowBlocked}
+                                    receivedDocTypes={receivedDocTypes}
+                                    openDocRequestTypes={openDocRequestTypes}
+                                    latestReceivedDocByType={latestReceivedDocByType}
+                                    workflowGlobalValues={workflowGlobalValues}
+                                    highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
+                                    highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
+                                    partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
+                                    customers={customers}
+                                    suppliers={suppliers}
+                                    brokers={brokers}
+                                    allocationGoods={allocationGoods}
+                                    setTab={setTab}
+                                    tabId="tracking"
+                                    stepsById={stepById}
+                                    workflowGlobals={workflowGlobals}
+                                    isOpen={openTrackingStepId === s.id}
+                                    onToggle={() => {
+                                        setHasTouchedTracking(true);
+                                        setOpenTrackingStepId((prev) =>
+                                            prev === s.id ? null : s.id,
+                                        );
+                                    }}
+                                    onDirty={markFormDirty}
+                                    onClean={clearFormDirty}
+                                    isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                />
+                            ))}
+                            {trackingSteps.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                    No tracking steps configured.
                                 </div>
                             ) : null}
-
-                            {/* Internal Steps */}
-                            <div>
-                                <h3 className="mb-4 text-lg font-semibold text-zinc-900">Internal Workflow</h3>
-                                <div className="space-y-4">
-                                    {internalSteps.map((s) => (
-                                        // This would be the complex step card rendering logic
-                                        // For brevity, I'll need to copy the renderStepCard logic here or make it a sub-component
-                                        // Since I can't easily make it a sub-component without passing tons of props, I'll inline a simplified version
-                                        // or ideally, I should have copied the renderStepCard function.
-                                        // I will implement a placeholder here and then fill it in with the actual logic in a subsequent edit if needed,
-                                        // but to do this properly I should copy the logic.
-                                        // Let's try to copy the logic into a helper function inside this component or just inline it.
-                                        <StepCard
-                                            key={s.id}
-                                            step={s}
-                                            user={user}
-                                            shipment={shipment}
-                                            canEdit={canEdit}
-                                            workflowBlocked={workflowBlocked}
-                                            receivedDocTypes={receivedDocTypes}
-                                            openDocRequestTypes={openDocRequestTypes}
-                                            latestReceivedDocByType={latestReceivedDocByType}
-                                            workflowGlobalValues={workflowGlobalValues}
-                                            highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
-                                            partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
-                                            customers={customers}
-                                            suppliers={suppliers}
-                                            brokers={brokers}
-                                            shipmentGoods={shipmentGoods}
-                                            setActiveTab={setActiveTab}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Tracking Steps */}
-                            <div>
-                                <h3 className="mb-4 text-lg font-semibold text-zinc-900">Tracking Milestones</h3>
-                                <div className="space-y-4">
-                                    {trackingSteps.map((s) => (
-                                        <StepCard
-                                            key={s.id}
-                                            step={s}
-                                            user={user}
-                                            shipment={shipment}
-                                            canEdit={canEdit}
-                                            workflowBlocked={workflowBlocked}
-                                            receivedDocTypes={receivedDocTypes}
-                                            openDocRequestTypes={openDocRequestTypes}
-                                            latestReceivedDocByType={latestReceivedDocByType}
-                                            workflowGlobalValues={workflowGlobalValues}
-                                            highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
-                                            partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
-                                            customers={customers}
-                                            suppliers={suppliers}
-                                            brokers={brokers}
-                                            shipmentGoods={shipmentGoods}
-                                            setActiveTab={setActiveTab}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
                         </div>
                     )}
 
@@ -1023,6 +1619,23 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     )}
                 </div>
             </div>
+            <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,680px)] -translate-x-1/2 rounded-2xl border border-zinc-200 bg-white/90 p-3 shadow-lg backdrop-blur">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs font-medium text-zinc-600">
+                        {dirtyCount
+                            ? `${dirtyCount} unsaved change${dirtyCount === 1 ? "" : "s"}`
+                            : "All changes saved"}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleGlobalSave}
+                        disabled={!canEdit || dirtyCount === 0}
+                        className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+                    >
+                        Save updates
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -1030,29 +1643,41 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
 
 function StepFieldInputs({
+    shipmentId,
     stepId,
     schema,
     values,
     missingPaths,
     canEdit,
     latestReceivedDocByType,
+    openDocRequestTypes,
+    workflowGlobals,
     workflowGlobalValues,
     docTypes,
-    shipmentGoods,
+    allocationGoods,
+    stepsById,
 }: {
+    shipmentId: number;
     stepId: number;
     schema: StepFieldSchema;
     values: StepFieldValues;
     missingPaths: Set<string>;
     canEdit: boolean;
     latestReceivedDocByType: Record<string, any>;
+    openDocRequestTypes: string[];
+    workflowGlobals: WorkflowGlobalVariable[];
     workflowGlobalValues: WorkflowGlobalValues;
     docTypes: Set<string>;
-    shipmentGoods: any[];
+    allocationGoods: any[];
+    stepsById?: Map<number, any>;
 }) {
     const [groupCounts, setGroupCounts] = useState<Record<string, number>>({});
     const [groupRemovals, setGroupRemovals] = useState<Record<string, number[]>>({});
     const [choiceTabs, setChoiceTabs] = useState<Record<string, string>>({});
+    const freezeMap = getFreezeMap(values);
+    const globalLabelMap = new Map(
+        workflowGlobals.map((variable) => [variable.id, variable.label]),
+    );
 
     const addGroupItem = (groupKey: string, currentCount: number) => {
         setGroupCounts((prev) => ({
@@ -1086,9 +1711,26 @@ function StepFieldInputs({
                 const raw = fieldValues[field.id];
                 const value = typeof raw === "string" ? raw : "";
                 const inputType = field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
-                const linkedCountdown = field.type === "date" && field.linkToGlobal
-                    ? formatCountdown(value, workflowGlobalValues[field.linkToGlobal])
+                const globalLabel = field.linkToGlobal
+                    ? globalLabelMap.get(field.linkToGlobal) ?? null
                     : null;
+                const stopRef = parseStopCountdownPath(field.stopCountdownPath);
+                const externalStep =
+                    stopRef?.stepId && stopRef.stepId !== stepId
+                        ? stepsById?.get?.(stopRef.stepId) ?? null
+                        : null;
+                const stopSource = externalStep
+                    ? getStepFieldValues(externalStep)
+                    : stopRef?.stepId && stopRef.stepId !== stepId
+                        ? {}
+                        : values;
+                const stopValue = stopRef ? getValueAtPath(stopSource, stopRef.path) : null;
+                const stopActive = isTruthyBooleanValue(stopValue);
+                const freezeAt = freezeMap[encodedPath];
+                const countdownText =
+                    field.type === "number" && field.linkToGlobal
+                        ? formatCountdownRemaining(value, workflowGlobalValues[field.linkToGlobal], stopActive ? freezeAt ?? null : null, stopActive)
+                        : null;
 
                 return (
                     <label key={fieldKey} className="block">
@@ -1104,11 +1746,35 @@ function StepFieldInputs({
                                 }`}
                             placeholder="Enter value..."
                         />
-                        {linkedCountdown ? (
+                        {field.type === "date" && globalLabel ? (
                             <div className="mt-1 text-[11px] text-zinc-500">
-                                {linkedCountdown}
+                                Sets global date: {globalLabel}
                             </div>
                         ) : null}
+                        {countdownText ? (
+                            <div className="mt-1 text-[11px] text-zinc-500">
+                                {countdownText}
+                            </div>
+                        ) : null}
+                    </label>
+                );
+            }
+
+            if (field.type === "boolean") {
+                const raw = fieldValues[field.id];
+                const checked = isTruthyBooleanValue(raw);
+                return (
+                    <label key={fieldKey} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm">
+                        <input type="hidden" name={fieldInputName(fieldPath)} value="" />
+                        <input
+                            type="checkbox"
+                            name={fieldInputName(fieldPath)}
+                            value="1"
+                            defaultChecked={checked}
+                            disabled={!canEdit || disabled}
+                            className={`h-4 w-4 rounded border ${showMissing ? "border-red-300" : "border-zinc-300"}`}
+                        />
+                        <span className="text-sm text-zinc-700">{field.label}</span>
                     </label>
                 );
             }
@@ -1122,23 +1788,22 @@ function StepFieldInputs({
                 return (
                     <div key={fieldKey} className={`rounded-lg border p-3 ${blockClasses}`}>
                         <div className="text-xs font-medium text-zinc-700">{field.label}</div>
-                        {shipmentGoods.length ? (
+                        {allocationGoods.length ? (
                             <div className="mt-2 space-y-2">
-                                {shipmentGoods.map((sg) => {
+                                {allocationGoods.map((sg) => {
                                     const key = `good-${sg.id}`;
                                     const raw = goodsValues[key];
                                     const value = typeof raw === "string" ? raw : "";
-                                    const allocated =
-                                        sg.allocated_at ||
-                                        sg.allocated_quantity > 0 ||
-                                        sg.inventory_quantity > 0;
+                                    const available = Math.max(0, sg.quantity - sg.allocated_quantity);
+                                    const exhausted = available <= 0;
+                                    const isConnected = sg.shipment_id !== shipmentId;
                                     const customerLabel = sg.applies_to_all_customers
                                         ? "All customers"
                                         : sg.customer_name ?? "-";
                                     return (
                                         <div
                                             key={sg.id}
-                                            className={`rounded-lg border px-3 py-2 text-xs ${allocated ? "border-zinc-200 bg-zinc-50 text-zinc-400" : "border-zinc-200 bg-white"}`}
+                                            className={`rounded-lg border px-3 py-2 text-xs ${exhausted ? "border-zinc-200 bg-zinc-50 text-zinc-400" : "border-zinc-200 bg-white"}`}
                                         >
                                             <div className="flex items-center justify-between gap-2">
                                                 <div>
@@ -1146,8 +1811,24 @@ function StepFieldInputs({
                                                     <div className="text-[11px] text-zinc-500">
                                                         {sg.good_origin} - {sg.quantity} {sg.unit_type} - {customerLabel}
                                                     </div>
+                                                    {isConnected ? (
+                                                        <div className="mt-1 text-[11px] text-zinc-500">
+                                                            From {sg.shipment_code}
+                                                        </div>
+                                                    ) : null}
                                                 </div>
-                                                {allocated ? <Badge tone="green">Allocated</Badge> : null}
+                                                <div className="flex items-center gap-2">
+                                                    {isConnected ? <Badge tone="blue">Connected</Badge> : null}
+                                                    {exhausted ? <Badge tone="green">Allocated</Badge> : null}
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                                                <span>
+                                                    Available: {available} {sg.unit_type}
+                                                </span>
+                                                {sg.allocated_quantity > 0 ? (
+                                                    <span>Already taken: {sg.allocated_quantity}</span>
+                                                ) : null}
                                             </div>
                                             <label className="mt-2 block">
                                                 <div className="mb-1 text-[11px] font-medium text-zinc-600">
@@ -1158,9 +1839,9 @@ function StepFieldInputs({
                                                     name={fieldInputName([...fieldPath, key])}
                                                     defaultValue={value}
                                                     min={0}
-                                                    max={sg.quantity}
+                                                    max={available}
                                                     step={1}
-                                                    disabled={!canEdit || disabled || allocated}
+                                                    disabled={!canEdit || disabled || exhausted}
                                                     className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
                                                     placeholder="0"
                                                 />
@@ -1182,11 +1863,12 @@ function StepFieldInputs({
                 const docType = stepFieldDocType(stepId, encodedPath);
                 const latestDoc = latestReceivedDocByType[docType];
                 const received = docTypes.has(docType);
+                const requested = openDocRequestTypes.includes(docType);
                 return (
                     <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
                         <div className="flex items-center justify-between gap-2 text-xs font-medium text-zinc-700">
                             <span>{field.label}</span>
-                            {received ? <Badge tone="green">Uploaded</Badge> : null}
+                            {received ? <Badge tone="green">Uploaded</Badge> : requested ? <Badge tone="yellow">Requested</Badge> : null}
                         </div>
                         <div className="mt-2 grid gap-2 sm:grid-cols-2">
                             <label className="block">
@@ -1212,6 +1894,19 @@ function StepFieldInputs({
                                 ) : (
                                     <span>No file uploaded</span>
                                 )}
+                                {!received && !requested && canEdit && !disabled ? (
+                                    <button
+                                        type="submit"
+                                        formAction={requestDocumentAction.bind(
+                                            null,
+                                            shipmentId,
+                                            docType,
+                                        )}
+                                        className="mt-2 inline-flex items-center rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50"
+                                    >
+                                        Request from customer
+                                    </button>
+                                ) : null}
                             </div>
                         </div>
                     </div>
@@ -1358,6 +2053,19 @@ function StepFieldInputs({
                                     const superseded = !!finalOption && finalComplete && option.id !== finalOption.id;
                                     const optionMissing = hasMissingUnderPath(missingPaths, optionEncoded) && !superseded && !disabled;
                                     const isActive = option.id === activeOptionId;
+                                    const optionHasValue = hasAnyFieldValue(
+                                        stepId,
+                                        option.fields,
+                                        optionValues,
+                                        docTypes,
+                                        optionPath,
+                                    );
+                                    const optionMessage =
+                                        option.customer_message_visible && option.customer_message
+                                            ? String(option.customer_message).trim()
+                                            : "";
+                                    const showCustomerMessage =
+                                        optionHasValue && !superseded && !!optionMessage;
 
                                     return (
                                         <div
@@ -1373,6 +2081,11 @@ function StepFieldInputs({
                                             <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                                 {renderFields(option.fields, optionPath, optionValues as StepFieldValues, disabled || superseded)}
                                             </div>
+                                            {showCustomerMessage ? (
+                                                <div className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-900">
+                                                    Customer message: {optionMessage}
+                                                </div>
+                                            ) : null}
                                         </div>
                                     );
                                 })}
@@ -1396,9 +2109,8 @@ function StepFieldInputs({
     );
 }
 
-// Simplified StepCard component for the Workflow tab
-// In a real scenario, this would need all the logic from the original renderStepCard
-// Helper functions for parsing step data and handling checklists
+// Step card component shared by workflow and tracking tabs.
+// Helper functions for parsing step data and handling checklists.
 function jsonParse<T>(value: string | null | undefined, fallback: T): T {
     if (!value) return fallback;
     try {
@@ -1418,6 +2130,10 @@ function parseRequiredDocumentTypes(step: any): string[] {
 
 function parseChecklistGroups(step: any): any[] {
     return jsonParse(step.checklist_groups_json, [] as any[]);
+}
+
+function parseDependsOn(step: any): number[] {
+    return jsonParse(step.depends_on_step_ids_json, [] as number[]);
 }
 
 function getStepFieldSchema(step: any): StepFieldSchema {
@@ -1441,17 +2157,76 @@ function toRecord(value: unknown): Record<string, unknown> {
     return isPlainObject(value) ? value : {};
 }
 
-function formatCountdown(start: string, target?: string | null): string | null {
-    if (!start || !target) return null;
-    const startMs = Date.parse(start);
-    const targetMs = Date.parse(target);
-    if (Number.isNaN(startMs) || Number.isNaN(targetMs)) return null;
-    const diffMs = targetMs - startMs;
-    const days = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-    if (days === 0) return "Countdown: today";
-    if (days > 0) return `Countdown: ${days} day${days === 1 ? "" : "s"}`;
-    const overdue = Math.abs(days);
-    return `Overdue by ${overdue} day${overdue === 1 ? "" : "s"}`;
+const COUNTDOWN_FREEZE_KEY = "__countdown_freeze__";
+
+function isTruthyBooleanValue(value: unknown): boolean {
+    if (typeof value !== "string") return false;
+    const normalized = value.trim().toLowerCase();
+    return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function getFreezeMap(values: StepFieldValues): Record<string, string> {
+    const raw = values[COUNTDOWN_FREEZE_KEY];
+    if (!isPlainObject(raw)) return {};
+    const result: Record<string, string> = {};
+    for (const [key, entry] of Object.entries(raw)) {
+        if (typeof entry === "string") {
+            result[key] = entry;
+        }
+    }
+    return result;
+}
+
+function normalizeDate(value: string): Date | null {
+    if (!value) return null;
+    const parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return null;
+    const date = new Date(parsed);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatCountdownRemaining(
+    totalRaw: string,
+    globalDateRaw?: string | null,
+    freezeAtRaw?: string | null,
+    isStopped?: boolean,
+): string | null {
+    if (!totalRaw || !globalDateRaw) return null;
+    const total = Number(totalRaw);
+    if (!Number.isFinite(total)) return null;
+    const globalDate = normalizeDate(globalDateRaw);
+    if (!globalDate) return null;
+    const anchor = freezeAtRaw ? normalizeDate(freezeAtRaw) : null;
+    const today = anchor ?? new Date();
+    const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diffMs = base.getTime() - globalDate.getTime();
+    const daysSince = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    const remaining = Math.ceil(total - daysSince);
+    let message = "";
+    if (remaining === 0) {
+        message = "Due today";
+    } else if (remaining > 0) {
+        message = `Remaining: ${remaining} day${remaining === 1 ? "" : "s"}`;
+    } else {
+        const overdue = Math.abs(remaining);
+        message = `Overdue by ${overdue} day${overdue === 1 ? "" : "s"}`;
+    }
+    return isStopped ? `${message} (stopped)` : message;
+}
+
+function getValueAtPath(values: StepFieldValues, path: string[]): StepFieldValue | undefined {
+    let current: StepFieldValue | undefined = values;
+    for (const segment of path) {
+        if (!current) return undefined;
+        if (Array.isArray(current)) {
+            if (!/^[0-9]+$/.test(segment)) return undefined;
+            current = current[Number(segment)];
+            continue;
+        }
+        if (!isPlainObject(current)) return undefined;
+        current = current[segment] as StepFieldValue | undefined;
+    }
+    return current;
 }
 
 function hasMissingUnderPath(missingPaths: Set<string>, prefix: string): boolean {
@@ -1491,6 +2266,11 @@ function hasAnyFieldValue(
         if (field.type === "text" || field.type === "number" || field.type === "date") {
             const value = container[field.id];
             if (typeof value === "string" && value.trim()) return true;
+            continue;
+        }
+        if (field.type === "boolean") {
+            const value = container[field.id];
+            if (isTruthyBooleanValue(value)) return true;
             continue;
         }
         if (field.type === "file") {
@@ -1567,13 +2347,22 @@ function StepCard({
     openDocRequestTypes,
     latestReceivedDocByType,
     workflowGlobalValues,
+    workflowGlobals,
     highlightRequirements,
+    highlightDependencies,
     partiesById,
     customers,
     suppliers,
     brokers,
-    shipmentGoods,
-    setActiveTab,
+    allocationGoods,
+    setTab,
+    tabId,
+    stepsById,
+    isOpen,
+    onToggle,
+    onDirty,
+    onClean,
+    isDirty,
 }: any) {
     const fieldSchema = getStepFieldSchema(step);
     const fieldValues = getStepFieldValues(step);
@@ -1608,10 +2397,18 @@ function StepCard({
         return !items.some((item: any) => isChecklistItemComplete(group, item));
     });
 
+    const dependencyIds = parseDependsOn(step);
+    const unmetDependencyIds = dependencyIds.filter((id) => {
+        const dep = stepsById?.get?.(id);
+        return !dep || dep.status !== "DONE";
+    });
+    const blockedByDependencies = unmetDependencyIds.length > 0 && step.status !== "DONE";
+
     const canMarkDone =
         missingFieldPaths.size === 0 &&
         missingRequiredDocs.length === 0 &&
-        missingChecklistGroups.length === 0;
+        missingChecklistGroups.length === 0 &&
+        !blockedByDependencies;
     const highlightFieldPaths = highlightRequirements ? missingFieldPaths : new Set<string>();
     const hasRequirements =
         fieldSchema.fields.length > 0 ||
@@ -1620,38 +2417,53 @@ function StepCard({
 
     const isMyStep = step.owner_role === user.role;
     const blockedByException = workflowBlocked && step.status !== "DONE";
-    const canEditStepStatus = canEdit && !blockedByException;
+    const canEditStepStatus = canEdit && !blockedByException && !blockedByDependencies;
     const relatedParty = step.related_party_id
         ? partiesById.get(step.related_party_id) ?? null
         : null;
     const isTracking = step.is_external === 1;
+    const formId = `step-form-${step.id}`;
+    const statusStyles = stepStatusStyles(step.status);
+    const cardBorder =
+        highlightRequirements || highlightDependencies
+            ? "border-red-200 ring-2 ring-red-50"
+            : isMyStep
+                ? "border-blue-200"
+                : "border-zinc-200";
 
     return (
         <div
             id={`step-${step.id}`}
-            className={`rounded-xl border bg-white p-4 ${highlightRequirements
-                ? "border-red-200 ring-4 ring-red-50"
-                : isMyStep
-                    ? "border-blue-200"
-                    : "border-zinc-200"
-                }`}
+            className={`scroll-mt-32 rounded-xl border bg-white ${cardBorder} border-l-4 ${statusStyles.border}`}
         >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <div className="flex items-center gap-2">
+            <div
+                className={`flex flex-wrap items-start justify-between gap-3 rounded-t-xl px-4 py-3 ${statusStyles.header} ${isOpen ? "border-b border-zinc-200" : ""}`}
+            >
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={isOpen}
+                    aria-controls={`step-body-${step.id}`}
+                    className="flex min-w-0 flex-1 flex-col text-left"
+                >
+                    <div className="flex flex-wrap items-center gap-2">
                         <div className="text-sm font-semibold text-zinc-900">
                             {step.sort_order}. {step.name}
                         </div>
                         <Badge tone={stepTone(step.status)}>
                             {stepStatusLabel(step.status)}
                         </Badge>
+                        {isDirty ? <Badge tone="yellow">Unsaved</Badge> : null}
                         {isMyStep ? <Badge tone="blue">Your step</Badge> : null}
                         {isTracking ? <Badge tone="yellow">Tracking</Badge> : null}
                         {blockedByException ? (
                             <Badge tone="red">Blocked by exception</Badge>
                         ) : null}
+                        {blockedByDependencies ? (
+                            <Badge tone="zinc">Blocked by dependencies</Badge>
+                        ) : null}
                     </div>
-                    <div className="mt-1 text-xs text-zinc-500">
+                    <div className="mt-1 text-xs text-zinc-600">
                         Owner: {step.owner_role}
                         {step.sla_hours ? ` - SLA: ${step.sla_hours}h` : ""}
                         {step.due_at ? (
@@ -1670,115 +2482,171 @@ function StepCard({
                             </>
                         ) : null}
                     </div>
-
-                    {highlightRequirements ? (
-                        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
-                            Missing requirements. Fill required fields, documents, or checklist
-                            items, then try marking Done again.
-                        </div>
-                    ) : null}
-
-                    {requiredDocs.length ? (
-                        <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                            <div className="text-xs font-medium text-zinc-700">
-                                Required documents
-                            </div>
-                            <div className="mt-2 flex flex-col gap-2">
-                                {requiredDocs.map((dt) => {
-                                    const received = receivedDocTypes.includes(dt);
-                                    const requested = openDocRequestTypes.includes(dt);
-                                    const showMissing = highlightRequirements && !received;
-                                    const latestDoc = latestReceivedDocByType[dt];
-                                    const tone = received
-                                        ? "green"
-                                        : requested
-                                            ? "yellow"
-                                            : "red";
-
-                                    return (
-                                        <div
-                                            key={dt}
-                                            className={`flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-xs ${showMissing
-                                                ? "border-red-200 bg-red-50"
-                                                : "border-zinc-200"
-                                                }`}
-                                        >
-                                            <div className="font-medium text-zinc-900">{dt}</div>
-                                            <div className="flex items-center gap-2">
-                                                <Badge tone={tone}>
-                                                    {received
-                                                        ? "Received"
-                                                        : requested
-                                                            ? "Requested"
-                                                            : "Missing"}
-                                                </Badge>
-                                                {received && latestDoc ? (
-                                                    <a
-                                                        href={`/api/documents/${latestDoc.id}`}
-                                                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                                                    >
-                                                        Download
-                                                    </a>
-                                                ) : null}
-                                                {!received && !requested && canEdit ? (
-                                                    <form
-                                                        action={requestDocumentAction.bind(
-                                                            null,
-                                                            shipment.id,
-                                                        )}
-                                                        className="flex items-center"
-                                                    >
-                                                        <input
-                                                            type="hidden"
-                                                            name="documentType"
-                                                            value={dt}
-                                                        />
-                                                        <button
-                                                            type="submit"
-                                                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100"
-                                                        >
-                                                            Request
-                                                        </button>
-                                                    </form>
-                                                ) : null}
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            <div className="mt-2 text-xs text-zinc-600">
-                                <button
-                                    onClick={() => {
-                                        setActiveTab("documents");
-                                        setTimeout(() => document.getElementById("documents")?.scrollIntoView({ behavior: 'smooth' }), 100);
-                                    }}
-                                    className="font-medium text-zinc-700 hover:underline"
-                                >
-                                    Go to documents
-                                </button>
-                            </div>
-                        </div>
-                    ) : null}
+                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="submit"
+                        form={formId}
+                        disabled={!canEdit}
+                        className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                    >
+                        Save
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onToggle}
+                        className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    >
+                        {isOpen ? "Collapse" : "Expand"}
+                    </button>
                 </div>
             </div>
 
-            <form
-                action={updateStepAction.bind(null, shipment.id)}
-                className="mt-3 space-y-3"
+            <div
+                id={`step-body-${step.id}`}
+                className={isOpen ? "px-4 pb-4" : "hidden"}
             >
+                {dependencyIds.length ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+                        <span className="font-medium text-zinc-600">Depends on:</span>
+                        {dependencyIds.map((id) => {
+                            const dep = stepsById?.get?.(id);
+                            const label = dep ? `${dep.sort_order}. ${dep.name}` : `Step ${id}`;
+                            const tone = dep && dep.status === "DONE" ? "green" : "zinc";
+                            return (
+                                <span
+                                    key={`dep-${step.id}-${id}`}
+                                    className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5"
+                                >
+                                    <span className="text-zinc-700">{label}</span>
+                                    <Badge tone={tone}>
+                                        {dep ? stepStatusLabel(dep.status) : "Missing"}
+                                    </Badge>
+                                </span>
+                            );
+                        })}
+                    </div>
+                ) : null}
+
+                {highlightRequirements ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                        Missing requirements. Fill required fields, documents, or checklist
+                        items, then try marking Done again.
+                    </div>
+                ) : null}
+                {highlightDependencies ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-900">
+                        Complete the dependency steps before updating the status.
+                    </div>
+                ) : null}
+
+                {requiredDocs.length ? (
+                    <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                        <div className="text-xs font-medium text-zinc-700">
+                            Required documents
+                        </div>
+                        <div className="mt-2 flex flex-col gap-2">
+                            {requiredDocs.map((dt) => {
+                                const received = receivedDocTypes.includes(dt);
+                                const requested = openDocRequestTypes.includes(dt);
+                                const showMissing = highlightRequirements && !received;
+                                const latestDoc = latestReceivedDocByType[dt];
+                                const tone = received
+                                    ? "green"
+                                    : requested
+                                        ? "yellow"
+                                        : "red";
+
+                                return (
+                                    <div
+                                        key={dt}
+                                        className={`flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-xs ${showMissing
+                                            ? "border-red-200 bg-red-50"
+                                            : "border-zinc-200"
+                                            }`}
+                                    >
+                                        <div className="font-medium text-zinc-900">{dt}</div>
+                                        <div className="flex items-center gap-2">
+                                            <Badge tone={tone}>
+                                                {received
+                                                    ? "Received"
+                                                    : requested
+                                                        ? "Requested"
+                                                        : "Missing"}
+                                            </Badge>
+                                            {received && latestDoc ? (
+                                                <a
+                                                    href={`/api/documents/${latestDoc.id}`}
+                                                    className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                                                >
+                                                    Download
+                                                </a>
+                                            ) : null}
+                                            {!received && !requested && canEdit ? (
+                                                <form
+                                                    action={requestDocumentAction.bind(
+                                                        null,
+                                                        shipment.id,
+                                                    )}
+                                                    className="flex items-center"
+                                                >
+                                                    <input
+                                                        type="hidden"
+                                                        name="documentType"
+                                                        value={dt}
+                                                    />
+                                                    <button
+                                                        type="submit"
+                                                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100"
+                                                    >
+                                                        Request
+                                                    </button>
+                                                </form>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="mt-2 text-xs text-zinc-600">
+                            <button
+                                onClick={() => {
+                                    setTab("documents");
+                                    setTimeout(() => document.getElementById("documents")?.scrollIntoView({ behavior: 'smooth' }), 100);
+                                }}
+                                className="font-medium text-zinc-700 hover:underline"
+                            >
+                                Go to documents
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                <form
+                    id={formId}
+                    action={updateStepAction.bind(null, shipment.id)}
+                    className="mt-4 space-y-3"
+                    onChange={() => onDirty?.(formId)}
+                    onSubmit={() => onClean?.(formId)}
+                >
                 <input type="hidden" name="stepId" value={step.id} />
+                <input type="hidden" name="tab" value={tabId} />
 
                 {fieldSchema.fields.length ? (
                     <StepFieldInputs
+                        shipmentId={shipment.id}
                         stepId={step.id}
                         schema={fieldSchema}
                         values={fieldValues}
                         missingPaths={highlightFieldPaths}
                         canEdit={canEdit}
                         latestReceivedDocByType={latestReceivedDocByType}
+                        openDocRequestTypes={openDocRequestTypes}
+                        workflowGlobals={workflowGlobals}
                         workflowGlobalValues={workflowGlobalValues}
                         docTypes={docTypes}
-                        shipmentGoods={shipmentGoods}
+                        allocationGoods={allocationGoods}
+                        stepsById={stepsById}
                     />
                 ) : null}
 
@@ -1984,6 +2852,11 @@ function StepCard({
                                 Status updates are disabled until the exception is resolved.
                             </div>
                         ) : null}
+                        {blockedByDependencies ? (
+                            <div className="mt-1 text-xs text-zinc-500">
+                                Status updates are disabled until the dependency steps are done.
+                            </div>
+                        ) : null}
                     </label>
                     <label className="block sm:col-span-2">
                         <div className="mb-1 text-xs font-medium text-zinc-600">
@@ -2014,5 +2887,6 @@ function StepCard({
                 </div>
             </form>
         </div>
+    </div>
     );
 }

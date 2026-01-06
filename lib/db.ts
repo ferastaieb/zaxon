@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 11;
 
 declare global {
   var __logisticDb: DatabaseSync | undefined;
@@ -77,6 +77,7 @@ function migrateToV1(db: DatabaseSync) {
       is_external INTEGER NOT NULL DEFAULT 0,
       checklist_groups_json TEXT NOT NULL DEFAULT '[]',
       field_schema_json TEXT NOT NULL DEFAULT '{}',
+      depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]',
       group_id TEXT,
       group_label TEXT,
       group_template_id INTEGER,
@@ -178,6 +179,7 @@ function migrateToV1(db: DatabaseSync) {
       customer_visible INTEGER NOT NULL DEFAULT 0,
       is_external INTEGER NOT NULL DEFAULT 0,
       checklist_groups_json TEXT NOT NULL DEFAULT '[]',
+      depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]',
       customer_completion_message_template TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -190,6 +192,17 @@ function migrateToV1(db: DatabaseSync) {
       created_at TEXT NOT NULL,
       created_by_user_id INTEGER REFERENCES users(id),
       PRIMARY KEY (shipment_id, customer_party_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS shipment_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      connected_shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      shipment_label TEXT,
+      connected_label TEXT,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      UNIQUE (shipment_id, connected_shipment_id)
     );
 
     CREATE TABLE IF NOT EXISTS goods (
@@ -347,6 +360,8 @@ function migrateToV1(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS idx_activity_shipment ON activities(shipment_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_id, is_read);
     CREATE INDEX IF NOT EXISTS idx_shipment_customers_customer ON shipment_customers(customer_party_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_links_shipment ON shipment_links(shipment_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_links_connected ON shipment_links(connected_shipment_id);
     CREATE INDEX IF NOT EXISTS idx_shipment_goods_shipment ON shipment_goods(shipment_id);
     CREATE INDEX IF NOT EXISTS idx_shipment_goods_owner ON shipment_goods(owner_user_id);
     CREATE INDEX IF NOT EXISTS idx_goods_owner ON goods(owner_user_id);
@@ -661,6 +676,54 @@ function migrateToV9(db: DatabaseSync) {
   `);
 }
 
+function migrateToV10(db: DatabaseSync) {
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS shipment_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      connected_shipment_id INTEGER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      shipment_label TEXT,
+      connected_label TEXT,
+      created_at TEXT NOT NULL,
+      created_by_user_id INTEGER REFERENCES users(id),
+      UNIQUE (shipment_id, connected_shipment_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shipment_links_shipment ON shipment_links(shipment_id);
+    CREATE INDEX IF NOT EXISTS idx_shipment_links_connected ON shipment_links(connected_shipment_id);
+  `);
+}
+
+function migrateToV11(db: DatabaseSync) {
+  db.exec(`PRAGMA foreign_keys = ON;`);
+
+  const templateColumns = db
+    .prepare("PRAGMA table_info(workflow_template_steps)")
+    .all() as Array<{ name?: string } | undefined>;
+  const hasTemplateDeps = templateColumns.some(
+    (c) => c?.name === "depends_on_step_ids_json",
+  );
+  if (!hasTemplateDeps) {
+    db.exec(
+      "ALTER TABLE workflow_template_steps ADD COLUMN depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+
+  const stepColumns = db.prepare("PRAGMA table_info(shipment_steps)").all() as Array<
+    { name?: string } | undefined
+  >;
+  const hasStepDeps = stepColumns.some(
+    (c) => c?.name === "depends_on_step_ids_json",
+  );
+  if (!hasStepDeps) {
+    db.exec(
+      "ALTER TABLE shipment_steps ADD COLUMN depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("PRAGMA user_version").get() as
     | { user_version?: number }
@@ -678,6 +741,8 @@ function migrate(db: DatabaseSync) {
   if (currentVersion < 7) migrateToV7(db);
   if (currentVersion < 8) migrateToV8(db);
   if (currentVersion < 9) migrateToV9(db);
+  if (currentVersion < 10) migrateToV10(db);
+  if (currentVersion < 11) migrateToV11(db);
 
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
 }

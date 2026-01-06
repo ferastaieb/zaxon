@@ -27,8 +27,9 @@ export async function saveUpload(input: {
   ensureDir(folder);
 
   const fileName = sanitizeFileName(input.file.name || "upload");
-  const prefix = input.filePrefix ? `${input.filePrefix}-` : "";
-  const fullName = `${prefix}${Date.now()}-${fileName}`;
+  const prefixValue = input.filePrefix ? sanitizeFileName(input.filePrefix) : "";
+  const prefix = prefixValue ? `${prefixValue}-` : "";
+  const fullName = sanitizeFileName(`${prefix}${Date.now()}-${fileName}`);
   const storagePath = path.join(folder, fullName);
 
   const buffer = Buffer.from(await input.file.arrayBuffer());

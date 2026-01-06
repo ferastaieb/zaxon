@@ -29,15 +29,7 @@ export default async function NewShipmentPage() {
     const origin = String(formData.get("origin") ?? "").trim();
     const destination = String(formData.get("destination") ?? "").trim();
     const shipmentType = String(formData.get("shipmentType") ?? "") as ShipmentType;
-    const cargoDescription = String(formData.get("cargoDescription") ?? "").trim();
-
-    const packagesCountRaw = String(formData.get("packagesCount") ?? "").trim();
-    const packagesCount = packagesCountRaw ? Number(packagesCountRaw) : null;
-    const weightKgRaw = String(formData.get("weightKg") ?? "").trim();
-    const weightKg = weightKgRaw ? Number(weightKgRaw) : null;
-    const dimensions = String(formData.get("dimensions") ?? "").trim() || null;
-    const containerNumber = String(formData.get("containerNumber") ?? "").trim() || null;
-    const blNumber = String(formData.get("blNumber") ?? "").trim() || null;
+    const cargoDescription = "Not set";
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
       ? Array.from(
@@ -49,9 +41,6 @@ export default async function NewShipmentPage() {
           ),
         ).slice(0, 20)
       : [];
-    const etd = String(formData.get("etd") ?? "").trim() || null;
-    const eta = String(formData.get("eta") ?? "").trim() || null;
-
     const workflowTemplateIdRaw = String(formData.get("workflowTemplateId") ?? "").trim();
     let workflowTemplateId = workflowTemplateIdRaw ? Number(workflowTemplateIdRaw) : null;
 
@@ -60,8 +49,7 @@ export default async function NewShipmentPage() {
       !TransportModes.includes(transportMode) ||
       !ShipmentTypes.includes(shipmentType) ||
       !origin ||
-      !destination ||
-      !cargoDescription
+      !destination
     ) {
       redirect("/shipments/new?error=invalid");
     }
@@ -87,13 +75,6 @@ export default async function NewShipmentPage() {
       destination,
       shipmentType,
       cargoDescription,
-      packagesCount: Number.isFinite(packagesCount) ? packagesCount : null,
-      weightKg: Number.isFinite(weightKg) ? weightKg : null,
-      dimensions,
-      etd,
-      eta,
-      containerNumber,
-      blNumber,
       jobIds: jobIds.length ? jobIds : undefined,
       workflowTemplateId,
       createdByUserId: user.id,

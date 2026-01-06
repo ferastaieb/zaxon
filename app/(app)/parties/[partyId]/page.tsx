@@ -285,6 +285,7 @@ export default async function PartyDetailsPage({
                   <tr>
                     <th className="py-2 pr-4">Good</th>
                     <th className="py-2 pr-4">Total quantity</th>
+                    <th className="py-2 pr-4">Remaining</th>
                     <th className="py-2 pr-4">Shipments</th>
                   </tr>
                 </thead>
@@ -301,6 +302,9 @@ export default async function PartyDetailsPage({
                         </td>
                         <td className="py-2 pr-4 text-zinc-700">
                           {g.total_quantity} {g.unit_type}
+                        </td>
+                        <td className="py-2 pr-4 text-zinc-700">
+                          {g.remaining_quantity} {g.unit_type}
                         </td>
                         <td className="py-2 pr-4 text-zinc-700">
                           {shipmentRefs.length ? (
@@ -324,7 +328,7 @@ export default async function PartyDetailsPage({
                   })}
                   {goodsSummary.length === 0 ? (
                     <tr>
-                      <td className="py-6 text-sm text-zinc-500" colSpan={3}>
+                      <td className="py-6 text-sm text-zinc-500" colSpan={4}>
                         No goods yet.
                       </td>
                     </tr>

@@ -16,6 +16,7 @@ import type { PartyRow } from "@/lib/data/parties";
 import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
 import { listTemplateSteps } from "@/lib/data/workflows";
+import { mapStopCountdownPaths, parseStepFieldSchema } from "@/lib/stepFields";
 
 export type ShipmentRow = {
   id: number;
@@ -58,6 +59,15 @@ export type ShipmentListRow = {
   eta: string | null;
 };
 
+export type ShipmentConnectOption = {
+  id: number;
+  shipment_code: string;
+  customer_names: string | null;
+  origin: string;
+  destination: string;
+  last_update_at: string;
+};
+
 export type ShipmentStepRow = {
   id: number;
   shipment_id: number;
@@ -78,6 +88,7 @@ export type ShipmentStepRow = {
   customer_visible: 0 | 1;
   is_external: 0 | 1;
   checklist_groups_json: string;
+  depends_on_step_ids_json: string;
   customer_completion_message_template: string | null;
   created_at: string;
   updated_at: string;
@@ -236,6 +247,66 @@ export function listShipmentsForUser(input: {
   );
 }
 
+export function listConnectableShipments(input: {
+  customerPartyIds: number[];
+  userId: number;
+  role: string;
+  excludeShipmentId?: number;
+}) {
+  const db = getDb();
+  const customerIds = Array.from(
+    new Set(
+      input.customerPartyIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  );
+  if (!customerIds.length) return [];
+
+  const canAccessAll = input.role === "ADMIN" || input.role === "FINANCE";
+  const accessJoin = canAccessAll
+    ? ""
+    : "JOIN shipment_access sa ON sa.shipment_id = s.id AND sa.user_id = ?";
+  const customerPlaceholders = customerIds.map(() => "?").join(", ");
+  const whereParts = [`sc.customer_party_id IN (${customerPlaceholders})`];
+  const params: Array<string | number> = [];
+  if (!canAccessAll) {
+    params.push(input.userId);
+  }
+  params.push(...customerIds);
+  if (input.excludeShipmentId) {
+    whereParts.push("s.id != ?");
+    params.push(input.excludeShipmentId);
+  }
+  const whereSql = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+  return queryAll<ShipmentConnectOption>(
+    `
+      SELECT
+        s.id,
+        s.shipment_code,
+        (
+          SELECT REPLACE(group_concat(DISTINCT c2.name), ',', ', ')
+          FROM shipment_customers sc2
+          JOIN parties c2 ON c2.id = sc2.customer_party_id
+          WHERE sc2.shipment_id = s.id
+        ) AS customer_names,
+        s.origin,
+        s.destination,
+        s.last_update_at
+      FROM shipments s
+      JOIN shipment_customers sc ON sc.shipment_id = s.id
+      ${accessJoin}
+      ${whereSql}
+      GROUP BY s.id
+      ORDER BY s.last_update_at DESC
+      LIMIT 500
+    `,
+    params,
+    db,
+  );
+}
+
 export function getShipment(
   shipmentId: number,
 ): (ShipmentRow & { customer_names: string | null }) | null {
@@ -255,6 +326,29 @@ export function getShipment(
       LIMIT 1
     `,
     [shipmentId],
+    db,
+  );
+}
+
+export function getShipmentByCode(
+  shipmentCode: string,
+): (ShipmentRow & { customer_names: string | null }) | null {
+  const db = getDb();
+  return queryOne<ShipmentRow & { customer_names: string | null }>(
+    `
+      SELECT
+        s.*,
+        (
+          SELECT REPLACE(group_concat(DISTINCT c2.name), ',', ', ')
+          FROM shipment_customers sc2
+          JOIN parties c2 ON c2.id = sc2.customer_party_id
+          WHERE sc2.shipment_id = s.id
+        ) AS customer_names
+      FROM shipments s
+      WHERE s.shipment_code = ?
+      LIMIT 1
+    `,
+    [shipmentCode],
     db,
   );
 }
@@ -481,18 +575,19 @@ export function createShipment(input: {
     // Steps from template
     if (input.workflowTemplateId) {
       const templateSteps = listTemplateSteps(input.workflowTemplateId);
+      const stepIdMap = new Map<number, number>();
       for (const step of templateSteps) {
-        execute(
+        const inserted = execute(
           `
             INSERT INTO shipment_steps (
               shipment_id, sort_order, name, owner_role,
               status, notes,
               required_fields_json, required_document_types_json,
-              is_external, checklist_groups_json, field_schema_json,
+              is_external, checklist_groups_json, field_schema_json, depends_on_step_ids_json,
               sla_hours, due_at, started_at, completed_at,
               customer_visible, customer_completion_message_template,
               created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
           `,
           [
             shipmentId,
@@ -505,6 +600,7 @@ export function createShipment(input: {
             step.is_external,
             step.checklist_groups_json,
             step.field_schema_json ?? "{}",
+            JSON.stringify([]),
             step.sla_hours ?? null,
             step.is_external ? 1 : step.customer_visible,
             step.customer_completion_message_template ?? null,
@@ -513,6 +609,9 @@ export function createShipment(input: {
           ],
           db,
         );
+        if (inserted.lastInsertRowid) {
+          stepIdMap.set(step.id, inserted.lastInsertRowid);
+        }
 
         // grant access to users in that role (simple team access)
         const userIds = listActiveUserIdsByRole(step.owner_role);
@@ -522,6 +621,37 @@ export function createShipment(input: {
             userId,
             grantedByUserId: input.createdByUserId,
           });
+        }
+      }
+
+      if (stepIdMap.size) {
+        for (const step of templateSteps) {
+          const mappedId = stepIdMap.get(step.id);
+          if (!mappedId) continue;
+          const rawDeps = jsonParse(step.depends_on_step_ids_json, [] as number[]);
+          if (!rawDeps.length) continue;
+          const mappedDeps = rawDeps
+            .map((id) => stepIdMap.get(id))
+            .filter((id): id is number => !!id);
+          execute(
+            "UPDATE shipment_steps SET depends_on_step_ids_json = ? WHERE id = ?",
+            [JSON.stringify(mappedDeps), mappedId],
+            db,
+          );
+        }
+        for (const step of templateSteps) {
+          const mappedId = stepIdMap.get(step.id);
+          if (!mappedId) continue;
+          const schema = parseStepFieldSchema(step.field_schema_json);
+          if (!schema.fields.length) continue;
+          const mappedSchema = mapStopCountdownPaths(schema, (id) => stepIdMap.get(id) ?? null);
+          if (JSON.stringify(schema) !== JSON.stringify(mappedSchema)) {
+            execute(
+              "UPDATE shipment_steps SET field_schema_json = ? WHERE id = ?",
+              [JSON.stringify(mappedSchema), mappedId],
+              db,
+            );
+          }
         }
       }
     }

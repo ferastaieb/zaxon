@@ -23,6 +23,7 @@ export type ShipmentStepMeta = {
   customer_visible: 0 | 1;
   is_external: 0 | 1;
   checklist_groups_json: string;
+  depends_on_step_ids_json: string;
 };
 
 export function getShipmentStep(stepId: number, db: DatabaseSync = getDb()) {
@@ -44,7 +45,8 @@ export function getShipmentStep(stepId: number, db: DatabaseSync = getDb()) {
         completed_at,
         customer_visible,
         is_external,
-        checklist_groups_json
+        checklist_groups_json,
+        depends_on_step_ids_json
       FROM shipment_steps
       WHERE id = ?
       LIMIT 1

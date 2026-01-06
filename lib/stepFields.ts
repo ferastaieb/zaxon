@@ -2,6 +2,7 @@ export type StepFieldType =
   | "text"
   | "date"
   | "number"
+  | "boolean"
   | "file"
   | "group"
   | "choice"
@@ -21,9 +22,10 @@ export type StepFieldDefinition =
 export type StepFieldBase = {
   id: string;
   label: string;
-  type: "text" | "date" | "number" | "file";
+  type: "text" | "date" | "number" | "boolean" | "file";
   required?: boolean;
   linkToGlobal?: string | null;
+  stopCountdownPath?: string | null;
 };
 
 export type StepFieldGroup = {
@@ -54,6 +56,8 @@ export type StepFieldChoiceOption = {
   id: string;
   label: string;
   is_final?: boolean;
+  customer_message?: string | null;
+  customer_message_visible?: boolean;
   fields: StepFieldDefinition[];
 };
 
@@ -125,6 +129,90 @@ export function encodeFieldPath(segments: string[]): string {
 export function decodeFieldPath(path: string): string[] {
   if (!path) return [];
   return path.split(".").map((segment) => decodeURIComponent(segment));
+}
+
+const STOP_COUNTDOWN_STEP_PREFIX = "step:";
+
+export type StopCountdownPath = {
+  stepId: number | null;
+  encodedPath: string;
+  path: string[];
+};
+
+export function encodeStopCountdownPath(
+  stepId: number | null,
+  pathSegments: string[],
+): string {
+  const encoded = encodeFieldPath(pathSegments);
+  if (!stepId) return encoded;
+  return `${STOP_COUNTDOWN_STEP_PREFIX}${stepId}:${encoded}`;
+}
+
+export function parseStopCountdownPath(
+  raw: string | null | undefined,
+): StopCountdownPath | null {
+  if (!raw) return null;
+  if (raw.startsWith(STOP_COUNTDOWN_STEP_PREFIX)) {
+    const rest = raw.slice(STOP_COUNTDOWN_STEP_PREFIX.length);
+    const separatorIndex = rest.indexOf(":");
+    if (separatorIndex <= 0) return null;
+    const stepIdRaw = rest.slice(0, separatorIndex);
+    const stepId = Number(stepIdRaw);
+    if (!Number.isFinite(stepId)) return null;
+    const encodedPath = rest.slice(separatorIndex + 1);
+    if (!encodedPath) return null;
+    return {
+      stepId,
+      encodedPath,
+      path: decodeFieldPath(encodedPath),
+    };
+  }
+  return {
+    stepId: null,
+    encodedPath: raw,
+    path: decodeFieldPath(raw),
+  };
+}
+
+export function mapStopCountdownPaths(
+  schema: StepFieldSchema,
+  mapStepId: (stepId: number) => number | null,
+): StepFieldSchema {
+  const mapField = (field: StepFieldDefinition): StepFieldDefinition => {
+    if (field.type === "group") {
+      return {
+        ...field,
+        fields: field.fields.map(mapField),
+      };
+    }
+    if (field.type === "choice") {
+      return {
+        ...field,
+        options: field.options.map((option) => ({
+          ...option,
+          fields: option.fields.map(mapField),
+        })),
+      };
+    }
+    if ((field.type === "number" || field.type === "date") && field.stopCountdownPath) {
+      const parsed = parseStopCountdownPath(field.stopCountdownPath);
+      if (parsed?.stepId) {
+        const mapped = mapStepId(parsed.stepId);
+        return {
+          ...field,
+          stopCountdownPath: mapped
+            ? encodeStopCountdownPath(mapped, parsed.path)
+            : null,
+        };
+      }
+    }
+    return { ...field };
+  };
+
+  return {
+    ...schema,
+    fields: schema.fields.map(mapField),
+  };
 }
 
 export function fieldInputName(pathSegments: string[]): string {
@@ -261,6 +349,60 @@ export function describeFieldPath(
   return labels.join(" / ");
 }
 
+export type StepFieldBooleanOption = {
+  label: string;
+  encodedPath: string;
+};
+
+export function collectBooleanFieldOptions(
+  fields: StepFieldDefinition[],
+  labelPath: string[] = [],
+  valuePath: string[] = [],
+  inRepeatableGroup = false,
+): StepFieldBooleanOption[] {
+  const options: StepFieldBooleanOption[] = [];
+  for (const field of fields) {
+    const nextLabelPath = [...labelPath, field.label];
+    const nextValuePath = [...valuePath, field.id];
+
+    if (field.type === "boolean" && !inRepeatableGroup) {
+      options.push({
+        label: nextLabelPath.filter(Boolean).join(" / "),
+        encodedPath: encodeFieldPath(nextValuePath),
+      });
+      continue;
+    }
+
+    if (field.type === "group") {
+      if (field.repeatable) {
+        continue;
+      }
+      options.push(
+        ...collectBooleanFieldOptions(
+          field.fields,
+          nextLabelPath,
+          nextValuePath,
+          inRepeatableGroup,
+        ),
+      );
+    }
+
+    if (field.type === "choice") {
+      for (const option of field.options) {
+        options.push(
+          ...collectBooleanFieldOptions(
+            option.fields,
+            [...nextLabelPath, option.label],
+            [...nextValuePath, option.id],
+            inRepeatableGroup,
+          ),
+        );
+      }
+    }
+  }
+  return options;
+}
+
 function collectFlatValues(
   fields: StepFieldDefinition[],
   values: StepFieldValues,
@@ -272,6 +414,9 @@ function collectFlatValues(
       if (typeof fieldValue === "string" && fieldValue.trim()) {
         out[field.label] = fieldValue;
       }
+      continue;
+    }
+    if (field.type === "boolean") {
       continue;
     }
     if (field.type === "shipment_goods") {
@@ -310,9 +455,22 @@ function collectMissingForFields(
     const fieldPath = [...basePath, field.id];
     const encodedPath = encodeFieldPath(fieldPath);
 
-    if (field.type === "text" || field.type === "number" || field.type === "date") {
+    if (
+      field.type === "text" ||
+      field.type === "number" ||
+      field.type === "date"
+    ) {
       const value = getValueAtPath(context.values, fieldPath);
-      if (field.required && !hasStringValue(value)) {
+      const isRequired =
+        !!field.required || (field.type === "date" && !!field.linkToGlobal);
+      if (isRequired && !hasStringValue(value)) {
+        missing.add(encodedPath);
+      }
+      continue;
+    }
+    if (field.type === "boolean") {
+      const value = getValueAtPath(context.values, fieldPath);
+      if (field.required && !isTruthyBooleanValue(value)) {
         missing.add(encodedPath);
       }
       continue;
@@ -442,6 +600,11 @@ function hasAnyFieldValue(
       if (hasStringValue(value)) return true;
       continue;
     }
+    if (field.type === "boolean") {
+      const value = container[field.id];
+      if (isTruthyBooleanValue(value)) return true;
+      continue;
+    }
     if (field.type === "file") {
       const encodedPath = encodeFieldPath(fieldPath);
       const docType = stepFieldDocType(context.stepId, encodedPath);
@@ -487,6 +650,12 @@ function hasAnyFieldValue(
 
 function hasStringValue(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isTruthyBooleanValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function getValueAtPath(values: StepFieldValues, path: string[]): StepFieldValue | undefined {

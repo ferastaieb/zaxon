@@ -2,13 +2,7 @@
 
 import { useState } from "react";
 
-import type { WorkflowGlobalVariable, WorkflowGlobalVariableType } from "@/lib/workflowGlobals";
-
-const types: Array<{ value: WorkflowGlobalVariableType; label: string }> = [
-  { value: "text", label: "Text" },
-  { value: "date", label: "Date" },
-  { value: "number", label: "Number" },
-];
+import type { WorkflowGlobalVariable } from "@/lib/workflowGlobals";
 
 function createId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -21,7 +15,7 @@ function createVariable(): WorkflowGlobalVariable {
   return {
     id: createId("var"),
     label: "",
-    type: "text",
+    type: "date",
   };
 }
 
@@ -61,24 +55,8 @@ export function GlobalVariablesBuilder({
               updateVariable(index, { ...variable, label: e.target.value })
             }
             placeholder="Variable label"
-            className="md:col-span-6 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+            className="md:col-span-9 rounded-md border border-zinc-300 px-3 py-2 text-sm"
           />
-          <select
-            value={variable.type}
-            onChange={(e) =>
-              updateVariable(index, {
-                ...variable,
-                type: e.target.value as WorkflowGlobalVariableType,
-              })
-            }
-            className="md:col-span-3 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
-          >
-            {types.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
           <button
             type="button"
             onClick={() => removeVariable(index)}

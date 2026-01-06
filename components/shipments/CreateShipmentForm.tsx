@@ -25,15 +25,7 @@ export function CreateShipmentForm({
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [shipmentType, setShipmentType] = useState("FCL");
-  const [cargoDescription, setCargoDescription] = useState("");
-  const [packagesCount, setPackagesCount] = useState("");
-  const [weightKg, setWeightKg] = useState("");
-  const [dimensions, setDimensions] = useState("");
-  const [containerNumber, setContainerNumber] = useState("");
-  const [blNumber, setBlNumber] = useState("");
   const [jobIds, setJobIds] = useState("");
-  const [etd, setEtd] = useState("");
-  const [eta, setEta] = useState("");
 
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [manualTemplate, setManualTemplate] = useState(false);
@@ -267,98 +259,9 @@ export function CreateShipmentForm({
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-zinc-900">Cargo</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="block md:col-span-2">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              Description
-            </div>
-            <input
-              name="cargoDescription"
-              value={cargoDescription}
-              onChange={(e) => setCargoDescription(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-              placeholder="e.g., Spare parts, furniture..."
-              required
-            />
-          </label>
+        <h2 className="text-sm font-semibold text-zinc-900">Job IDs</h2>
+        <div className="mt-4">
           <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              Packages (optional)
-            </div>
-            <input
-              name="packagesCount"
-              type="number"
-              min={0}
-              value={packagesCount}
-              onChange={(e) => setPackagesCount(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-              placeholder="0"
-            />
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              Weight (kg, optional)
-            </div>
-            <input
-              name="weightKg"
-              type="number"
-              min={0}
-              step="0.01"
-              value={weightKg}
-              onChange={(e) => setWeightKg(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
-          </label>
-          <label className="block md:col-span-2">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              Dimensions (optional)
-            </div>
-            <input
-              name="dimensions"
-              value={dimensions}
-              onChange={(e) => setDimensions(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-              placeholder="e.g., 2 pallets (120x80x150cm)"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-zinc-900">Identifiers</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              Container number (optional)
-            </div>
-            <input
-              name="containerNumber"
-              value={containerNumber}
-              onChange={(e) => setContainerNumber(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-              placeholder="MSCU1234567"
-            />
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              B/L number (optional)
-            </div>
-            <input
-              name="blNumber"
-              value={blNumber}
-              onChange={(e) => setBlNumber(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-              placeholder="BL-..."
-            />
-          </label>
-          <label className="block md:col-span-2">
             <div className="mb-1 text-sm font-medium text-zinc-800">
               Job IDs (optional)
             </div>
@@ -373,38 +276,6 @@ export function CreateShipmentForm({
             <div className="mt-1 text-xs text-zinc-500">
               Separate multiple IDs with commas.
             </div>
-          </label>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-zinc-900">Estimated dates</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              ETD (optional)
-            </div>
-            <input
-              name="etd"
-              type="date"
-              value={etd}
-              onChange={(e) => setEtd(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
-          </label>
-          <label className="block">
-            <div className="mb-1 text-sm font-medium text-zinc-800">
-              ETA (optional)
-            </div>
-            <input
-              name="eta"
-              type="date"
-              value={eta}
-              onChange={(e) => setEta(e.target.value)}
-              disabled={!canWrite}
-              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
           </label>
         </div>
       </div>

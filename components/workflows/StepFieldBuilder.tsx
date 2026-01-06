@@ -11,11 +11,13 @@ import type {
   StepFieldType,
 } from "@/lib/stepFields";
 import type { WorkflowGlobalVariable } from "@/lib/workflowGlobals";
+import { collectBooleanFieldOptions } from "@/lib/stepFields";
 
 const fieldTypes: Array<{ value: StepFieldType; label: string }> = [
   { value: "text", label: "Text" },
   { value: "date", label: "Date" },
   { value: "number", label: "Number" },
+  { value: "boolean", label: "Boolean (checkbox)" },
   { value: "file", label: "File" },
   { value: "group", label: "Group" },
   { value: "choice", label: "Choice" },
@@ -49,6 +51,8 @@ function createOption(): StepFieldChoiceOption {
     id: createId("opt"),
     label: "",
     fields: [],
+    customer_message: "",
+    customer_message_visible: false,
   };
 }
 
@@ -64,8 +68,14 @@ function setFieldType(field: StepFieldDefinition, type: StepFieldType): StepFiel
   if (type === "choice") {
     return { ...base, type, options: [] };
   }
-  if (type === "date") {
-    return { ...base, type, linkToGlobal: "linkToGlobal" in field ? field.linkToGlobal ?? null : null };
+  if (type === "date" || type === "number") {
+    return {
+      ...base,
+      type,
+      linkToGlobal: "linkToGlobal" in field ? field.linkToGlobal ?? null : null,
+      stopCountdownPath:
+        "stopCountdownPath" in field ? field.stopCountdownPath ?? null : null,
+    };
   }
   return { ...base, type };
 }
@@ -82,10 +92,12 @@ export function StepFieldBuilder({
   name,
   initialSchema,
   globalVariables,
+  externalBooleanOptions,
 }: {
   name: string;
   initialSchema: StepFieldSchema;
   globalVariables?: WorkflowGlobalVariable[];
+  externalBooleanOptions?: Array<{ label: string; value: string }>;
 }) {
   const [schema, setSchema] = useState<StepFieldSchema>(initialSchema);
   const globals = globalVariables ?? [];
@@ -93,6 +105,17 @@ export function StepFieldBuilder({
     () => globals.filter((g) => g.type === "date"),
     [globals],
   );
+  const booleanOptions = useMemo(
+    () => collectBooleanFieldOptions(schema.fields, [], [], false),
+    [schema.fields],
+  );
+  const mergedBooleanOptions = useMemo(() => {
+    const localOptions = booleanOptions.map((option) => ({
+      label: option.label ? `This step / ${option.label}` : "This step / (checkbox)",
+      value: option.encodedPath,
+    }));
+    return [...localOptions, ...(externalBooleanOptions ?? [])];
+  }, [booleanOptions, externalBooleanOptions]);
 
   return (
     <div className="space-y-3">
@@ -100,6 +123,7 @@ export function StepFieldBuilder({
         fields={schema.fields}
         onChange={(fields) => setSchema({ version: 1, fields })}
         dateGlobals={dateGlobals}
+        booleanOptions={mergedBooleanOptions}
       />
       <input type="hidden" name={name} value={JSON.stringify(schema)} />
     </div>
@@ -110,10 +134,12 @@ function FieldListEditor({
   fields,
   onChange,
   dateGlobals,
+  booleanOptions,
 }: {
   fields: StepFieldDefinition[];
   onChange: (next: StepFieldDefinition[]) => void;
   dateGlobals: WorkflowGlobalVariable[];
+  booleanOptions: Array<{ label: string; value: string }>;
 }) {
   const updateField = (index: number, nextField: StepFieldDefinition) => {
     const next = fields.map((field, idx) => (idx === index ? nextField : field));
@@ -181,7 +207,7 @@ function FieldListEditor({
             {field.type === "date" && dateGlobals.length > 0 ? (
               <div className="mt-2">
                 <label className="block text-xs font-medium text-zinc-600">
-                  Link to global date
+                  Set global date variable
                 </label>
                 <select
                   value={field.linkToGlobal ?? ""}
@@ -200,6 +226,68 @@ function FieldListEditor({
                     </option>
                   ))}
                 </select>
+              </div>
+            ) : null}
+
+            {field.type === "number" && dateGlobals.length > 0 ? (
+              <div className="mt-2 space-y-2">
+                <label className="block text-xs font-medium text-zinc-600">
+                  Countdown from global date
+                </label>
+                <select
+                  value={field.linkToGlobal ?? ""}
+                  onChange={(e) =>
+                    updateField(index, {
+                      ...field,
+                      linkToGlobal: e.target.value || null,
+                    })
+                  }
+                  className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">None</option>
+                  {dateGlobals.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.label}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="block text-xs font-medium text-zinc-600">
+                  Stop countdown when this checkbox is set
+                  <select
+                    value={field.stopCountdownPath ?? ""}
+                    onChange={(e) =>
+                      updateField(index, {
+                        ...field,
+                        stopCountdownPath: e.target.value || null,
+                      })
+                    }
+                    disabled={!booleanOptions.length}
+                    className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                  >
+                    <option value="">
+                      {booleanOptions.length
+                        ? "Select checkbox..."
+                        : "Add a checkbox field to enable"}
+                    </option>
+                    {booleanOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!booleanOptions.length ? (
+                  <div className="text-[11px] text-zinc-500">
+                    Tip: add a Boolean (checkbox) field in this or another step.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {field.type === "boolean" ? (
+              <div className="mt-2 text-[11px] text-zinc-500">
+                Tip: use this checkbox in a number field to stop a countdown.
               </div>
             ) : null}
 
@@ -224,6 +312,7 @@ function FieldListEditor({
                     updateField(index, { ...field, fields: nextFields })
                   }
                   dateGlobals={dateGlobals}
+                  booleanOptions={booleanOptions}
                 />
               </div>
             ) : null}
@@ -236,6 +325,7 @@ function FieldListEditor({
                     updateField(index, { ...field, options: nextOptions })
                   }
                   dateGlobals={dateGlobals}
+                  booleanOptions={booleanOptions}
                 />
               </div>
             ) : null}
@@ -258,10 +348,12 @@ function ChoiceOptionsEditor({
   options,
   onChange,
   dateGlobals,
+  booleanOptions,
 }: {
   options: StepFieldChoiceOption[];
   onChange: (next: StepFieldChoiceOption[]) => void;
   dateGlobals: WorkflowGlobalVariable[];
+  booleanOptions: Array<{ label: string; value: string }>;
 }) {
   const addOption = () => {
     onChange([...options, createOption()]);
@@ -295,7 +387,7 @@ function ChoiceOptionsEditor({
                 updateOption(index, { ...option, label: e.target.value })
               }
               placeholder="Option label"
-              className="md:col-span-6 rounded-md border border-zinc-300 px-3 py-2 text-sm"
+              className="md:col-span-5 rounded-md border border-zinc-300 px-3 py-2 text-sm"
             />
             <label className="md:col-span-3 flex items-center gap-2 text-sm text-zinc-700">
               <input
@@ -305,14 +397,46 @@ function ChoiceOptionsEditor({
               />
               Final option
             </label>
+            <label className="md:col-span-2 flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={!!option.customer_message_visible}
+                onChange={(e) =>
+                  updateOption(index, {
+                    ...option,
+                    customer_message_visible: e.target.checked,
+                  })
+                }
+              />
+              Customer msg
+            </label>
             <button
               type="button"
               onClick={() => removeOption(index)}
-              className="md:col-span-3 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+              className="md:col-span-2 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
             >
               Remove option
             </button>
           </div>
+
+          {option.customer_message_visible ? (
+            <label className="mt-2 block">
+              <div className="mb-1 text-xs font-medium text-zinc-600">
+                Customer message
+              </div>
+              <input
+                value={option.customer_message ?? ""}
+                onChange={(e) =>
+                  updateOption(index, {
+                    ...option,
+                    customer_message: e.target.value,
+                  })
+                }
+                placeholder="e.g., We need the original invoice to proceed."
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+              />
+            </label>
+          ) : null}
 
           <div className="mt-3">
             <FieldListEditor
@@ -321,6 +445,7 @@ function ChoiceOptionsEditor({
                 updateOption(index, { ...option, fields: nextFields })
               }
               dateGlobals={dateGlobals}
+              booleanOptions={booleanOptions}
             />
           </div>
         </div>

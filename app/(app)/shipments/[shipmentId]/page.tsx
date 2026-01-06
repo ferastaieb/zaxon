@@ -14,6 +14,7 @@ import {
 import {
   getShipment,
   getTrackingTokenForShipment,
+  listConnectableShipments,
   listShipmentJobIds,
   listShipmentCustomers,
   listShipmentSteps,
@@ -25,9 +26,11 @@ import {
   listGoodsForUser,
   listInventoryBalances,
   listInventoryTransactionsForShipmentCustomers,
+  listShipmentGoodsForAllocations,
   listShipmentGoods,
 } from "@/lib/data/goods";
 import { listParties } from "@/lib/data/parties";
+import { listShipmentLinksForShipment } from "@/lib/data/shipmentLinks";
 import { listTasks } from "@/lib/data/tasks";
 import { listActiveUsers } from "@/lib/data/users";
 import { getWorkflowTemplate } from "@/lib/data/workflows";
@@ -61,8 +64,13 @@ export default async function ShipmentDetailsPage({
   const shipment = getShipment(id);
   if (!shipment) redirect("/shipments");
   const shipmentCustomers = listShipmentCustomers(id);
+  const shipmentCustomerIds = shipmentCustomers.map((c) => c.id);
   const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
   const shipmentGoods = listShipmentGoods({ shipmentId: id, ownerUserId: user.id });
+  const allocationGoods = listShipmentGoodsForAllocations({
+    shipmentId: id,
+    ownerUserId: user.id,
+  });
   const goods = listGoodsForUser(user.id);
   const inventoryBalances = listInventoryBalances(user.id);
   const inventoryTransactions = listInventoryTransactionsForShipmentCustomers({
@@ -70,6 +78,39 @@ export default async function ShipmentDetailsPage({
     shipmentId: id,
     canAccessAllShipments,
     limit: 200,
+  });
+  const shipmentLinks = listShipmentLinksForShipment({
+    shipmentId: id,
+    userId: user.id,
+    role: user.role,
+  });
+  const connectableCandidates = listConnectableShipments({
+    customerPartyIds: shipmentCustomerIds,
+    userId: user.id,
+    role: user.role,
+    excludeShipmentId: id,
+  });
+  const connectedIds = new Set(
+    shipmentLinks.map((link) => link.connected_shipment_id),
+  );
+  const connectableShipments = connectableCandidates.filter(
+    (s) => !connectedIds.has(s.id),
+  );
+  const connectedShipments = shipmentLinks.map((link) => {
+    const connectedGoods = listShipmentGoods({
+      shipmentId: link.connected_shipment_id,
+      ownerUserId: user.id,
+    });
+    const connectedDocs = listDocuments(link.connected_shipment_id);
+    const connectedTrackingToken = getTrackingTokenForShipment(
+      link.connected_shipment_id,
+    );
+    return {
+      ...link,
+      goods: connectedGoods,
+      docs: connectedDocs,
+      trackingToken: connectedTrackingToken,
+    };
   });
 
   const template = shipment.workflow_template_id
@@ -144,6 +185,7 @@ export default async function ShipmentDetailsPage({
         name: s.name,
         status: s.status,
         dueAt: s.due_at,
+        isExternal: s.is_external === 1,
         relatedPartyName,
         missingFieldsCount: missingFields.length,
         missingDocsCount: missingDocs.length,
@@ -168,9 +210,12 @@ export default async function ShipmentDetailsPage({
       shipment={shipment}
       shipmentCustomers={shipmentCustomers}
       shipmentGoods={shipmentGoods}
+      allocationGoods={allocationGoods}
       goods={goods}
       inventoryBalances={inventoryBalances}
       inventoryTransactions={inventoryTransactions}
+      connectableShipments={connectableShipments}
+      connectedShipments={connectedShipments}
       steps={steps}
       internalSteps={internalSteps}
       trackingSteps={trackingSteps}

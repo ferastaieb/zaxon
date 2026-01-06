@@ -35,6 +35,11 @@ export type ShipmentGoodRow = {
   allocated_at: string | null;
 };
 
+export type ShipmentAllocationGoodRow = ShipmentGoodRow & {
+  shipment_code: string;
+  is_connected: 0 | 1;
+};
+
 export type InventoryBalanceRow = {
   owner_user_id: number;
   good_id: number;
@@ -73,6 +78,7 @@ export type CustomerGoodsSummaryRow = {
   good_origin: string;
   unit_type: string;
   total_quantity: number;
+  remaining_quantity: number;
   shipment_count: number;
   shipment_refs: string | null;
 };
@@ -146,18 +152,98 @@ export function listShipmentGoods(input: { shipmentId: number; ownerUserId: numb
         g.origin AS good_origin,
         g.unit_type AS unit_type,
         p.name AS customer_name,
-        COALESCE(SUM(sga.taken_quantity), 0) AS allocated_quantity,
-        COALESCE(SUM(sga.inventory_quantity), 0) AS inventory_quantity,
-        MAX(sga.created_at) AS allocated_at
+        COALESCE(alloc.taken_total, 0) AS allocated_quantity,
+        CASE
+          WHEN alloc.taken_total IS NULL THEN 0
+          WHEN sg.quantity - alloc.taken_total < 0 THEN 0
+          ELSE sg.quantity - alloc.taken_total
+        END AS inventory_quantity,
+        alloc.allocated_at AS allocated_at
       FROM shipment_goods sg
       JOIN goods g ON g.id = sg.good_id
       LEFT JOIN parties p ON p.id = sg.customer_party_id
-      LEFT JOIN shipment_goods_allocations sga ON sga.shipment_good_id = sg.id
+      LEFT JOIN (
+        SELECT
+          shipment_good_id,
+          SUM(taken_quantity) AS taken_total,
+          MAX(created_at) AS allocated_at
+        FROM shipment_goods_allocations
+        GROUP BY shipment_good_id
+      ) alloc ON alloc.shipment_good_id = sg.id
       WHERE sg.shipment_id = ? AND sg.owner_user_id = ?
       GROUP BY sg.id
       ORDER BY sg.created_at ASC
     `,
     [input.shipmentId, input.ownerUserId],
+    db,
+  );
+}
+
+export function listShipmentGoodsForAllocations(input: {
+  shipmentId: number;
+  ownerUserId: number;
+}) {
+  const db = getDb();
+  return queryAll<ShipmentAllocationGoodRow>(
+    `
+      SELECT
+        sg.*,
+        g.name AS good_name,
+        g.origin AS good_origin,
+        g.unit_type AS unit_type,
+        p.name AS customer_name,
+        COALESCE(alloc.taken_total, 0) AS allocated_quantity,
+        CASE
+          WHEN alloc.taken_total IS NULL THEN 0
+          WHEN sg.quantity - alloc.taken_total < 0 THEN 0
+          ELSE sg.quantity - alloc.taken_total
+        END AS inventory_quantity,
+        alloc.allocated_at AS allocated_at,
+        s.shipment_code AS shipment_code,
+        CASE WHEN sg.shipment_id = ? THEN 0 ELSE 1 END AS is_connected
+      FROM shipment_goods sg
+      JOIN goods g ON g.id = sg.good_id
+      JOIN shipments s ON s.id = sg.shipment_id
+      LEFT JOIN parties p ON p.id = sg.customer_party_id
+      LEFT JOIN (
+        SELECT
+          shipment_good_id,
+          SUM(taken_quantity) AS taken_total,
+          MAX(created_at) AS allocated_at
+        FROM shipment_goods_allocations
+        GROUP BY shipment_good_id
+      ) alloc ON alloc.shipment_good_id = sg.id
+      WHERE sg.owner_user_id = ?
+        AND (
+          sg.shipment_id = ?
+          OR (
+            sg.shipment_id IN (
+              SELECT CASE
+                WHEN shipment_id = ? THEN connected_shipment_id
+                ELSE shipment_id
+              END AS connected_id
+              FROM shipment_links
+              WHERE shipment_id = ? OR connected_shipment_id = ?
+            )
+            AND sg.customer_party_id IN (
+              SELECT customer_party_id
+              FROM shipment_customers
+              WHERE shipment_id = ?
+            )
+          )
+        )
+      GROUP BY sg.id
+      ORDER BY is_connected ASC, sg.created_at ASC
+    `,
+    [
+      input.shipmentId,
+      input.ownerUserId,
+      input.shipmentId,
+      input.shipmentId,
+      input.shipmentId,
+      input.shipmentId,
+      input.shipmentId,
+    ],
     db,
   );
 }
@@ -173,27 +259,41 @@ export function addShipmentGood(input: {
 }) {
   const db = getDb();
   const ts = nowIso();
-  execute(
-    `
-      INSERT INTO shipment_goods (
-        shipment_id, good_id, owner_user_id,
-        customer_party_id, applies_to_all_customers,
-        quantity, created_at, created_by_user_id, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.shipmentId,
-      input.goodId,
-      input.ownerUserId,
-      input.customerPartyId ?? null,
-      input.appliesToAllCustomers ? 1 : 0,
-      input.quantity,
-      ts,
-      input.createdByUserId ?? null,
-      ts,
-    ],
-    db,
-  );
+  inTransaction(db, () => {
+    const result = execute(
+      `
+        INSERT INTO shipment_goods (
+          shipment_id, good_id, owner_user_id,
+          customer_party_id, applies_to_all_customers,
+          quantity, created_at, created_by_user_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        input.shipmentId,
+        input.goodId,
+        input.ownerUserId,
+        input.customerPartyId ?? null,
+        input.appliesToAllCustomers ? 1 : 0,
+        input.quantity,
+        ts,
+        input.createdByUserId ?? null,
+        ts,
+      ],
+      db,
+    );
+
+    if (input.quantity > 0) {
+      recordInventoryTransaction(db, {
+        ownerUserId: input.ownerUserId,
+        goodId: input.goodId,
+        shipmentId: input.shipmentId,
+        shipmentGoodId: Number(result.lastInsertRowid),
+        direction: "IN",
+        quantity: input.quantity,
+        note: "Shipment goods received",
+      });
+    }
+  });
 }
 
 export function deleteShipmentGood(input: {
@@ -288,6 +388,12 @@ export function listCustomerGoodsSummary(input: {
         g.origin AS good_origin,
         g.unit_type AS unit_type,
         COALESCE(SUM(sg.quantity), 0) AS total_quantity,
+        COALESCE(SUM(
+          CASE
+            WHEN sg.quantity - COALESCE(alloc.taken_total, 0) < 0 THEN 0
+            ELSE sg.quantity - COALESCE(alloc.taken_total, 0)
+          END
+        ), 0) AS remaining_quantity,
         COUNT(DISTINCT sg.shipment_id) AS shipment_count,
         group_concat(DISTINCT s.id || '|' || s.shipment_code) AS shipment_refs
       FROM shipment_goods sg
@@ -295,6 +401,11 @@ export function listCustomerGoodsSummary(input: {
       JOIN shipments s ON s.id = sg.shipment_id
       JOIN shipment_customers sc
         ON sc.shipment_id = sg.shipment_id AND sc.customer_party_id = ?
+      LEFT JOIN (
+        SELECT shipment_good_id, SUM(taken_quantity) AS taken_total
+        FROM shipment_goods_allocations
+        GROUP BY shipment_good_id
+      ) alloc ON alloc.shipment_good_id = sg.id
       ${accessJoin}
       WHERE sg.owner_user_id = ?
         AND (sg.applies_to_all_customers = 1 OR sg.customer_party_id = ?)
@@ -457,27 +568,53 @@ export function applyShipmentGoodsAllocations(
   const ts = nowIso();
 
   const apply = () => {
+    const connectedRows = queryAll<{ connected_id: number }>(
+      `
+        SELECT CASE
+          WHEN shipment_id = ? THEN connected_shipment_id
+          ELSE shipment_id
+        END AS connected_id
+        FROM shipment_links
+        WHERE shipment_id = ? OR connected_shipment_id = ?
+      `,
+      [input.shipmentId, input.shipmentId, input.shipmentId],
+      targetDb,
+    );
+    const connectedIds = new Set(connectedRows.map((r) => r.connected_id));
+    const customerRows = queryAll<{ customer_party_id: number }>(
+      `
+        SELECT customer_party_id
+        FROM shipment_customers
+        WHERE shipment_id = ?
+      `,
+      [input.shipmentId],
+      targetDb,
+    );
+    const customerIds = new Set(customerRows.map((r) => r.customer_party_id));
+
     for (const allocation of input.allocations) {
       const existing = queryOne<{ id: number }>(
         `
           SELECT id
           FROM shipment_goods_allocations
-          WHERE shipment_good_id = ?
+          WHERE shipment_good_id = ? AND step_id = ?
           LIMIT 1
         `,
-        [allocation.shipmentGoodId],
+        [allocation.shipmentGoodId, input.stepId],
         targetDb,
       );
       if (existing) continue;
 
-      const sg = queryOne<{
+      let sg = queryOne<{
         shipment_id: number;
         good_id: number;
         owner_user_id: number;
         quantity: number;
+        customer_party_id: number | null;
+        applies_to_all_customers: 0 | 1;
       }>(
         `
-          SELECT shipment_id, good_id, owner_user_id, quantity
+          SELECT shipment_id, good_id, owner_user_id, quantity, customer_party_id, applies_to_all_customers
           FROM shipment_goods
           WHERE id = ? AND shipment_id = ?
           LIMIT 1
@@ -485,10 +622,55 @@ export function applyShipmentGoodsAllocations(
         [allocation.shipmentGoodId, input.shipmentId],
         targetDb,
       );
-      if (!sg || sg.owner_user_id !== input.ownerUserId) continue;
+      if (!sg) {
+        const fallback = queryOne<{
+          shipment_id: number;
+          good_id: number;
+          owner_user_id: number;
+          quantity: number;
+          customer_party_id: number | null;
+          applies_to_all_customers: 0 | 1;
+        }>(
+          `
+            SELECT shipment_id, good_id, owner_user_id, quantity, customer_party_id, applies_to_all_customers
+            FROM shipment_goods
+            WHERE id = ?
+            LIMIT 1
+          `,
+          [allocation.shipmentGoodId],
+          targetDb,
+        );
+        if (!fallback) continue;
+        sg = fallback;
+      }
 
-      const taken = Math.max(0, Math.min(allocation.takenQuantity, sg.quantity));
-      const inventoryQty = Math.max(0, sg.quantity - taken);
+      if (sg.owner_user_id !== input.ownerUserId) continue;
+
+      const isCurrentShipment = sg.shipment_id === input.shipmentId;
+      const isConnectedShipment = connectedIds.has(sg.shipment_id);
+      const isCustomerAllowed =
+        sg.customer_party_id !== null && customerIds.has(sg.customer_party_id);
+      if (!isCurrentShipment && !(isConnectedShipment && isCustomerAllowed)) continue;
+
+      const totals = queryOne<{ allocation_count: number; taken_total: number }>(
+        `
+          SELECT
+            COUNT(*) AS allocation_count,
+            COALESCE(SUM(taken_quantity), 0) AS taken_total
+          FROM shipment_goods_allocations
+          WHERE shipment_good_id = ?
+        `,
+        [allocation.shipmentGoodId],
+        targetDb,
+      );
+
+      const takenTotal = totals?.taken_total ?? 0;
+      const available = Math.max(0, sg.quantity - takenTotal);
+      if (available <= 0) continue;
+
+      const requested = Math.max(0, Math.floor(allocation.takenQuantity));
+      const taken = Math.min(requested, available);
+      const inventoryQty = Math.max(0, available - taken);
 
       execute(
         `
@@ -507,11 +689,21 @@ export function applyShipmentGoodsAllocations(
         targetDb,
       );
 
-      if (sg.quantity > 0) {
+      const hasIncoming = queryOne<{ id: number }>(
+        `
+          SELECT id
+          FROM inventory_transactions
+          WHERE shipment_good_id = ? AND direction = 'IN'
+          LIMIT 1
+        `,
+        [allocation.shipmentGoodId],
+        targetDb,
+      );
+      if (!hasIncoming && sg.quantity > 0) {
         recordInventoryTransaction(targetDb, {
           ownerUserId: input.ownerUserId,
           goodId: sg.good_id,
-          shipmentId: input.shipmentId,
+          shipmentId: sg.shipment_id,
           shipmentGoodId: allocation.shipmentGoodId,
           stepId: input.stepId,
           direction: "IN",
@@ -524,7 +716,7 @@ export function applyShipmentGoodsAllocations(
         recordInventoryTransaction(targetDb, {
           ownerUserId: input.ownerUserId,
           goodId: sg.good_id,
-          shipmentId: input.shipmentId,
+          shipmentId: sg.shipment_id,
           shipmentGoodId: allocation.shipmentGoodId,
           stepId: input.stepId,
           direction: "OUT",

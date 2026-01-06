@@ -16,6 +16,17 @@ export type TrackingShipment = {
   eta: string | null;
 };
 
+export type TrackingConnectedShipment = {
+  id: number;
+  shipment_code: string;
+  origin: string;
+  destination: string;
+  overall_status: ShipmentOverallStatus;
+  shipment_label: string | null;
+  connected_label: string | null;
+  tracking_token: string | null;
+};
+
 export function getShipmentIdForTrackingToken(token: string): number | null {
   const db = getDb();
   const row = queryOne<{ shipment_id: number }>(
@@ -65,9 +76,22 @@ export function listCustomerVisibleSteps(shipmentId: number) {
     started_at: string | null;
     completed_at: string | null;
     is_external: 0 | 1;
+    field_schema_json: string;
+    field_values_json: string;
+    required_fields_json: string;
   }>(
     `
-      SELECT id, sort_order, name, status, started_at, completed_at, is_external
+      SELECT
+        id,
+        sort_order,
+        name,
+        status,
+        started_at,
+        completed_at,
+        is_external,
+        field_schema_json,
+        field_values_json,
+        required_fields_json
       FROM shipment_steps
       WHERE shipment_id = ? AND customer_visible = 1
       ORDER BY sort_order ASC
@@ -165,6 +189,58 @@ export function listCustomerVisibleExceptions(shipmentId: number) {
       LIMIT 50
     `,
     [shipmentId],
+    db,
+  );
+}
+
+export function listTrackingConnectedShipments(shipmentId: number) {
+  const db = getDb();
+  return queryAll<TrackingConnectedShipment>(
+    `
+      SELECT
+        s.id AS id,
+        s.shipment_code AS shipment_code,
+        s.origin AS origin,
+        s.destination AS destination,
+        s.overall_status AS overall_status,
+        CASE
+          WHEN sl.shipment_id = ? THEN sl.shipment_label
+          ELSE sl.connected_label
+        END AS shipment_label,
+        CASE
+          WHEN sl.shipment_id = ? THEN sl.connected_label
+          ELSE sl.shipment_label
+        END AS connected_label,
+        (
+          SELECT token
+          FROM tracking_tokens tt
+          WHERE tt.shipment_id = s.id AND tt.revoked_at IS NULL
+          ORDER BY tt.created_at DESC
+          LIMIT 1
+        ) AS tracking_token
+      FROM shipment_links sl
+      JOIN shipments current ON current.id = ?
+      JOIN shipments s
+        ON s.id = CASE
+          WHEN sl.shipment_id = ? THEN sl.connected_shipment_id
+          ELSE sl.shipment_id
+        END
+      JOIN shipment_customers sc_current
+        ON sc_current.shipment_id = current.id
+      JOIN shipment_customers sc_connected
+        ON sc_connected.shipment_id = s.id
+        AND sc_connected.customer_party_id = sc_current.customer_party_id
+      WHERE (sl.shipment_id = ? OR sl.connected_shipment_id = ?)
+      ORDER BY s.last_update_at DESC
+    `,
+    [
+      shipmentId,
+      shipmentId,
+      shipmentId,
+      shipmentId,
+      shipmentId,
+      shipmentId,
+    ],
     db,
   );
 }
