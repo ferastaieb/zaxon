@@ -93,7 +93,7 @@ function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is StepFieldValues {
   if (!value || typeof value !== "object") return false;
   return Object.getPrototypeOf(value) === Object.prototype;
 }
