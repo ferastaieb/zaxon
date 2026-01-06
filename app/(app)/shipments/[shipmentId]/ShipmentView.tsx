@@ -2368,15 +2368,18 @@ function StepCard({
     const fieldValues = getStepFieldValues(step);
     const requiredDocs = parseRequiredDocumentTypes(step);
     const checklistGroups = parseChecklistGroups(step);
+    const receivedDocTypesList = Array.isArray(receivedDocTypes)
+        ? receivedDocTypes.filter((dt): dt is string => typeof dt === "string")
+        : [];
 
-    const docTypes = new Set(receivedDocTypes);
+    const docTypes = new Set(receivedDocTypesList);
     const missingFieldPaths = collectMissingFieldPaths(fieldSchema, {
         stepId: step.id,
         values: fieldValues,
         docTypes,
     });
     const missingRequiredDocs = requiredDocs.filter(
-        (dt) => !receivedDocTypes.includes(dt),
+        (dt) => !receivedDocTypesList.includes(dt),
     );
 
     const isChecklistItemComplete = (
@@ -2386,7 +2389,7 @@ function StepCard({
         const dateKey = checklistDateKey(group.name, item.label);
         const dateValue = String((fieldValues as Record<string, unknown>)[dateKey] ?? "").trim();
         const docType = checklistDocType(group.name, item.label);
-        return !!dateValue && receivedDocTypes.includes(docType);
+        return !!dateValue && receivedDocTypesList.includes(docType);
     };
 
     const missingChecklistGroups = checklistGroups.filter((group) => {
@@ -2547,7 +2550,7 @@ function StepCard({
                         </div>
                         <div className="mt-2 flex flex-col gap-2">
                             {requiredDocs.map((dt) => {
-                                const received = receivedDocTypes.includes(dt);
+                                const received = receivedDocTypesList.includes(dt);
                                 const requested = openDocRequestTypes.includes(dt);
                                 const showMissing = highlightRequirements && !received;
                                 const latestDoc = latestReceivedDocByType[dt];
@@ -2687,7 +2690,7 @@ function StepCard({
                                                     item.label,
                                                 );
                                                 const dateValue = String((fieldValues as Record<string, unknown>)[dateKey] ?? "");
-                                                const received = receivedDocTypes.includes(docType);
+                                                const received = receivedDocTypesList.includes(docType);
                                                 const complete =
                                                     !!dateValue.trim() && received;
                                                 const superseded =
