@@ -62,7 +62,9 @@ export type StepFieldChoiceOption = {
 };
 
 export type StepFieldValue = string | StepFieldValues | StepFieldValue[];
-export type StepFieldValues = Record<string, StepFieldValue>;
+export interface StepFieldValues {
+  [key: string]: StepFieldValue;
+}
 
 export type StepFieldUpdate = {
   path: string[];
