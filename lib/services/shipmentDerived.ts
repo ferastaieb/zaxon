@@ -1,12 +1,14 @@
 import "server-only";
 
-import type { DatabaseSync } from "node:sqlite";
-
 import type { ShipmentOverallStatus, ShipmentRisk, StepStatus } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import { nowIso, scanAll, tableName, updateItem, getItem } from "@/lib/db";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
 import { createAlert } from "@/lib/data/alerts";
+
+const SHIPMENT_STEPS_TABLE = tableName("shipment_steps");
+const SHIPMENT_EXCEPTIONS_TABLE = tableName("shipment_exceptions");
+const EXCEPTION_TYPES_TABLE = tableName("exception_types");
+const SHIPMENTS_TABLE = tableName("shipments");
 
 const DUE_SOON_THRESHOLD_HOURS = 12;
 
@@ -16,6 +18,8 @@ type StepLite = {
   owner_role: string;
   status: StepStatus;
   due_at: string | null;
+  shipment_id: number;
+  sort_order: number;
 };
 
 type OpenExceptionLite = {
@@ -57,47 +61,49 @@ function computeRisk(steps: StepLite[], exceptions: OpenExceptionLite[]): Shipme
   return "ON_TRACK";
 }
 
-export function refreshShipmentDerivedState(input: {
+export async function refreshShipmentDerivedState(input: {
   shipmentId: number;
   actorUserId?: number | null;
   updateLastUpdate?: boolean;
-  db?: DatabaseSync;
 }) {
-  const db = input.db ?? getDb();
+  const [steps, exceptions, exceptionTypes] = await Promise.all([
+    scanAll<StepLite>(SHIPMENT_STEPS_TABLE),
+    scanAll<{
+      id: number;
+      shipment_id: number;
+      exception_type_id: number;
+      status: "OPEN" | "RESOLVED";
+      created_at: string;
+    }>(SHIPMENT_EXCEPTIONS_TABLE),
+    scanAll<{ id: number; name: string; default_risk: ShipmentRisk }>(
+      EXCEPTION_TYPES_TABLE,
+    ),
+  ]);
 
-  const steps = queryAll<StepLite>(
-    `
-      SELECT id, name, owner_role, status, due_at
-      FROM shipment_steps
-      WHERE shipment_id = ?
-      ORDER BY sort_order ASC
-    `,
-    [input.shipmentId],
-    db,
-  );
+  const typeMap = new Map(exceptionTypes.map((type) => [type.id, type]));
 
-  const openExceptions = queryAll<OpenExceptionLite>(
-    `
-      SELECT
-        se.id,
-        et.default_risk AS default_risk,
-        et.name AS exception_name
-      FROM shipment_exceptions se
-      JOIN exception_types et ON et.id = se.exception_type_id
-      WHERE se.shipment_id = ? AND se.status = 'OPEN'
-      ORDER BY se.created_at DESC
-    `,
-    [input.shipmentId],
-    db,
-  );
+  const shipmentSteps = steps
+    .filter((step) => step.shipment_id === input.shipmentId)
+    .sort((a, b) => a.sort_order - b.sort_order);
 
-  const computedOverall = computeOverallStatus(steps);
-  const computedRisk = computeRisk(steps, openExceptions);
+  const openExceptions = exceptions
+    .filter((ex) => ex.shipment_id === input.shipmentId && ex.status === "OPEN")
+    .map((ex) => {
+      const type = typeMap.get(ex.exception_type_id);
+      return {
+        id: ex.id,
+        default_risk: type?.default_risk ?? "ON_TRACK",
+        exception_name: type?.name ?? "Unknown",
+      } as OpenExceptionLite;
+    })
+    .sort((a, b) => b.id - a.id);
 
-  const current = queryOne<{ overall_status: ShipmentOverallStatus; risk: ShipmentRisk }>(
-    "SELECT overall_status, risk FROM shipments WHERE id = ? LIMIT 1",
-    [input.shipmentId],
-    db,
+  const computedOverall = computeOverallStatus(shipmentSteps);
+  const computedRisk = computeRisk(shipmentSteps, openExceptions);
+
+  const current = await getItem<{ overall_status: ShipmentOverallStatus; risk: ShipmentRisk }>(
+    SHIPMENTS_TABLE,
+    { id: input.shipmentId },
   );
 
   if (!current) return;
@@ -107,48 +113,40 @@ export function refreshShipmentDerivedState(input: {
 
   if (shouldUpdate) {
     if (input.updateLastUpdate) {
-      execute(
-        `
-          UPDATE shipments
-          SET overall_status = ?, risk = ?, last_update_at = ?, last_update_by_user_id = ?
-          WHERE id = ?
-        `,
-        [
-          computedOverall,
-          computedRisk,
-          nowIso(),
-          input.actorUserId ?? null,
-          input.shipmentId,
-        ],
-        db,
+      await updateItem(
+        SHIPMENTS_TABLE,
+        { id: input.shipmentId },
+        "SET overall_status = :overall_status, risk = :risk, last_update_at = :last_update_at, last_update_by_user_id = :last_update_by_user_id",
+        {
+          ":overall_status": computedOverall,
+          ":risk": computedRisk,
+          ":last_update_at": nowIso(),
+          ":last_update_by_user_id": input.actorUserId ?? null,
+        },
       );
     } else {
-      execute(
-        `
-          UPDATE shipments
-          SET overall_status = ?, risk = ?
-          WHERE id = ?
-        `,
-        [computedOverall, computedRisk, input.shipmentId],
-        db,
+      await updateItem(
+        SHIPMENTS_TABLE,
+        { id: input.shipmentId },
+        "SET overall_status = :overall_status, risk = :risk",
+        { ":overall_status": computedOverall, ":risk": computedRisk },
       );
     }
   } else if (input.updateLastUpdate) {
-    execute(
-      `
-        UPDATE shipments
-        SET last_update_at = ?, last_update_by_user_id = ?
-        WHERE id = ?
-      `,
-      [nowIso(), input.actorUserId ?? null, input.shipmentId],
-      db,
+    await updateItem(
+      SHIPMENTS_TABLE,
+      { id: input.shipmentId },
+      "SET last_update_at = :last_update_at, last_update_by_user_id = :last_update_by_user_id",
+      {
+        ":last_update_at": nowIso(),
+        ":last_update_by_user_id": input.actorUserId ?? null,
+      },
     );
   }
 
-  // Alerts for due soon / overdue
   const now = Date.now();
   const soonMs = DUE_SOON_THRESHOLD_HOURS * 3600 * 1000;
-  for (const s of steps) {
+  for (const s of shipmentSteps) {
     if (s.status === "DONE") continue;
     if (!s.due_at) continue;
     const due = Date.parse(s.due_at);
@@ -158,12 +156,12 @@ export function refreshShipmentDerivedState(input: {
     const isDueSoon = !isOverdue && due - now <= soonMs;
     if (!isOverdue && !isDueSoon) continue;
 
-    const ownerRole = s.owner_role;
     const recipients = new Set<number>();
-    for (const id of listActiveUserIdsByRole("ADMIN")) recipients.add(id);
-    // if ownerRole matches one of the Roles, target them too
+    for (const id of await listActiveUserIdsByRole("ADMIN")) recipients.add(id);
     try {
-      for (const id of listActiveUserIdsByRole(ownerRole as never)) recipients.add(id);
+      for (const id of await listActiveUserIdsByRole(s.owner_role as never)) {
+        recipients.add(id);
+      }
     } catch {
       // ignore unknown role strings
     }
@@ -175,7 +173,7 @@ export function refreshShipmentDerivedState(input: {
       : `Step due soon: ${s.name}`;
 
     for (const userId of recipients) {
-      createAlert({
+      await createAlert({
         userId,
         shipmentId: input.shipmentId,
         type,
@@ -185,4 +183,3 @@ export function refreshShipmentDerivedState(input: {
     }
   }
 }
-

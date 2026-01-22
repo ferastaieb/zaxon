@@ -1,7 +1,6 @@
 import "server-only";
 
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll } from "@/lib/sql";
+import { nowIso, nextId, putItem, scanAll, tableName, updateItem, getItem } from "@/lib/db";
 
 export type AlertRow = {
   id: number;
@@ -14,53 +13,65 @@ export type AlertRow = {
   created_at: string;
 };
 
-export function listAlerts(userId: number, input?: { includeRead?: boolean }) {
-  const db = getDb();
-  const whereRead = input?.includeRead ? "" : "AND a.is_read = 0";
-  return queryAll<AlertRow & { shipment_code: string | null }>(
-    `
-      SELECT a.*, s.shipment_code AS shipment_code
-      FROM alerts a
-      LEFT JOIN shipments s ON s.id = a.shipment_id
-      WHERE a.user_id = ?
-      ${whereRead}
-      ORDER BY a.created_at DESC
-      LIMIT 200
-    `,
-    [userId],
-    db,
-  );
+const ALERTS_TABLE = tableName("alerts");
+const SHIPMENTS_TABLE = tableName("shipments");
+
+export async function listAlerts(
+  userId: number,
+  input?: { includeRead?: boolean },
+): Promise<(AlertRow & { shipment_code: string | null })[]> {
+  const [alerts, shipments] = await Promise.all([
+    scanAll<AlertRow>(ALERTS_TABLE),
+    scanAll<{ id: number; shipment_code: string }>(SHIPMENTS_TABLE),
+  ]);
+  const shipmentCodes = new Map(shipments.map((s) => [s.id, s.shipment_code]));
+
+  return alerts
+    .filter((alert) => alert.user_id === userId)
+    .filter((alert) => (input?.includeRead ? true : alert.is_read === 0))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 200)
+    .map((alert) => ({
+      ...alert,
+      shipment_code: alert.shipment_id
+        ? shipmentCodes.get(alert.shipment_id) ?? null
+        : null,
+    }));
 }
 
-export function createAlert(input: {
+export async function createAlert(input: {
   userId: number;
   shipmentId?: number | null;
   type: string;
   message: string;
   dedupeKey: string;
 }) {
-  const db = getDb();
-  execute(
-    `
-      INSERT OR IGNORE INTO alerts (
-        user_id, shipment_id, type, message, dedupe_key, is_read, created_at
-      )
-      VALUES (?, ?, ?, ?, ?, 0, ?)
-    `,
-    [
-      input.userId,
-      input.shipmentId ?? null,
-      input.type,
-      input.message,
-      input.dedupeKey,
-      nowIso(),
-    ],
-    db,
+  const existing = await scanAll<AlertRow>(ALERTS_TABLE);
+  const alreadyExists = existing.some(
+    (alert) => alert.user_id === input.userId && alert.dedupe_key === input.dedupeKey,
+  );
+  if (alreadyExists) return;
+
+  const id = await nextId("alerts");
+  await putItem(ALERTS_TABLE, {
+    id,
+    user_id: input.userId,
+    shipment_id: input.shipmentId ?? null,
+    type: input.type,
+    message: input.message,
+    dedupe_key: input.dedupeKey,
+    is_read: 0,
+    created_at: nowIso(),
+  });
+}
+
+export async function markAlertRead(alertId: number, userId: number) {
+  const alert = await getItem<AlertRow>(ALERTS_TABLE, { id: alertId });
+  if (!alert || alert.user_id !== userId) return;
+  await updateItem<AlertRow>(
+    ALERTS_TABLE,
+    { id: alertId },
+    "SET is_read = :is_read",
+    { ":is_read": 1 },
   );
 }
-
-export function markAlertRead(alertId: number, userId: number) {
-  const db = getDb();
-  execute("UPDATE alerts SET is_read = 1 WHERE id = ? AND user_id = ?", [alertId, userId], db);
-}
-

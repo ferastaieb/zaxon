@@ -19,10 +19,10 @@ export default async function ExceptionDetailsPage({
 }) {
   await requireAdmin();
   const { exceptionId } = await params;
-  const exception = getExceptionType(Number(exceptionId));
+  const exception = await getExceptionType(Number(exceptionId));
   if (!exception) redirect("/exceptions");
 
-  const tasks = listExceptionPlaybookTasks(exception.id);
+  const tasks = await listExceptionPlaybookTasks(exception.id);
 
   async function updateExceptionAction(formData: FormData) {
     "use server";
@@ -40,7 +40,7 @@ export default async function ExceptionDetailsPage({
       redirect(`/exceptions/${id}?error=invalid`);
     }
 
-    updateExceptionType({
+    await updateExceptionType({
       id,
       name,
       description,
@@ -67,7 +67,7 @@ export default async function ExceptionDetailsPage({
       redirect(`/exceptions/${exceptionTypeId}?error=invalid`);
     }
 
-    addExceptionPlaybookTask({
+    await addExceptionPlaybookTask({
       exceptionTypeId,
       title,
       ownerRole,
@@ -92,7 +92,7 @@ export default async function ExceptionDetailsPage({
       redirect(`/exceptions/${exceptionTypeId}?error=invalid`);
     }
 
-    updateExceptionPlaybookTask({
+    await updateExceptionPlaybookTask({
       taskId,
       title,
       ownerRole,
@@ -108,7 +108,7 @@ export default async function ExceptionDetailsPage({
     const exceptionTypeId = Number(formData.get("exceptionTypeId") ?? 0);
     const taskId = Number(formData.get("taskId") ?? 0);
     if (!exceptionTypeId || !taskId) redirect(`/exceptions/${exceptionTypeId}`);
-    deleteExceptionPlaybookTask(taskId);
+    await deleteExceptionPlaybookTask(taskId);
     redirect(`/exceptions/${exceptionTypeId}`);
   }
 

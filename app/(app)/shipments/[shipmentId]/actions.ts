@@ -14,6 +14,7 @@ import { logActivity } from "@/lib/data/activities";
 import {
   addDocument,
   createDocumentRequest,
+  listDocuments,
   markDocumentRequestFulfilled,
   updateDocumentFlags,
 } from "@/lib/data/documents";
@@ -21,6 +22,7 @@ import {
   createShipmentException,
   getExceptionType,
   listExceptionPlaybookTasks,
+  listShipmentExceptions,
   resolveShipmentException,
 } from "@/lib/data/exceptions";
 import {
@@ -28,7 +30,9 @@ import {
   getShipment,
   getShipmentByCode,
   grantShipmentAccess,
+  listShipmentJobIds,
   listShipmentCustomers,
+  listShipmentSteps,
   updateShipmentWorkflowGlobals,
 } from "@/lib/data/shipments";
 import { createShipmentLink, deleteShipmentLink } from "@/lib/data/shipmentLinks";
@@ -52,7 +56,16 @@ import {
   type StepStatus,
   type TaskStatus,
 } from "@/lib/domain";
-import { getDb, inTransaction, nowIso } from "@/lib/db";
+import {
+  deleteItem,
+  getItem,
+  nextId,
+  nowIso,
+  putItem,
+  scanAll,
+  tableName,
+  updateItem,
+} from "@/lib/db";
 import { canUserAccessShipment, requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import {
@@ -77,7 +90,7 @@ import {
   parseWorkflowGlobalValues,
   parseWorkflowGlobalVariables,
 } from "@/lib/workflowGlobals";
-import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
+import { jsonParse } from "@/lib/sql";
 import { removeShipmentUploads, saveUpload } from "@/lib/storage";
 
 function normalizeFieldLabel(label: string) {
@@ -113,14 +126,14 @@ function appendTabParam(url: string, tab: string | null) {
   return `${url}${separator}tab=${encodeURIComponent(tab)}`;
 }
 
-function resolveShipmentId(rawValue: string) {
+async function resolveShipmentId(rawValue: string) {
   const trimmed = rawValue.trim();
   if (!trimmed) return null;
   const numericId = Number(trimmed);
   if (Number.isFinite(numericId) && numericId > 0) {
     return numericId;
   }
-  const byCode = getShipmentByCode(trimmed.toUpperCase());
+  const byCode = await getShipmentByCode(trimmed.toUpperCase());
   return byCode?.id ?? null;
 }
 
@@ -418,7 +431,7 @@ function collectShipmentGoodsAllocations(
 export async function updateStepAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
   const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
 
   const stepId = Number(formData.get("stepId") ?? 0);
@@ -446,18 +459,15 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
 
-  const current = getShipmentStep(stepId);
+  const current = await getShipmentStep(stepId);
   if (!current || current.shipment_id !== shipmentId) {
     redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
 
-  const shipmentRow = queryOne<{
-    workflow_template_id: number | null;
-    workflow_global_values_json: string;
-  }>(
-    "SELECT workflow_template_id, workflow_global_values_json FROM shipments WHERE id = ? LIMIT 1",
-    [shipmentId],
-  );
+  const shipmentRow = await getShipment(shipmentId);
+  if (!shipmentRow) {
+    redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
+  }
 
   const requiredDocs = jsonParse(
     current.required_document_types_json,
@@ -478,6 +488,13 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   let mergedValues = applyStepFieldUpdates(existingValues, fieldUpdates);
   mergedValues = applyStepFieldRemovals(mergedValues, fieldRemovals);
   const freezeMap = getFreezeMap(mergedValues as Record<string, unknown>);
+  const allSteps = await listShipmentSteps(shipmentId);
+  const stepValuesById = new Map<number, Record<string, unknown>>(
+    allSteps.map((step) => [
+      step.id,
+      parseStepFieldValues(step.field_values_json) as Record<string, unknown>,
+    ]),
+  );
   const stopValueCache = new Map<number, Record<string, unknown>>([
     [stepId, mergedValues as Record<string, unknown>],
   ]);
@@ -487,13 +504,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     const targetStepId = parsed.stepId ?? stepId;
     let source = stopValueCache.get(targetStepId);
     if (!source) {
-      const other = queryOne<{ field_values_json: string }>(
-        "SELECT field_values_json FROM shipment_steps WHERE id = ? AND shipment_id = ?",
-        [targetStepId, shipmentId],
-      );
-      source = other
-        ? (parseStepFieldValues(other.field_values_json) as Record<string, unknown>)
-        : {};
+      source = stepValuesById.get(targetStepId) ?? {};
       stopValueCache.set(targetStepId, source);
     }
     return getValueAtPath(source, parsed.path);
@@ -551,16 +562,9 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   let blockedByException = false;
   let blockedByDependencies = false;
 
-  const blockingException = queryOne<{ id: number }>(
-    `
-      SELECT se.id AS id
-      FROM shipment_exceptions se
-      JOIN exception_types et ON et.id = se.exception_type_id
-      WHERE se.shipment_id = ? AND se.status = 'OPEN' AND et.default_risk = 'BLOCKED'
-      ORDER BY se.created_at DESC
-      LIMIT 1
-    `,
-    [shipmentId],
+  const blockingException = (await listShipmentExceptions(shipmentId)).find(
+    (exception) =>
+      exception.status === "OPEN" && exception.default_risk === "BLOCKED",
   );
 
   if (blockingException && status !== current.status) {
@@ -570,15 +574,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
 
   const dependencyIds = jsonParse(current.depends_on_step_ids_json, [] as number[]);
   if (dependencyIds.length && status !== current.status) {
-    const placeholders = dependencyIds.map(() => "?").join(", ");
-    const deps = queryAll<{ id: number; status: StepStatus }>(
-      `
-        SELECT id, status
-        FROM shipment_steps
-        WHERE shipment_id = ? AND id IN (${placeholders})
-      `,
-      [shipmentId, ...dependencyIds],
-    );
+    const deps = allSteps.filter((step) => dependencyIds.includes(step.id));
     const unmet = new Set(dependencyIds);
     for (const dep of deps) {
       if (dep.status === "DONE") {
@@ -592,10 +588,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   }
 
   if (statusToApply === "DONE" && status !== current.status) {
-    const docs = queryAll<{ document_type: string; is_received: 0 | 1 }>(
-      "SELECT document_type, is_received FROM documents WHERE shipment_id = ?",
-      [shipmentId],
-    );
+    const docs = await listDocuments(shipmentId);
     const receivedDocTypes = new Set(
       docs.filter((d) => d.is_received).map((d) => String(d.document_type)),
     );
@@ -687,196 +680,173 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     });
   }
 
-  const db = getDb();
-  const updated = inTransaction(db, () => {
-    const updatedStep = updateShipmentStep({
-      stepId,
-      status: statusToApply,
-      notes,
-      fieldValuesJson: JSON.stringify(mergedValues),
-      relatedPartyId,
-    });
-    if (!updatedStep) return null;
-
-    const stepRows = queryAll<{
-      id: number;
-      field_schema_json: string | null;
-      field_values_json: string | null;
-    }>(
-      "SELECT id, field_schema_json, field_values_json FROM shipment_steps WHERE shipment_id = ?",
-      [shipmentId],
-      db,
-    );
-    if (stepRows.length) {
-      const valuesCache = new Map<number, Record<string, unknown>>();
-      for (const row of stepRows) {
-        valuesCache.set(
-          row.id,
-          row.id === stepId
-            ? (mergedValues as Record<string, unknown>)
-            : (parseStepFieldValues(row.field_values_json) as Record<string, unknown>),
-        );
-      }
-      const resolveStopValue = (stopPath: string) => {
-        const parsed = parseStopCountdownPath(stopPath);
-        if (!parsed) return null;
-        const targetStepId = parsed.stepId ?? stepId;
-        const source = valuesCache.get(targetStepId) ?? {};
-        return getValueAtPath(source, parsed.path);
-      };
-
-      for (const row of stepRows) {
-        if (row.id === stepId) continue;
-        const schema = parseStepFieldSchema(row.field_schema_json);
-        if (!schema.fields.length) continue;
-        const values = valuesCache.get(row.id) ?? {};
-        const existingFreezeMap = getFreezeMap(values);
-        const nextFreezeMap = { ...existingFreezeMap };
-        applyCountdownFreezeMap(
-          schema.fields,
-          values,
-          nextFreezeMap,
-          [],
-          resolveStopValue,
-        );
-        if (JSON.stringify(existingFreezeMap) !== JSON.stringify(nextFreezeMap)) {
-          values[COUNTDOWN_FREEZE_KEY] = nextFreezeMap;
-          updateShipmentStep({
-            stepId: row.id,
-            fieldValuesJson: JSON.stringify(values),
-            db,
-          });
-        }
-      }
-    }
-
-    if (shipmentRow?.workflow_template_id) {
-      const template = getWorkflowTemplate(shipmentRow.workflow_template_id);
-      if (template) {
-        const globals = parseWorkflowGlobalVariables(
-          template.global_variables_json,
-        );
-        const allowedGlobalIds = new Set(globals.map((g) => g.id));
-        const existingGlobals = parseWorkflowGlobalValues(
-          shipmentRow.workflow_global_values_json,
-        );
-        const nextGlobals = { ...existingGlobals };
-
-        applyLinkedGlobalUpdates(fieldSchema.fields, mergedValues, nextGlobals, allowedGlobalIds);
-
-        if (JSON.stringify(existingGlobals) !== JSON.stringify(nextGlobals)) {
-          updateShipmentWorkflowGlobals({
-            shipmentId,
-            valuesJson: JSON.stringify(nextGlobals),
-            updatedByUserId: user.id,
-          });
-        }
-      }
-    }
-
-    if (shouldApplyGoodsAllocations) {
-      applyShipmentGoodsAllocations(
-        {
-          shipmentId,
-          stepId,
-          ownerUserId: user.id,
-          allocations: shipmentGoodsAllocations,
-        },
-        db,
-      );
-    }
-
-    if (identifiers.containerNumber || identifiers.blNumber) {
-      execute(
-        `
-          UPDATE shipments
-          SET
-            container_number = COALESCE(?, container_number),
-            bl_number = COALESCE(?, bl_number)
-          WHERE id = ?
-        `,
-        [
-          identifiers.containerNumber ?? null,
-          identifiers.blNumber ?? null,
-          shipmentId,
-        ],
-      );
-    }
-
-    const shareChecklistDocs = current.customer_visible === 1 || current.is_external === 1;
-    for (const upload of checklistUploadResults) {
-      const docId = addDocument({
-        shipmentId,
-        documentType: upload.documentType,
-        fileName: upload.fileName,
-        storagePath: upload.storagePath,
-        mimeType: upload.mimeType,
-        sizeBytes: upload.sizeBytes,
-        isRequired: true,
-        isReceived: true,
-        shareWithCustomer: shareChecklistDocs,
-        source: "STAFF",
-        uploadedByUserId: user.id,
-      });
-
-      logActivity({
-        shipmentId,
-        type: "DOCUMENT_UPLOADED",
-        message: `Checklist document uploaded: ${upload.documentType}`,
-        actorUserId: user.id,
-        data: { docId, documentType: upload.documentType },
-      });
-    }
-
-    for (const upload of fieldUploadResults) {
-      const docId = addDocument({
-        shipmentId,
-        documentType: upload.documentType,
-        fileName: upload.fileName,
-        storagePath: upload.storagePath,
-        mimeType: upload.mimeType,
-        sizeBytes: upload.sizeBytes,
-        isRequired: upload.isRequired,
-        isReceived: true,
-        shareWithCustomer: shareChecklistDocs,
-        source: "STAFF",
-        uploadedByUserId: user.id,
-      });
-
-      logActivity({
-        shipmentId,
-        type: "DOCUMENT_UPLOADED",
-        message: `Field document uploaded: ${upload.documentType}`,
-        actorUserId: user.id,
-        data: { docId, documentType: upload.documentType },
-      });
-    }
-
-    logActivity({
-      shipmentId,
-      type: "STEP_UPDATED",
-      message: statusToApply
-        ? `Step "${updatedStep.name}" -> ${stepStatusLabel(statusToApply)}`
-        : blockedByException
-          ? `Step "${updatedStep.name}" saved (blocked by exception)`
-          : blockedByDependencies
-            ? `Step "${updatedStep.name}" saved (blocked by dependencies)`
-          : `Step "${updatedStep.name}" requirements saved`,
-      actorUserId: user.id,
-      data: {
-        stepId,
-        statusRequested: status,
-        statusApplied: statusToApply ?? null,
-      },
-    });
-
-    return updatedStep;
+  const updatedStep = await updateShipmentStep({
+    stepId,
+    status: statusToApply,
+    notes,
+    fieldValuesJson: JSON.stringify(mergedValues),
+    relatedPartyId,
   });
-  if (!updated) {
+  if (!updatedStep) {
     redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
 
-  refreshShipmentDerivedState({
+  if (allSteps.length) {
+    const valuesCache = new Map<number, Record<string, unknown>>();
+    for (const row of allSteps) {
+      valuesCache.set(
+        row.id,
+        row.id === stepId
+          ? (mergedValues as Record<string, unknown>)
+          : (parseStepFieldValues(row.field_values_json) as Record<string, unknown>),
+      );
+    }
+    const resolveStopValue = (stopPath: string) => {
+      const parsed = parseStopCountdownPath(stopPath);
+      if (!parsed) return null;
+      const targetStepId = parsed.stepId ?? stepId;
+      const source = valuesCache.get(targetStepId) ?? {};
+      return getValueAtPath(source, parsed.path);
+    };
+
+    for (const row of allSteps) {
+      if (row.id === stepId) continue;
+      const schema = parseStepFieldSchema(row.field_schema_json);
+      if (!schema.fields.length) continue;
+      const values = valuesCache.get(row.id) ?? {};
+      const existingFreezeMap = getFreezeMap(values);
+      const nextFreezeMap = { ...existingFreezeMap };
+      applyCountdownFreezeMap(schema.fields, values, nextFreezeMap, [], resolveStopValue);
+      if (JSON.stringify(existingFreezeMap) !== JSON.stringify(nextFreezeMap)) {
+        values[COUNTDOWN_FREEZE_KEY] = nextFreezeMap;
+        await updateShipmentStep({
+          stepId: row.id,
+          fieldValuesJson: JSON.stringify(values),
+        });
+      }
+    }
+  }
+
+  if (shipmentRow?.workflow_template_id) {
+    const template = await getWorkflowTemplate(shipmentRow.workflow_template_id);
+    if (template) {
+      const globals = parseWorkflowGlobalVariables(template.global_variables_json);
+      const allowedGlobalIds = new Set(globals.map((g) => g.id));
+      const existingGlobals = parseWorkflowGlobalValues(
+        shipmentRow.workflow_global_values_json,
+      );
+      const nextGlobals = { ...existingGlobals };
+
+      applyLinkedGlobalUpdates(fieldSchema.fields, mergedValues, nextGlobals, allowedGlobalIds);
+
+      if (JSON.stringify(existingGlobals) !== JSON.stringify(nextGlobals)) {
+        await updateShipmentWorkflowGlobals({
+          shipmentId,
+          valuesJson: JSON.stringify(nextGlobals),
+          updatedByUserId: user.id,
+        });
+      }
+    }
+  }
+
+  if (shouldApplyGoodsAllocations) {
+    await applyShipmentGoodsAllocations({
+      shipmentId,
+      stepId,
+      ownerUserId: user.id,
+      allocations: shipmentGoodsAllocations,
+    });
+  }
+
+  if (identifiers.containerNumber || identifiers.blNumber) {
+    const updates: string[] = [];
+    const values: Record<string, unknown> = {};
+    if (identifiers.containerNumber) {
+      updates.push("container_number = :container_number");
+      values[":container_number"] = identifiers.containerNumber;
+    }
+    if (identifiers.blNumber) {
+      updates.push("bl_number = :bl_number");
+      values[":bl_number"] = identifiers.blNumber;
+    }
+    if (updates.length) {
+      await updateItem(
+        tableName("shipments"),
+        { id: shipmentId },
+        `SET ${updates.join(", ")}`,
+        values,
+      );
+    }
+  }
+
+  const shareChecklistDocs = current.customer_visible === 1 || current.is_external === 1;
+  for (const upload of checklistUploadResults) {
+    const docId = await addDocument({
+      shipmentId,
+      documentType: upload.documentType,
+      fileName: upload.fileName,
+      storagePath: upload.storagePath,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      isRequired: true,
+      isReceived: true,
+      shareWithCustomer: shareChecklistDocs,
+      source: "STAFF",
+      uploadedByUserId: user.id,
+    });
+
+    await logActivity({
+      shipmentId,
+      type: "DOCUMENT_UPLOADED",
+      message: `Checklist document uploaded: ${upload.documentType}`,
+      actorUserId: user.id,
+      data: { docId, documentType: upload.documentType },
+    });
+  }
+
+  for (const upload of fieldUploadResults) {
+    const docId = await addDocument({
+      shipmentId,
+      documentType: upload.documentType,
+      fileName: upload.fileName,
+      storagePath: upload.storagePath,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      isRequired: upload.isRequired,
+      isReceived: true,
+      shareWithCustomer: shareChecklistDocs,
+      source: "STAFF",
+      uploadedByUserId: user.id,
+    });
+
+    await logActivity({
+      shipmentId,
+      type: "DOCUMENT_UPLOADED",
+      message: `Field document uploaded: ${upload.documentType}`,
+      actorUserId: user.id,
+      data: { docId, documentType: upload.documentType },
+    });
+  }
+
+  await logActivity({
+    shipmentId,
+    type: "STEP_UPDATED",
+    message: statusToApply
+      ? `Step "${updatedStep.name}" -> ${stepStatusLabel(statusToApply)}`
+      : blockedByException
+        ? `Step "${updatedStep.name}" saved (blocked by exception)`
+        : blockedByDependencies
+          ? `Step "${updatedStep.name}" saved (blocked by dependencies)`
+          : `Step "${updatedStep.name}" requirements saved`,
+    actorUserId: user.id,
+    data: {
+      stepId,
+      statusRequested: status,
+      statusApplied: statusToApply ?? null,
+    },
+  });
+
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -918,16 +888,16 @@ export async function updateWorkflowGlobalsAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
   const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
 
-  const shipment = getShipment(shipmentId);
+  const shipment = await getShipment(shipmentId);
   if (!shipment) {
     redirect(appendTabParam(`/shipments/${shipmentId}?error=invalid`, returnTab));
   }
 
   const template = shipment.workflow_template_id
-    ? getWorkflowTemplate(shipment.workflow_template_id)
+    ? await getWorkflowTemplate(shipment.workflow_template_id)
     : null;
   const globals = template
     ? parseWorkflowGlobalVariables(template.global_variables_json)
@@ -941,13 +911,13 @@ export async function updateWorkflowGlobalsAction(
     }
   }
 
-  updateShipmentWorkflowGlobals({
+  await updateShipmentWorkflowGlobals({
     shipmentId,
     valuesJson: JSON.stringify(nextValues),
     updatedByUserId: user.id,
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -962,7 +932,7 @@ export async function addShipmentJobIdsAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const raw = String(formData.get("jobIds") ?? "").trim();
   const jobIds = raw
@@ -977,40 +947,36 @@ export async function addShipmentJobIdsAction(
     : [];
   if (!jobIds.length) redirect(`/shipments/${shipmentId}`);
 
-  const db = getDb();
-  const ts = nowIso();
+  const existing = await listShipmentJobIds(shipmentId);
+  const existingSet = new Set(existing.map((row) => row.job_id));
   const inserted: string[] = [];
 
-  inTransaction(db, () => {
-    for (const jobId of jobIds) {
-      const result = execute(
-        `
-          INSERT OR IGNORE INTO shipment_job_ids (
-            shipment_id, job_id, created_at, created_by_user_id
-          ) VALUES (?, ?, ?, ?)
-        `,
-        [shipmentId, jobId, ts, user.id],
-        db,
-      );
-      if (result.changes > 0) inserted.push(jobId);
-    }
-
-    if (inserted.length) {
-      logActivity({
-        shipmentId,
-        type: "JOB_IDS_ADDED",
-        message:
-          inserted.length === 1
-            ? `Job ID added: ${inserted[0]}`
-            : `Job IDs added: ${inserted.join(", ")}`,
-        actorUserId: user.id,
-        data: { jobIds: inserted },
-      });
-    }
-  });
+  for (const jobId of jobIds) {
+    if (existingSet.has(jobId)) continue;
+    const id = await nextId("shipment_job_ids");
+    await putItem(tableName("shipment_job_ids"), {
+      id,
+      shipment_id: shipmentId,
+      job_id: jobId,
+      created_at: nowIso(),
+      created_by_user_id: user.id,
+    });
+    inserted.push(jobId);
+  }
 
   if (inserted.length) {
-    refreshShipmentDerivedState({
+    await logActivity({
+      shipmentId,
+      type: "JOB_IDS_ADDED",
+      message:
+        inserted.length === 1
+          ? `Job ID added: ${inserted[0]}`
+          : `Job IDs added: ${inserted.join(", ")}`,
+      actorUserId: user.id,
+      data: { jobIds: inserted },
+    });
+
+    await refreshShipmentDerivedState({
       shipmentId,
       actorUserId: user.id,
       updateLastUpdate: true,
@@ -1026,35 +992,29 @@ export async function removeShipmentJobIdAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const jobIdId = Number(formData.get("jobIdId") ?? 0);
   if (!jobIdId) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  const db = getDb();
-  const row = queryOne<{ job_id: string }>(
-    "SELECT job_id FROM shipment_job_ids WHERE id = ? AND shipment_id = ? LIMIT 1",
-    [jobIdId, shipmentId],
-    db,
+  const row = await getItem<{ job_id: string; shipment_id: number }>(
+    tableName("shipment_job_ids"),
+    { id: jobIdId },
   );
-  if (!row) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!row || row.shipment_id !== shipmentId) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
-  inTransaction(db, () => {
-    execute(
-      "DELETE FROM shipment_job_ids WHERE id = ? AND shipment_id = ?",
-      [jobIdId, shipmentId],
-      db,
-    );
-    logActivity({
-      shipmentId,
-      type: "JOB_ID_REMOVED",
-      message: `Job ID removed: ${row.job_id}`,
-      actorUserId: user.id,
-      data: { jobId: row.job_id },
-    });
+  await deleteItem(tableName("shipment_job_ids"), { id: jobIdId });
+  await logActivity({
+    shipmentId,
+    type: "JOB_ID_REMOVED",
+    message: `Job ID removed: ${row.job_id}`,
+    actorUserId: user.id,
+    data: { jobId: row.job_id },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1062,27 +1022,23 @@ export async function removeShipmentJobIdAction(
 
   redirect(`/shipments/${shipmentId}`);
 }
-
 export async function createShipmentLinkAction(
   shipmentId: number,
   formData: FormData,
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
-
+  await requireShipmentAccess(user, shipmentId);
   const connectedRaw = String(formData.get("connectedShipment") ?? "");
-  const connectedShipmentId = resolveShipmentId(connectedRaw);
+  const connectedShipmentId = await resolveShipmentId(connectedRaw);
   if (!connectedShipmentId || connectedShipmentId === shipmentId) {
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
-
-  if (!canUserAccessShipment(user, connectedShipmentId)) {
+  if (!(await canUserAccessShipment(user, connectedShipmentId))) {
     redirect("/forbidden");
   }
-
-  const currentCustomers = listShipmentCustomers(shipmentId).map((c) => c.id);
-  const otherCustomers = listShipmentCustomers(connectedShipmentId).map((c) => c.id);
+  const currentCustomers = (await listShipmentCustomers(shipmentId)).map((c) => c.id);
+  const otherCustomers = (await listShipmentCustomers(connectedShipmentId)).map((c) => c.id);
   const hasSharedCustomer = currentCustomers.some((id) =>
     otherCustomers.includes(id),
   );
@@ -1093,15 +1049,14 @@ export async function createShipmentLinkAction(
   const shipmentLabel = String(formData.get("shipmentLabel") ?? "").trim();
   const connectedLabel = String(formData.get("connectedLabel") ?? "").trim();
 
-  createShipmentLink({
+  await createShipmentLink({
     shipmentId,
     connectedShipmentId,
     shipmentLabel: shipmentLabel || null,
     connectedLabel: connectedLabel || null,
     createdByUserId: user.id,
   });
-
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: false,
@@ -1116,18 +1071,16 @@ export async function deleteShipmentLinkAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const connectedShipmentId = Number(formData.get("connectedShipmentId") ?? 0);
   if (!connectedShipmentId) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  if (!canUserAccessShipment(user, connectedShipmentId)) {
+  if (!(await canUserAccessShipment(user, connectedShipmentId))) {
     redirect("/forbidden");
   }
-
-  deleteShipmentLink({ shipmentId, connectedShipmentId });
-
-  refreshShipmentDerivedState({
+  await deleteShipmentLink({ shipmentId, connectedShipmentId });
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: false,
@@ -1142,14 +1095,14 @@ export async function createGoodAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const name = String(formData.get("name") ?? "").trim();
   const origin = String(formData.get("origin") ?? "").trim();
   const unitType = String(formData.get("unitType") ?? "").trim();
   if (!name || !origin || !unitType) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  createGood({
+  await createGood({
     ownerUserId: user.id,
     name,
     origin,
@@ -1165,7 +1118,7 @@ export async function addShipmentGoodAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const goodId = Number(formData.get("goodId") ?? 0);
   const quantityRaw = String(formData.get("quantity") ?? "").trim();
@@ -1179,7 +1132,7 @@ export async function addShipmentGoodAction(
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
-  const good = getGoodForUser(user.id, goodId);
+  const good = await getGoodForUser(user.id, goodId);
   if (!good) redirect(`/shipments/${shipmentId}?error=invalid`);
 
   if (!appliesToAllCustomers && !customerPartyId) {
@@ -1187,12 +1140,11 @@ export async function addShipmentGoodAction(
   }
 
   if (customerPartyId) {
-    const shipmentCustomers = listShipmentCustomers(shipmentId);
+    const shipmentCustomers = await listShipmentCustomers(shipmentId);
     const isShipmentCustomer = shipmentCustomers.some((c) => c.id === customerPartyId);
     if (!isShipmentCustomer) redirect(`/shipments/${shipmentId}?error=invalid`);
   }
-
-  addShipmentGood({
+  await addShipmentGood({
     shipmentId,
     ownerUserId: user.id,
     goodId,
@@ -1201,8 +1153,7 @@ export async function addShipmentGoodAction(
     appliesToAllCustomers,
     createdByUserId: user.id,
   });
-
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1217,20 +1168,22 @@ export async function deleteShipmentGoodAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const shipmentGoodId = Number(formData.get("shipmentGoodId") ?? 0);
   if (!shipmentGoodId) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  const existing = queryOne<{ id: number }>(
-    "SELECT id FROM shipment_goods_allocations WHERE shipment_good_id = ? LIMIT 1",
-    [shipmentGoodId],
+  const allocations = await scanAll<{ shipment_good_id: number }>(
+    tableName("shipment_goods_allocations"),
+    {
+      filterExpression: "shipment_good_id = :shipment_good_id",
+      expressionValues: { ":shipment_good_id": shipmentGoodId },
+      limit: 1,
+    },
   );
-  if (existing) redirect(`/shipments/${shipmentId}?error=goods_allocated`);
-
-  deleteShipmentGood({ shipmentGoodId, ownerUserId: user.id });
-
-  refreshShipmentDerivedState({
+  if (allocations.length) redirect(`/shipments/${shipmentId}?error=goods_allocated`);
+  await deleteShipmentGood({ shipmentGoodId, ownerUserId: user.id });
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1242,7 +1195,7 @@ export async function deleteShipmentGoodAction(
 export async function createTaskAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const title = String(formData.get("title") ?? "").trim();
   const assignee = String(formData.get("assignee") ?? "").trim();
@@ -1257,54 +1210,47 @@ export async function createTaskAction(shipmentId: number, formData: FormData) {
   }
 
   if (!title) redirect(`/shipments/${shipmentId}?error=invalid`);
-
-  inTransaction(getDb(), () => {
-    let assigneeUserId: number | null = null;
-    let assigneeRole: string | null = null;
-
-    if (assignee.startsWith("user:")) {
-      assigneeUserId = Number(assignee.slice("user:".length));
-    } else if (assignee.startsWith("role:")) {
-      assigneeRole = assignee.slice("role:".length);
-    }
-
-    const taskId = createTask({
+  let assigneeUserId: number | null = null;
+  let assigneeRole: string | null = null;
+  if (assignee.startsWith("user:")) {
+    const parsed = Number(assignee.slice("user:".length));
+    assigneeUserId = Number.isFinite(parsed) ? parsed : null;
+  } else if (assignee.startsWith("role:")) {
+    assigneeRole = assignee.slice("role:".length);
+  }
+  const taskId = await createTask({
+    shipmentId,
+    title,
+    relatedPartyId,
+    assigneeUserId,
+    assigneeRole,
+    dueAt,
+    createdByUserId: user.id,
+  });
+  if (assigneeUserId) {
+    await grantShipmentAccess({
       shipmentId,
-      title,
-      relatedPartyId,
-      assigneeUserId: Number.isFinite(assigneeUserId) ? assigneeUserId : null,
-      assigneeRole,
-      dueAt,
-      createdByUserId: user.id,
+      userId: assigneeUserId,
+      grantedByUserId: user.id,
     });
-
-    if (assigneeUserId) {
-      grantShipmentAccess(getDb(), {
+  }
+  if (assigneeRole) {
+    for (const uid of await listActiveUserIdsByRole(assigneeRole as never)) {
+      await grantShipmentAccess({
         shipmentId,
-        userId: assigneeUserId,
+        userId: uid,
         grantedByUserId: user.id,
       });
     }
-    if (assigneeRole) {
-      for (const uid of listActiveUserIdsByRole(assigneeRole as never)) {
-        grantShipmentAccess(getDb(), {
-          shipmentId,
-          userId: uid,
-          grantedByUserId: user.id,
-        });
-      }
-    }
-
-    logActivity({
-      shipmentId,
-      type: "TASK_CREATED",
-      message: `Task created: ${title}`,
-      actorUserId: user.id,
-      data: { taskId },
-    });
+  }
+  await logActivity({
+    shipmentId,
+    type: "TASK_CREATED",
+    message: `Task created: ${title}`,
+    actorUserId: user.id,
+    data: { taskId },
   });
-
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1319,7 +1265,7 @@ export async function updateTaskStatusAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const taskId = Number(formData.get("taskId") ?? 0);
   const status = String(formData.get("status") ?? "") as TaskStatus;
@@ -1341,13 +1287,13 @@ export async function updateTaskStatusAction(
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
-  updateTask({
+  await updateTask({
     taskId,
     status,
     relatedPartyId,
   });
 
-  logActivity({
+  await logActivity({
     shipmentId,
     type: "TASK_UPDATED",
     message: `Task updated → ${taskStatusLabel(status)}`,
@@ -1355,7 +1301,7 @@ export async function updateTaskStatusAction(
     data: { taskId, status },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1367,7 +1313,7 @@ export async function updateTaskStatusAction(
 export async function uploadDocumentAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const documentType = String(formData.get("documentType") ?? "") as DocumentType;
   const shareWithCustomer = String(formData.get("shareWithCustomer") ?? "") === "1";
@@ -1386,33 +1332,33 @@ export async function uploadDocumentAction(shipmentId: number, formData: FormDat
     filePrefix: documentType,
   });
 
-  inTransaction(getDb(), () => {
-    const docId = addDocument({
-      shipmentId,
-      documentType,
-      fileName: upload.fileName,
-      storagePath: upload.storagePath,
-      mimeType: upload.mimeType,
-      sizeBytes: upload.sizeBytes,
-      isRequired,
-      shareWithCustomer,
-      source: "STAFF",
-      documentRequestId,
-      uploadedByUserId: user.id,
-    });
-
-    if (documentRequestId) markDocumentRequestFulfilled(documentRequestId);
-
-    logActivity({
-      shipmentId,
-      type: "DOCUMENT_UPLOADED",
-      message: `Document uploaded: ${documentType}`,
-      actorUserId: user.id,
-      data: { docId, documentType },
-    });
+  const docId = await addDocument({
+    shipmentId,
+    documentType,
+    fileName: upload.fileName,
+    storagePath: upload.storagePath,
+    mimeType: upload.mimeType,
+    sizeBytes: upload.sizeBytes,
+    isRequired,
+    shareWithCustomer,
+    source: "STAFF",
+    documentRequestId,
+    uploadedByUserId: user.id,
   });
 
-  refreshShipmentDerivedState({
+  if (documentRequestId) {
+    await markDocumentRequestFulfilled(documentRequestId);
+  }
+
+  await logActivity({
+    shipmentId,
+    type: "DOCUMENT_UPLOADED",
+    message: `Document uploaded: ${documentType}`,
+    actorUserId: user.id,
+    data: { docId, documentType },
+  });
+
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1427,7 +1373,7 @@ export async function updateDocumentFlagsAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const documentId = Number(formData.get("documentId") ?? 0);
   if (!documentId) redirect(`/shipments/${shipmentId}?error=invalid`);
@@ -1436,14 +1382,14 @@ export async function updateDocumentFlagsAction(
   const shareWithCustomer = String(formData.get("shareWithCustomer") ?? "") === "1";
   const isReceived = String(formData.get("isReceived") ?? "") === "1";
 
-  updateDocumentFlags({
+  await updateDocumentFlags({
     documentId,
     isRequired,
     isReceived,
     shareWithCustomer,
   });
 
-  logActivity({
+  await logActivity({
     shipmentId,
     type: "DOCUMENT_UPDATED",
     message: "Document flags updated",
@@ -1451,7 +1397,7 @@ export async function updateDocumentFlagsAction(
     data: { documentId },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1467,7 +1413,7 @@ export async function requestDocumentAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
   const formData =
     documentTypeOrFormData instanceof FormData
       ? documentTypeOrFormData
@@ -1486,14 +1432,14 @@ export async function requestDocumentAction(
   }
   if (!documentType) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  const requestId = createDocumentRequest({
+  const requestId = await createDocumentRequest({
     shipmentId,
     documentType,
     message,
     requestedByUserId: user.id,
   });
 
-  logActivity({
+  await logActivity({
     shipmentId,
     type: "DOCUMENT_REQUESTED",
     message: `Customer document requested: ${documentType}`,
@@ -1501,7 +1447,7 @@ export async function requestDocumentAction(
     data: { requestId, documentType },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1513,19 +1459,19 @@ export async function requestDocumentAction(
 export async function addCommentAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const message = String(formData.get("message") ?? "").trim();
   if (!message) redirect(`/shipments/${shipmentId}`);
 
-  logActivity({
+  await logActivity({
     shipmentId,
     type: "COMMENT",
     message,
     actorUserId: user.id,
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1537,7 +1483,7 @@ export async function addCommentAction(shipmentId: number, formData: FormData) {
 export async function logExceptionAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const exceptionTypeId = Number(formData.get("exceptionTypeId") ?? 0);
   const notes = String(formData.get("notes") ?? "").trim() || null;
@@ -1545,64 +1491,64 @@ export async function logExceptionAction(shipmentId: number, formData: FormData)
   const informCustomer = String(formData.get("informCustomer") ?? "") === "1";
   if (!exceptionTypeId) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  inTransaction(getDb(), () => {
-    const type = getExceptionType(exceptionTypeId);
-    if (!type) return;
+  const type = await getExceptionType(exceptionTypeId);
+  if (!type) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
-    const customerMessage = customerMessageRaw || type.customer_message_template || null;
+  const customerMessage = customerMessageRaw || type.customer_message_template || null;
 
-    const exceptionId = createShipmentException(getDb(), {
+  const exceptionId = await createShipmentException({
+    shipmentId,
+    exceptionTypeId,
+    notes,
+    customerMessage,
+    shareWithCustomer: informCustomer,
+    createdByUserId: user.id,
+  });
+
+  const playbookTasks = await listExceptionPlaybookTasks(exceptionTypeId);
+  for (const pt of playbookTasks) {
+    const dueAt =
+      pt.due_hours && pt.due_hours > 0
+        ? new Date(Date.now() + pt.due_hours * 3600 * 1000).toISOString()
+        : null;
+    const taskId = await createTask({
       shipmentId,
-      exceptionTypeId,
-      notes,
-      customerMessage,
-      shareWithCustomer: informCustomer,
+      title: pt.title,
+      assigneeRole: pt.owner_role,
+      dueAt,
+      status: "OPEN",
+      linkedExceptionId: exceptionId,
       createdByUserId: user.id,
     });
 
-    const playbookTasks = listExceptionPlaybookTasks(exceptionTypeId);
-    for (const pt of playbookTasks) {
-      const dueAt =
-        pt.due_hours && pt.due_hours > 0
-          ? new Date(Date.now() + pt.due_hours * 3600 * 1000).toISOString()
-          : null;
-      const taskId = createTask({
+    for (const uid of await listActiveUserIdsByRole(pt.owner_role as never)) {
+      await grantShipmentAccess({
         shipmentId,
-        title: pt.title,
-        assigneeRole: pt.owner_role,
-        dueAt,
-        status: "OPEN",
-        linkedExceptionId: exceptionId,
-        createdByUserId: user.id,
-      });
-
-      for (const uid of listActiveUserIdsByRole(pt.owner_role as never)) {
-        grantShipmentAccess(getDb(), {
-          shipmentId,
-          userId: uid,
-          grantedByUserId: user.id,
-        });
-      }
-
-      logActivity({
-        shipmentId,
-        type: "TASK_CREATED",
-        message: `Exception task created: ${pt.title}`,
-        actorUserId: user.id,
-        data: { taskId, exceptionId },
+        userId: uid,
+        grantedByUserId: user.id,
       });
     }
 
-    logActivity({
+    await logActivity({
       shipmentId,
-      type: "EXCEPTION_LOGGED",
-      message: `Exception logged: ${type.name}`,
+      type: "TASK_CREATED",
+      message: `Exception task created: ${pt.title}`,
       actorUserId: user.id,
-      data: { exceptionId, exceptionTypeId },
+      data: { taskId, exceptionId },
     });
+  }
+
+  await logActivity({
+    shipmentId,
+    type: "EXCEPTION_LOGGED",
+    message: `Exception logged: ${type.name}`,
+    actorUserId: user.id,
+    data: { exceptionId, exceptionTypeId },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1617,36 +1563,39 @@ export async function resolveExceptionAction(
 ) {
   const user = await requireUser();
   assertCanWrite(user);
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
   const exceptionId = Number(formData.get("exceptionId") ?? 0);
   if (!exceptionId) redirect(`/shipments/${shipmentId}?error=invalid`);
 
-  const ex = queryOne<{ shipment_id: number }>(
-    "SELECT shipment_id FROM shipment_exceptions WHERE id = ? LIMIT 1",
-    [exceptionId],
+  const ex = await getItem<{ shipment_id: number }>(
+    tableName("shipment_exceptions"),
+    { id: exceptionId },
   );
   if (!ex || ex.shipment_id !== shipmentId) {
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
-  const remaining = queryOne<{ remaining: number }>(
-    `
-      SELECT COUNT(1) AS remaining
-      FROM tasks
-      WHERE shipment_id = ? AND linked_exception_id = ? AND status <> 'DONE'
-    `,
-    [shipmentId, exceptionId],
-  );
-  if ((remaining?.remaining ?? 0) > 0) {
+  const remaining = await scanAll<{ id: number }>(tableName("tasks"), {
+    filterExpression:
+      "shipment_id = :shipment_id AND linked_exception_id = :exception_id AND #status <> :done",
+    expressionNames: { "#status": "status" },
+    expressionValues: {
+      ":shipment_id": shipmentId,
+      ":exception_id": exceptionId,
+      ":done": "DONE",
+    },
+    limit: 1,
+  });
+  if (remaining.length > 0) {
     redirect(
       `/shipments/${shipmentId}?error=exception_tasks_open&exceptionId=${exceptionId}`,
     );
   }
 
-  resolveShipmentException({ exceptionId, resolvedByUserId: user.id });
+  await resolveShipmentException({ exceptionId, resolvedByUserId: user.id });
 
-  logActivity({
+  await logActivity({
     shipmentId,
     type: "EXCEPTION_RESOLVED",
     message: "Exception resolved",
@@ -1654,7 +1603,7 @@ export async function resolveExceptionAction(
     data: { exceptionId },
   });
 
-  refreshShipmentDerivedState({
+  await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
@@ -1665,12 +1614,12 @@ export async function resolveExceptionAction(
 
 export async function deleteShipmentAction(shipmentId: number) {
   const user = await requireAdmin();
-  requireShipmentAccess(user, shipmentId);
+  await requireShipmentAccess(user, shipmentId);
 
-  const existing = getShipment(shipmentId);
+  const existing = await getShipment(shipmentId);
   if (!existing) redirect("/shipments?error=invalid");
 
-  deleteShipment(shipmentId);
+  await deleteShipment(shipmentId);
   try {
     await removeShipmentUploads(shipmentId);
   } catch {

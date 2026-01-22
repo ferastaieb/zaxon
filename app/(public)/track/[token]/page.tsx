@@ -2,7 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { Badge } from "@/components/ui/Badge";
-import { addDocument, markDocumentRequestFulfilled } from "@/lib/data/documents";
+import {
+  addDocument,
+  listDocumentRequests,
+  markDocumentRequestFulfilled,
+} from "@/lib/data/documents";
 import { logActivity } from "@/lib/data/activities";
 import {
   getShipmentIdForTrackingToken,
@@ -14,9 +18,7 @@ import {
   listCustomerVisibleSteps,
   listTrackingConnectedShipments,
 } from "@/lib/data/tracking";
-import { getDb, inTransaction } from "@/lib/db";
 import { overallStatusLabel, stepStatusLabel, type StepStatus } from "@/lib/domain";
-import { queryOne } from "@/lib/sql";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
 import {
@@ -427,18 +429,18 @@ export default async function TrackShipmentPage({
   const error = readParam(resolved, "error");
 
   const { token } = await params;
-  const shipment = getTrackingShipment(token);
+  const shipment = await getTrackingShipment(token);
   if (!shipment) notFound();
 
   const isAuthed = await isTrackingSessionValid(token);
-  const customerLast4 = getTrackingCustomerPhoneLast4(token);
-  const connectedShipments = listTrackingConnectedShipments(shipment.id).filter(
-    (s) => s.tracking_token,
-  );
+  const customerLast4 = await getTrackingCustomerPhoneLast4(token);
+  const connectedShipments = (
+    await listTrackingConnectedShipments(shipment.id)
+  ).filter((s) => s.tracking_token);
 
   async function authenticateAction(token: string, formData: FormData) {
     "use server";
-    const expected = getTrackingCustomerPhoneLast4(token);
+    const expected = await getTrackingCustomerPhoneLast4(token);
     if (!expected) redirect(`/track/${token}?error=no_phone`);
 
     const pin = String(formData.get("pin") ?? "")
@@ -455,7 +457,7 @@ export default async function TrackShipmentPage({
   async function logoutTrackingAction(token: string) {
     "use server";
     const sessionToken = await getTrackingSessionToken();
-    if (sessionToken) deleteTrackingSession(sessionToken);
+    if (sessionToken) await deleteTrackingSession(sessionToken);
     await clearTrackingSessionCookie();
     redirect(`/track/${token}`);
   }
@@ -522,18 +524,18 @@ export default async function TrackShipmentPage({
     );
   }
 
-  const steps = listCustomerVisibleSteps(shipment.id);
+  const steps = await listCustomerVisibleSteps(shipment.id);
   const timelineSteps = steps.filter((s) => !s.is_external);
   const trackingSteps = steps.filter((s) => s.is_external);
-  const docs = listCustomerVisibleDocuments(shipment.id);
+  const docs = await listCustomerVisibleDocuments(shipment.id);
   const docByType = new Map<string, { id: number; file_name: string }>();
   for (const doc of docs) {
     if (!docByType.has(doc.document_type)) {
       docByType.set(doc.document_type, { id: doc.id, file_name: doc.file_name });
     }
   }
-  const requests = listCustomerDocumentRequests(shipment.id);
-  const exceptions = listCustomerVisibleExceptions(shipment.id).filter(
+  const requests = await listCustomerDocumentRequests(shipment.id);
+  const exceptions = (await listCustomerVisibleExceptions(shipment.id)).filter(
     (e) => e.status === "OPEN",
   );
 
@@ -546,22 +548,14 @@ export default async function TrackShipmentPage({
     const authed = await isTrackingSessionValid(token);
     if (!authed) redirect(`/track/${token}?error=auth`);
 
-    const shipmentId = getShipmentIdForTrackingToken(token);
+    const shipmentId = await getShipmentIdForTrackingToken(token);
     if (!shipmentId) redirect(`/track/${token}?error=invalid`);
 
     const file = formData.get("file");
     if (!file || !(file instanceof File)) redirect(`/track/${token}?error=file`);
 
-    const db = getDb();
-    const req = queryOne<{ id: number; document_type: string; status: string }>(
-      `
-        SELECT id, document_type, status
-        FROM document_requests
-        WHERE id = ? AND shipment_id = ?
-        LIMIT 1
-      `,
-      [requestId, shipmentId],
-      db,
+    const req = (await listDocumentRequests(shipmentId)).find(
+      (request) => request.id === requestId,
     );
     if (!req || req.status !== "OPEN") redirect(`/track/${token}?error=request`);
 
@@ -571,34 +565,32 @@ export default async function TrackShipmentPage({
       filePrefix: `CUSTOMER-${req.document_type}`,
     });
 
-    inTransaction(db, () => {
-      const docId = addDocument({
-        shipmentId,
-        documentType: req.document_type,
-        fileName: upload.fileName,
-        storagePath: upload.storagePath,
-        mimeType: upload.mimeType,
-        sizeBytes: upload.sizeBytes,
-        isRequired: true,
-        isReceived: true,
-        shareWithCustomer: true,
-        source: "CUSTOMER",
-        documentRequestId: req.id,
-        uploadedByUserId: null,
-      });
-
-      markDocumentRequestFulfilled(req.id);
-
-      logActivity({
-        shipmentId,
-        type: "CUSTOMER_DOCUMENT_UPLOADED",
-        message: `Customer uploaded: ${req.document_type}`,
-        actorUserId: null,
-        data: { docId, requestId: req.id },
-      });
+    const docId = await addDocument({
+      shipmentId,
+      documentType: req.document_type,
+      fileName: upload.fileName,
+      storagePath: upload.storagePath,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      isRequired: true,
+      isReceived: true,
+      shareWithCustomer: true,
+      source: "CUSTOMER",
+      documentRequestId: req.id,
+      uploadedByUserId: null,
     });
 
-    refreshShipmentDerivedState({
+    await markDocumentRequestFulfilled(req.id);
+
+    await logActivity({
+      shipmentId,
+      type: "CUSTOMER_DOCUMENT_UPLOADED",
+      message: `Customer uploaded: ${req.document_type}`,
+      actorUserId: null,
+      data: { docId, requestId: req.id },
+    });
+
+    await refreshShipmentDerivedState({
       shipmentId,
       actorUserId: null,
       updateLastUpdate: true,

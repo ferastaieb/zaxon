@@ -5,7 +5,7 @@ import { listWorkflowTemplates } from "@/lib/data/workflows";
 
 export default async function WorkflowsPage() {
   await requireAdmin();
-  const templates = listWorkflowTemplates({ includeArchived: false });
+  const templates = await listWorkflowTemplates({ includeArchived: false });
 
   return (
     <div className="space-y-6">

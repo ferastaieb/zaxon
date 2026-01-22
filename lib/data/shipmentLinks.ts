@@ -1,8 +1,16 @@
 import "server-only";
 
 import type { ShipmentOverallStatus, ShipmentRisk, TransportMode } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import {
+  deleteItem,
+  getItem,
+  nextId,
+  nowIso,
+  putItem,
+  scanAll,
+  tableName,
+  updateItem,
+} from "@/lib/db";
 
 export type ShipmentLinkSummary = {
   id: number;
@@ -22,118 +30,150 @@ export type ShipmentLinkSummary = {
   connected_label: string | null;
 };
 
-export function listShipmentLinksForShipment(input: {
+const SHIPMENT_LINKS_TABLE = tableName("shipment_links");
+const SHIPMENTS_TABLE = tableName("shipments");
+const SHIPMENT_CUSTOMERS_TABLE = tableName("shipment_customers");
+const SHIPMENT_ACCESS_TABLE = tableName("shipment_access");
+const PARTIES_TABLE = tableName("parties");
+
+export async function listShipmentLinksForShipment(input: {
   shipmentId: number;
   userId: number;
   role: string;
 }) {
-  const db = getDb();
+  const [links, shipments, shipmentCustomers, parties, accessRows] =
+    await Promise.all([
+      scanAll<{
+        id: number;
+        shipment_id: number;
+        connected_shipment_id: number;
+        shipment_label: string | null;
+        connected_label: string | null;
+        created_at: string;
+        created_by_user_id: number | null;
+      }>(SHIPMENT_LINKS_TABLE),
+      scanAll<{
+        id: number;
+        shipment_code: string;
+        transport_mode: TransportMode;
+        origin: string;
+        destination: string;
+        cargo_description: string;
+        overall_status: ShipmentOverallStatus;
+        risk: ShipmentRisk;
+        last_update_at: string;
+        etd: string | null;
+        eta: string | null;
+      }>(SHIPMENTS_TABLE),
+      scanAll<{ shipment_id: number; customer_party_id: number }>(
+        SHIPMENT_CUSTOMERS_TABLE,
+      ),
+      scanAll<{ id: number; name: string }>(PARTIES_TABLE),
+      scanAll<{ shipment_id: number; user_id: number }>(SHIPMENT_ACCESS_TABLE),
+    ]);
+
   const canAccessAll = input.role === "ADMIN" || input.role === "FINANCE";
-  const accessJoin = canAccessAll
-    ? ""
-    : "JOIN shipment_access sa ON sa.shipment_id = s.id AND sa.user_id = ?";
-  const params: Array<string | number> = [
-    input.shipmentId,
-    input.shipmentId,
-    input.shipmentId,
-    input.shipmentId,
-  ];
-  if (!canAccessAll) params.push(input.userId);
-  params.push(input.shipmentId, input.shipmentId);
+  const accessSet = new Set<number>();
+  if (!canAccessAll) {
+    for (const row of accessRows) {
+      if (row.user_id === input.userId) accessSet.add(row.shipment_id);
+    }
+  }
 
-  return queryAll<ShipmentLinkSummary>(
-    `
-      SELECT
-        sl.id AS id,
-        CASE
-          WHEN sl.shipment_id = ? THEN sl.connected_shipment_id
-          ELSE sl.shipment_id
-        END AS connected_shipment_id,
-        CASE
-          WHEN sl.shipment_id = ? THEN sl.shipment_label
-          ELSE sl.connected_label
-        END AS shipment_label,
-        CASE
-          WHEN sl.shipment_id = ? THEN sl.connected_label
-          ELSE sl.shipment_label
-        END AS connected_label,
-        s.shipment_code AS connected_shipment_code,
-        s.transport_mode AS connected_transport_mode,
-        s.origin AS connected_origin,
-        s.destination AS connected_destination,
-        s.cargo_description AS connected_cargo_description,
-        s.overall_status AS connected_overall_status,
-        s.risk AS connected_risk,
-        s.last_update_at AS connected_last_update_at,
-        s.etd AS connected_etd,
-        s.eta AS connected_eta,
-        (
-          SELECT REPLACE(group_concat(DISTINCT c.name), ',', ', ')
-          FROM shipment_customers sc
-          JOIN parties c ON c.id = sc.customer_party_id
-          WHERE sc.shipment_id = s.id
-        ) AS connected_customer_names
-      FROM shipment_links sl
-      JOIN shipments s
-        ON s.id = CASE
-          WHEN sl.shipment_id = ? THEN sl.connected_shipment_id
-          ELSE sl.shipment_id
-        END
-      ${accessJoin}
-      WHERE sl.shipment_id = ? OR sl.connected_shipment_id = ?
-      ORDER BY s.last_update_at DESC
-    `,
-    params,
-    db,
-  );
+  const shipmentsById = new Map(shipments.map((s) => [s.id, s]));
+  const partyNames = new Map(parties.map((p) => [p.id, p.name]));
+  const customersByShipment = new Map<number, string[]>();
+  for (const row of shipmentCustomers) {
+    if (!customersByShipment.has(row.shipment_id)) {
+      customersByShipment.set(row.shipment_id, []);
+    }
+    const name = partyNames.get(row.customer_party_id);
+    if (name) customersByShipment.get(row.shipment_id)?.push(name);
+  }
+
+  return links
+    .filter(
+      (link) =>
+        link.shipment_id === input.shipmentId ||
+        link.connected_shipment_id === input.shipmentId,
+    )
+    .map((link) => {
+      const isPrimary = link.shipment_id === input.shipmentId;
+      const connectedId = isPrimary
+        ? link.connected_shipment_id
+        : link.shipment_id;
+      return {
+        link,
+        connectedId,
+        shipmentLabel: isPrimary ? link.shipment_label : link.connected_label,
+        connectedLabel: isPrimary ? link.connected_label : link.shipment_label,
+      };
+    })
+    .filter((entry) => (canAccessAll ? true : accessSet.has(entry.connectedId)))
+    .map((entry) => {
+      const shipment = shipmentsById.get(entry.connectedId);
+      if (!shipment) return null;
+      const customerNames = customersByShipment.get(entry.connectedId) ?? [];
+      return {
+        id: entry.link.id,
+        connected_shipment_id: entry.connectedId,
+        connected_shipment_code: shipment.shipment_code,
+        connected_transport_mode: shipment.transport_mode,
+        connected_origin: shipment.origin,
+        connected_destination: shipment.destination,
+        connected_cargo_description: shipment.cargo_description,
+        connected_overall_status: shipment.overall_status,
+        connected_risk: shipment.risk,
+        connected_last_update_at: shipment.last_update_at,
+        connected_etd: shipment.etd ?? null,
+        connected_eta: shipment.eta ?? null,
+        connected_customer_names: customerNames.length
+          ? Array.from(new Set(customerNames)).join(", ")
+          : null,
+        shipment_label: entry.shipmentLabel ?? null,
+        connected_label: entry.connectedLabel ?? null,
+      };
+    })
+    .filter((row): row is ShipmentLinkSummary => row !== null)
+    .sort((a, b) => b.connected_last_update_at.localeCompare(a.connected_last_update_at));
 }
 
-export function listConnectedShipmentIds(shipmentId: number) {
-  const db = getDb();
-  const rows = queryAll<{ connected_id: number }>(
-    `
-      SELECT CASE
-        WHEN shipment_id = ? THEN connected_shipment_id
-        ELSE shipment_id
-      END AS connected_id
-      FROM shipment_links
-      WHERE shipment_id = ? OR connected_shipment_id = ?
-    `,
-    [shipmentId, shipmentId, shipmentId],
-    db,
-  );
-  return rows.map((row) => row.connected_id);
+export async function listConnectedShipmentIds(shipmentId: number) {
+  const links = await scanAll<{
+    shipment_id: number;
+    connected_shipment_id: number;
+  }>(SHIPMENT_LINKS_TABLE);
+  return links
+    .filter(
+      (link) =>
+        link.shipment_id === shipmentId || link.connected_shipment_id === shipmentId,
+    )
+    .map((link) =>
+      link.shipment_id === shipmentId ? link.connected_shipment_id : link.shipment_id,
+    );
 }
 
-export function createShipmentLink(input: {
+export async function createShipmentLink(input: {
   shipmentId: number;
   connectedShipmentId: number;
   shipmentLabel?: string | null;
   connectedLabel?: string | null;
   createdByUserId: number;
 }) {
-  const db = getDb();
-  const existing = queryOne<{
+  const links = await scanAll<{
     id: number;
     shipment_id: number;
     connected_shipment_id: number;
     shipment_label: string | null;
     connected_label: string | null;
-  }>(
-    `
-      SELECT id, shipment_id, connected_shipment_id, shipment_label, connected_label
-      FROM shipment_links
-      WHERE (shipment_id = ? AND connected_shipment_id = ?)
-         OR (shipment_id = ? AND connected_shipment_id = ?)
-      LIMIT 1
-    `,
-    [
-      input.shipmentId,
-      input.connectedShipmentId,
-      input.connectedShipmentId,
-      input.shipmentId,
-    ],
-    db,
+  }>(SHIPMENT_LINKS_TABLE);
+
+  const existing = links.find(
+    (link) =>
+      (link.shipment_id === input.shipmentId &&
+        link.connected_shipment_id === input.connectedShipmentId) ||
+      (link.shipment_id === input.connectedShipmentId &&
+        link.connected_shipment_id === input.shipmentId),
   );
 
   const shipmentLabel = input.shipmentLabel?.trim() || null;
@@ -141,80 +181,56 @@ export function createShipmentLink(input: {
 
   if (existing) {
     if (shipmentLabel || connectedLabel) {
-      if (existing.shipment_id === input.shipmentId) {
-        execute(
-          `
-            UPDATE shipment_links
-            SET shipment_label = ?, connected_label = ?
-            WHERE id = ?
-          `,
-          [
-            shipmentLabel ?? existing.shipment_label,
-            connectedLabel ?? existing.connected_label,
-            existing.id,
-          ],
-          db,
-        );
-      } else {
-        execute(
-          `
-            UPDATE shipment_links
-            SET shipment_label = ?, connected_label = ?
-            WHERE id = ?
-          `,
-          [
-            connectedLabel ?? existing.shipment_label,
-            shipmentLabel ?? existing.connected_label,
-            existing.id,
-          ],
-          db,
-        );
-      }
+      const isPrimary = existing.shipment_id === input.shipmentId;
+      const nextShipmentLabel = isPrimary
+        ? shipmentLabel ?? existing.shipment_label
+        : connectedLabel ?? existing.shipment_label;
+      const nextConnectedLabel = isPrimary
+        ? connectedLabel ?? existing.connected_label
+        : shipmentLabel ?? existing.connected_label;
+      await updateItem(
+        SHIPMENT_LINKS_TABLE,
+        { id: existing.id },
+        "SET shipment_label = :shipment_label, connected_label = :connected_label",
+        {
+          ":shipment_label": nextShipmentLabel,
+          ":connected_label": nextConnectedLabel,
+        },
+      );
     }
     return existing.id;
   }
 
-  const result = execute(
-    `
-      INSERT INTO shipment_links (
-        shipment_id,
-        connected_shipment_id,
-        shipment_label,
-        connected_label,
-        created_at,
-        created_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.shipmentId,
-      input.connectedShipmentId,
-      shipmentLabel,
-      connectedLabel,
-      nowIso(),
-      input.createdByUserId,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("shipment_links");
+  await putItem(SHIPMENT_LINKS_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    connected_shipment_id: input.connectedShipmentId,
+    shipment_label: shipmentLabel,
+    connected_label: connectedLabel,
+    created_at: nowIso(),
+    created_by_user_id: input.createdByUserId,
+  });
+  return id;
 }
 
-export function deleteShipmentLink(input: {
+export async function deleteShipmentLink(input: {
   shipmentId: number;
   connectedShipmentId: number;
 }) {
-  const db = getDb();
-  execute(
-    `
-      DELETE FROM shipment_links
-      WHERE (shipment_id = ? AND connected_shipment_id = ?)
-         OR (shipment_id = ? AND connected_shipment_id = ?)
-    `,
-    [
-      input.shipmentId,
-      input.connectedShipmentId,
-      input.connectedShipmentId,
-      input.shipmentId,
-    ],
-    db,
+  const links = await scanAll<{
+    id: number;
+    shipment_id: number;
+    connected_shipment_id: number;
+  }>(SHIPMENT_LINKS_TABLE);
+  const matches = links.filter(
+    (link) =>
+      (link.shipment_id === input.shipmentId &&
+        link.connected_shipment_id === input.connectedShipmentId) ||
+      (link.shipment_id === input.connectedShipmentId &&
+        link.connected_shipment_id === input.shipmentId),
   );
+  for (const link of matches) {
+    await deleteItem(SHIPMENT_LINKS_TABLE, { id: link.id });
+  }
 }

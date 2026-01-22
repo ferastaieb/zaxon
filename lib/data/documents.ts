@@ -1,8 +1,7 @@
 import "server-only";
 
 import type { DocumentType } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import { getItem, nowIso, nextId, putItem, scanAll, tableName, updateItem } from "@/lib/db";
 
 export type DocumentRow = {
   id: number;
@@ -32,120 +31,96 @@ export type DocumentRequestRow = {
   fulfilled_at: string | null;
 };
 
-export function listDocuments(shipmentId: number) {
-  const db = getDb();
-  return queryAll<DocumentRow>(
-    `
-      SELECT *
-      FROM documents
-      WHERE shipment_id = ?
-      ORDER BY uploaded_at DESC
-      LIMIT 200
-    `,
-    [shipmentId],
-    db,
-  );
+const DOCUMENTS_TABLE = tableName("documents");
+const DOCUMENT_REQUESTS_TABLE = tableName("document_requests");
+
+export async function listDocuments(shipmentId: number): Promise<DocumentRow[]> {
+  const docs = await scanAll<DocumentRow>(DOCUMENTS_TABLE);
+  return docs
+    .filter((doc) => doc.shipment_id === shipmentId)
+    .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at))
+    .slice(0, 200);
 }
 
-export function getDocument(documentId: number) {
-  const db = getDb();
-  return queryOne<DocumentRow>(
-    "SELECT * FROM documents WHERE id = ? LIMIT 1",
-    [documentId],
-    db,
-  );
+export async function getDocument(documentId: number): Promise<DocumentRow | null> {
+  return await getItem<DocumentRow>(DOCUMENTS_TABLE, { id: documentId });
 }
 
-export function updateDocumentFlags(input: {
+export async function updateDocumentFlags(input: {
   documentId: number;
   isRequired?: boolean;
   isReceived?: boolean;
   shareWithCustomer?: boolean;
 }) {
-  const db = getDb();
-  const doc = queryOne<{
-    is_required: 0 | 1;
-    is_received: 0 | 1;
-    share_with_customer: 0 | 1;
-  }>("SELECT is_required, is_received, share_with_customer FROM documents WHERE id = ? LIMIT 1", [input.documentId], db);
+  const doc = await getDocument(input.documentId);
   if (!doc) return;
 
-  execute(
-    `
-      UPDATE documents
-      SET is_required = ?, is_received = ?, share_with_customer = ?
-      WHERE id = ?
-    `,
-    [
-      input.isRequired === undefined ? doc.is_required : input.isRequired ? 1 : 0,
-      input.isReceived === undefined ? doc.is_received : input.isReceived ? 1 : 0,
-      input.shareWithCustomer === undefined
-        ? doc.share_with_customer
-        : input.shareWithCustomer
-          ? 1
-          : 0,
-      input.documentId,
-    ],
-    db,
+  const nextRequired =
+    input.isRequired === undefined ? doc.is_required : input.isRequired ? 1 : 0;
+  const nextReceived =
+    input.isReceived === undefined ? doc.is_received : input.isReceived ? 1 : 0;
+  const nextShare =
+    input.shareWithCustomer === undefined
+      ? doc.share_with_customer
+      : input.shareWithCustomer
+        ? 1
+        : 0;
+
+  await updateItem<DocumentRow>(
+    DOCUMENTS_TABLE,
+    { id: input.documentId },
+    "SET is_required = :is_required, is_received = :is_received, share_with_customer = :share",
+    {
+      ":is_required": nextRequired,
+      ":is_received": nextReceived,
+      ":share": nextShare,
+    },
   );
 }
 
-export function createDocumentRequest(input: {
+export async function createDocumentRequest(input: {
   shipmentId: number;
   documentType: DocumentType | string;
   message?: string | null;
   requestedByUserId?: number | null;
 }) {
-  const db = getDb();
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO document_requests (
-        shipment_id, document_type, message, status, requested_by_user_id, requested_at, fulfilled_at
-      )
-      VALUES (?, ?, ?, 'OPEN', ?, ?, NULL)
-    `,
-    [
-      input.shipmentId,
-      input.documentType,
-      input.message ?? null,
-      input.requestedByUserId ?? null,
-      ts,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("document_requests");
+  await putItem(DOCUMENT_REQUESTS_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    document_type: input.documentType,
+    message: input.message ?? null,
+    status: "OPEN",
+    requested_by_user_id: input.requestedByUserId ?? null,
+    requested_at: ts,
+    fulfilled_at: null,
+  });
+  return id;
 }
 
-export function listDocumentRequests(shipmentId: number) {
-  const db = getDb();
-  return queryAll<DocumentRequestRow>(
-    `
-      SELECT *
-      FROM document_requests
-      WHERE shipment_id = ?
-      ORDER BY requested_at DESC
-      LIMIT 200
-    `,
-    [shipmentId],
-    db,
-  );
+export async function listDocumentRequests(shipmentId: number): Promise<DocumentRequestRow[]> {
+  const requests = await scanAll<DocumentRequestRow>(DOCUMENT_REQUESTS_TABLE);
+  return requests
+    .filter((request) => request.shipment_id === shipmentId)
+    .sort((a, b) => b.requested_at.localeCompare(a.requested_at))
+    .slice(0, 200);
 }
 
-export function markDocumentRequestFulfilled(requestId: number) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE document_requests
-      SET status = 'FULFILLED', fulfilled_at = ?
-      WHERE id = ?
-    `,
-    [nowIso(), requestId],
-    db,
+export async function markDocumentRequestFulfilled(requestId: number) {
+  await updateItem<DocumentRequestRow>(
+    DOCUMENT_REQUESTS_TABLE,
+    { id: requestId },
+    "SET #status = :status, fulfilled_at = :fulfilled_at",
+    {
+      ":status": "FULFILLED",
+      ":fulfilled_at": nowIso(),
+    },
+    { "#status": "status" },
   );
 }
 
-export function addDocument(input: {
+export async function addDocument(input: {
   shipmentId: number;
   documentType: DocumentType | string;
   fileName: string;
@@ -159,43 +134,22 @@ export function addDocument(input: {
   documentRequestId?: number | null;
   uploadedByUserId?: number | null;
 }) {
-  const db = getDb();
-  const result = execute(
-    `
-      INSERT INTO documents (
-        shipment_id,
-        file_name,
-        storage_path,
-        mime_type,
-        size_bytes,
-        document_type,
-        is_required,
-        is_received,
-        share_with_customer,
-        source,
-        document_request_id,
-        uploaded_by_user_id,
-        uploaded_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.shipmentId,
-      input.fileName,
-      input.storagePath,
-      input.mimeType ?? null,
-      input.sizeBytes ?? null,
-      input.documentType,
-      input.isRequired ? 1 : 0,
-      input.isReceived === false ? 0 : 1,
-      input.shareWithCustomer ? 1 : 0,
-      input.source,
-      input.documentRequestId ?? null,
-      input.uploadedByUserId ?? null,
-      nowIso(),
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("documents");
+  await putItem(DOCUMENTS_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    file_name: input.fileName,
+    storage_path: input.storagePath,
+    mime_type: input.mimeType ?? null,
+    size_bytes: input.sizeBytes ?? null,
+    document_type: input.documentType,
+    is_required: input.isRequired ? 1 : 0,
+    is_received: input.isReceived === false ? 0 : 1,
+    share_with_customer: input.shareWithCustomer ? 1 : 0,
+    source: input.source,
+    document_request_id: input.documentRequestId ?? null,
+    uploaded_by_user_id: input.uploadedByUserId ?? null,
+    uploaded_at: nowIso(),
+  });
+  return id;
 }
-

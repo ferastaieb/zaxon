@@ -1,10 +1,7 @@
 import "server-only";
 
-import type { DatabaseSync } from "node:sqlite";
-
 import type { StepStatus } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryOne } from "@/lib/sql";
+import { getItem, nowIso, tableName, updateItem } from "@/lib/db";
 
 export type ShipmentStepMeta = {
   id: number;
@@ -26,104 +23,87 @@ export type ShipmentStepMeta = {
   depends_on_step_ids_json: string;
 };
 
-export function getShipmentStep(stepId: number, db: DatabaseSync = getDb()) {
-  return queryOne<ShipmentStepMeta>(
-    `
-      SELECT
-        id,
-        shipment_id,
-        name,
-        status,
-        related_party_id,
-        required_fields_json,
-        required_document_types_json,
-        field_values_json,
-        field_schema_json,
-        sla_hours,
-        due_at,
-        started_at,
-        completed_at,
-        customer_visible,
-        is_external,
-        checklist_groups_json,
-        depends_on_step_ids_json
-      FROM shipment_steps
-      WHERE id = ?
-      LIMIT 1
-    `,
-    [stepId],
-    db,
-  );
+const SHIPMENT_STEPS_TABLE = tableName("shipment_steps");
+
+export async function getShipmentStep(stepId: number): Promise<ShipmentStepMeta | null> {
+  return await getItem<ShipmentStepMeta>(SHIPMENT_STEPS_TABLE, { id: stepId });
 }
 
-export function updateShipmentStep(input: {
+export async function updateShipmentStep(input: {
   stepId: number;
   status?: StepStatus;
   notes?: string | null;
   fieldValuesJson?: string;
   relatedPartyId?: number | null;
-  db?: DatabaseSync;
 }) {
-  const db = input.db ?? getDb();
-  const current = getShipmentStep(input.stepId, db);
+  const current = await getShipmentStep(input.stepId);
   if (!current) return null;
 
   const nextStatus = input.status ?? current.status;
-  const statusChanged =
-    input.status !== undefined && input.status !== current.status;
+  const statusChanged = input.status !== undefined && input.status !== current.status;
   const ts = nowIso();
 
-  const fields: string[] = ["updated_at = ?"];
-  const params: Array<string | number | null> = [ts];
+  const updateParts: string[] = ["updated_at = :updated_at"];
+  const values: Record<string, unknown> = {
+    ":updated_at": ts,
+  };
+  const names: Record<string, string> = {};
 
   if (input.notes !== undefined) {
-    fields.push("notes = ?");
-    params.push(input.notes);
+    updateParts.push("notes = :notes");
+    values[":notes"] = input.notes;
   }
 
   if (input.fieldValuesJson !== undefined) {
-    fields.push("field_values_json = ?");
-    params.push(input.fieldValuesJson);
+    updateParts.push("field_values_json = :field_values_json");
+    values[":field_values_json"] = input.fieldValuesJson;
   }
 
   if (input.relatedPartyId !== undefined) {
-    fields.push("related_party_id = ?");
-    params.push(input.relatedPartyId);
+    updateParts.push("related_party_id = :related_party_id");
+    values[":related_party_id"] = input.relatedPartyId;
   }
 
   if (statusChanged) {
-    fields.push("status = ?");
-    params.push(nextStatus);
+    updateParts.push("#status = :status");
+    values[":status"] = nextStatus;
+    names["#status"] = "status";
 
     if (nextStatus === "IN_PROGRESS" && !current.started_at) {
-      fields.push("started_at = ?");
-      params.push(ts);
+      updateParts.push("started_at = :started_at");
+      values[":started_at"] = ts;
 
       if (current.sla_hours && current.sla_hours > 0) {
-        const dueAt = new Date(Date.now() + current.sla_hours * 3600 * 1000).toISOString();
-        fields.push("due_at = ?");
-        params.push(dueAt);
+        const dueAt = new Date(
+          Date.now() + current.sla_hours * 3600 * 1000,
+        ).toISOString();
+        updateParts.push("due_at = :due_at");
+        values[":due_at"] = dueAt;
       }
     }
 
     if (nextStatus === "DONE") {
-      fields.push("completed_at = ?");
-      params.push(ts);
+      updateParts.push("completed_at = :completed_at");
+      values[":completed_at"] = ts;
     }
 
     if (nextStatus === "PENDING") {
-      fields.push("started_at = NULL");
-      fields.push("completed_at = NULL");
-      fields.push("due_at = NULL");
+      updateParts.push("started_at = :pending_started_at");
+      updateParts.push("completed_at = :pending_completed_at");
+      updateParts.push("due_at = :pending_due_at");
+      values[":pending_started_at"] = null;
+      values[":pending_completed_at"] = null;
+      values[":pending_due_at"] = null;
     }
   }
 
-  params.push(input.stepId);
-  execute(
-    `UPDATE shipment_steps SET ${fields.join(", ")} WHERE id = ?`,
-    params,
-    db,
+  await updateItem(
+    SHIPMENT_STEPS_TABLE,
+    { id: input.stepId },
+    `SET ${updateParts.join(", ")}`,
+    values,
+    Object.keys(names).length ? names : undefined,
   );
 
-  return getShipmentStep(input.stepId, db);
+  return await getShipmentStep(input.stepId);
 }

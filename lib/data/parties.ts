@@ -1,8 +1,7 @@
 import "server-only";
 
 import type { PartyType } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import { getItem, nextId, nowIso, putItem, scanAll, tableName, updateItem } from "@/lib/db";
 
 export type PartyRow = {
   id: number;
@@ -16,41 +15,22 @@ export type PartyRow = {
   updated_at: string;
 };
 
-export function listParties(input?: { type?: PartyType; q?: string }) {
-  const db = getDb();
-  const params: Array<string | number> = [];
-  const where: string[] = [];
+const PARTIES_TABLE = tableName("parties");
 
-  if (input?.type) {
-    where.push("type = ?");
-    params.push(input.type);
-  }
-
-  if (input?.q) {
-    where.push("LOWER(name) LIKE ?");
-    params.push(`%${input.q.toLowerCase()}%`);
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-  return queryAll<PartyRow>(
-    `
-      SELECT *
-      FROM parties
-      ${whereSql}
-      ORDER BY name ASC
-    `,
-    params,
-    db,
-  );
+export async function listParties(input?: { type?: PartyType; q?: string }) {
+  const rows = await scanAll<PartyRow>(PARTIES_TABLE);
+  const query = input?.q?.toLowerCase().trim();
+  return rows
+    .filter((row) => (input?.type ? row.type === input.type : true))
+    .filter((row) => (query ? row.name.toLowerCase().includes(query) : true))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function getParty(id: number): PartyRow | null {
-  const db = getDb();
-  return queryOne<PartyRow>("SELECT * FROM parties WHERE id = ? LIMIT 1", [id], db);
+export async function getParty(id: number): Promise<PartyRow | null> {
+  return await getItem<PartyRow>(PARTIES_TABLE, { id });
 }
 
-export function createParty(input: {
+export async function createParty(input: {
   type: PartyType;
   name: string;
   phone?: string | null;
@@ -58,29 +38,23 @@ export function createParty(input: {
   address?: string | null;
   notes?: string | null;
 }) {
-  const db = getDb();
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO parties (type, name, phone, email, address, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.type,
-      input.name,
-      input.phone ?? null,
-      input.email ?? null,
-      input.address ?? null,
-      input.notes ?? null,
-      ts,
-      ts,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("parties");
+  await putItem(PARTIES_TABLE, {
+    id,
+    type: input.type,
+    name: input.name,
+    phone: input.phone ?? null,
+    email: input.email ?? null,
+    address: input.address ?? null,
+    notes: input.notes ?? null,
+    created_at: ts,
+    updated_at: ts,
+  });
+  return id;
 }
 
-export function updateParty(
+export async function updateParty(
   id: number,
   input: {
     name: string;
@@ -90,23 +64,18 @@ export function updateParty(
     notes?: string | null;
   },
 ) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE parties
-      SET name = ?, phone = ?, email = ?, address = ?, notes = ?, updated_at = ?
-      WHERE id = ?
-    `,
-    [
-      input.name,
-      input.phone ?? null,
-      input.email ?? null,
-      input.address ?? null,
-      input.notes ?? null,
-      nowIso(),
-      id,
-    ],
-    db,
+  await updateItem<PartyRow>(
+    PARTIES_TABLE,
+    { id },
+    "SET #name = :name, phone = :phone, email = :email, address = :address, notes = :notes, updated_at = :updated_at",
+    {
+      ":name": input.name,
+      ":phone": input.phone ?? null,
+      ":email": input.email ?? null,
+      ":address": input.address ?? null,
+      ":notes": input.notes ?? null,
+      ":updated_at": nowIso(),
+    },
+    { "#name": "name" },
   );
 }
-

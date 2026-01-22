@@ -1,10 +1,16 @@
 import "server-only";
 
-import type { DatabaseSync } from "node:sqlite";
-
 import type { ShipmentRisk } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import {
+  getItem,
+  nextId,
+  nowIso,
+  putItem,
+  scanAll,
+  tableName,
+  updateItem,
+  deleteItem,
+} from "@/lib/db";
 
 export type ExceptionTypeRow = {
   id: number;
@@ -46,62 +52,46 @@ export type ShipmentExceptionRow = {
   default_risk: ShipmentRisk;
 };
 
-export function listExceptionTypes(input?: { includeArchived?: boolean }) {
-  const db = getDb();
-  const where = input?.includeArchived ? "" : "WHERE is_archived = 0";
-  return queryAll<ExceptionTypeRow>(
-    `
-      SELECT *
-      FROM exception_types
-      ${where}
-      ORDER BY updated_at DESC
-    `,
-    [],
-    db,
-  );
+const EXCEPTION_TYPES_TABLE = tableName("exception_types");
+const EXCEPTION_PLAYBOOK_TABLE = tableName("exception_playbook_tasks");
+const SHIPMENT_EXCEPTIONS_TABLE = tableName("shipment_exceptions");
+
+export async function listExceptionTypes(input?: { includeArchived?: boolean }) {
+  const rows = await scanAll<ExceptionTypeRow>(EXCEPTION_TYPES_TABLE);
+  return rows
+    .filter((row) => (input?.includeArchived ? true : row.is_archived === 0))
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
-export function getExceptionType(id: number, db: DatabaseSync = getDb()) {
-  return queryOne<ExceptionTypeRow>(
-    "SELECT * FROM exception_types WHERE id = ? LIMIT 1",
-    [id],
-    db,
-  );
+export async function getExceptionType(id: number) {
+  return await getItem<ExceptionTypeRow>(EXCEPTION_TYPES_TABLE, { id });
 }
 
-export function createExceptionType(input: {
+export async function createExceptionType(input: {
   name: string;
   description?: string | null;
   defaultRisk: ShipmentRisk;
   customerMessageTemplate?: string | null;
   createdByUserId?: number | null;
 }) {
-  const db = getDb();
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO exception_types (
-        name, description, default_risk, customer_message_template, is_archived,
-        created_at, created_by_user_id, updated_at, updated_by_user_id
-      )
-      VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
-    `,
-    [
-      input.name,
-      input.description ?? null,
-      input.defaultRisk,
-      input.customerMessageTemplate ?? null,
-      ts,
-      input.createdByUserId ?? null,
-      ts,
-      input.createdByUserId ?? null,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("exception_types");
+  await putItem(EXCEPTION_TYPES_TABLE, {
+    id,
+    name: input.name,
+    description: input.description ?? null,
+    default_risk: input.defaultRisk,
+    customer_message_template: input.customerMessageTemplate ?? null,
+    is_archived: 0,
+    created_at: ts,
+    created_by_user_id: input.createdByUserId ?? null,
+    updated_at: ts,
+    updated_by_user_id: input.createdByUserId ?? null,
+  });
+  return id;
 }
 
-export function updateExceptionType(input: {
+export async function updateExceptionType(input: {
   id: number;
   name: string;
   description?: string | null;
@@ -110,125 +100,99 @@ export function updateExceptionType(input: {
   isArchived?: boolean;
   updatedByUserId?: number | null;
 }) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE exception_types
-      SET name = ?,
-          description = ?,
-          default_risk = ?,
-          customer_message_template = ?,
-          is_archived = ?,
-          updated_at = ?,
-          updated_by_user_id = ?
-      WHERE id = ?
-    `,
-    [
-      input.name,
-      input.description ?? null,
-      input.defaultRisk,
-      input.customerMessageTemplate ?? null,
-      input.isArchived ? 1 : 0,
-      nowIso(),
-      input.updatedByUserId ?? null,
-      input.id,
-    ],
-    db,
+  await updateItem<ExceptionTypeRow>(
+    EXCEPTION_TYPES_TABLE,
+    { id: input.id },
+    "SET #name = :name, description = :description, default_risk = :default_risk, customer_message_template = :customer_message_template, is_archived = :is_archived, updated_at = :updated_at, updated_by_user_id = :updated_by_user_id",
+    {
+      ":name": input.name,
+      ":description": input.description ?? null,
+      ":default_risk": input.defaultRisk,
+      ":customer_message_template": input.customerMessageTemplate ?? null,
+      ":is_archived": input.isArchived ? 1 : 0,
+      ":updated_at": nowIso(),
+      ":updated_by_user_id": input.updatedByUserId ?? null,
+    },
+    { "#name": "name" },
   );
 }
 
-export function listExceptionPlaybookTasks(exceptionTypeId: number) {
-  const db = getDb();
-  return queryAll<ExceptionPlaybookTaskRow>(
-    `
-      SELECT *
-      FROM exception_playbook_tasks
-      WHERE exception_type_id = ?
-      ORDER BY sort_order ASC
-    `,
-    [exceptionTypeId],
-    db,
-  );
+export async function listExceptionPlaybookTasks(exceptionTypeId: number) {
+  const rows = await scanAll<ExceptionPlaybookTaskRow>(EXCEPTION_PLAYBOOK_TABLE);
+  return rows
+    .filter((row) => row.exception_type_id === exceptionTypeId)
+    .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-export function addExceptionPlaybookTask(input: {
+export async function addExceptionPlaybookTask(input: {
   exceptionTypeId: number;
   title: string;
   ownerRole: string;
   dueHours?: number | null;
 }) {
-  const db = getDb();
+  const rows = await listExceptionPlaybookTasks(input.exceptionTypeId);
+  const maxOrder = rows.reduce((max, row) => Math.max(max, row.sort_order), 0);
+  const nextOrder = maxOrder + 1;
   const ts = nowIso();
-  const row = queryOne<{ max_order: number | null }>(
-    "SELECT MAX(sort_order) AS max_order FROM exception_playbook_tasks WHERE exception_type_id = ?",
-    [input.exceptionTypeId],
-    db,
-  );
-  const nextOrder = (row?.max_order ?? 0) + 1;
-  const result = execute(
-    `
-      INSERT INTO exception_playbook_tasks (
-        exception_type_id, sort_order, title, owner_role, due_hours, created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.exceptionTypeId,
-      nextOrder,
-      input.title,
-      input.ownerRole,
-      input.dueHours ?? null,
-      ts,
-      ts,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("exception_playbook_tasks");
+  await putItem(EXCEPTION_PLAYBOOK_TABLE, {
+    id,
+    exception_type_id: input.exceptionTypeId,
+    sort_order: nextOrder,
+    title: input.title,
+    owner_role: input.ownerRole,
+    due_hours: input.dueHours ?? null,
+    created_at: ts,
+    updated_at: ts,
+  });
+  return id;
 }
 
-export function updateExceptionPlaybookTask(input: {
+export async function updateExceptionPlaybookTask(input: {
   taskId: number;
   title: string;
   ownerRole: string;
   dueHours?: number | null;
 }) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE exception_playbook_tasks
-      SET title = ?, owner_role = ?, due_hours = ?, updated_at = ?
-      WHERE id = ?
-    `,
-    [input.title, input.ownerRole, input.dueHours ?? null, nowIso(), input.taskId],
-    db,
+  await updateItem<ExceptionPlaybookTaskRow>(
+    EXCEPTION_PLAYBOOK_TABLE,
+    { id: input.taskId },
+    "SET title = :title, owner_role = :owner_role, due_hours = :due_hours, updated_at = :updated_at",
+    {
+      ":title": input.title,
+      ":owner_role": input.ownerRole,
+      ":due_hours": input.dueHours ?? null,
+      ":updated_at": nowIso(),
+    },
   );
 }
 
-export function deleteExceptionPlaybookTask(taskId: number) {
-  const db = getDb();
-  execute("DELETE FROM exception_playbook_tasks WHERE id = ?", [taskId], db);
+export async function deleteExceptionPlaybookTask(taskId: number) {
+  await deleteItem(EXCEPTION_PLAYBOOK_TABLE, { id: taskId });
 }
 
-export function listShipmentExceptions(shipmentId: number) {
-  const db = getDb();
-  return queryAll<ShipmentExceptionRow>(
-    `
-      SELECT
-        se.*,
-        et.name AS exception_name,
-        et.default_risk AS default_risk
-      FROM shipment_exceptions se
-      JOIN exception_types et ON et.id = se.exception_type_id
-      WHERE se.shipment_id = ?
-      ORDER BY se.created_at DESC
-      LIMIT 100
-    `,
-    [shipmentId],
-    db,
-  );
+export async function listShipmentExceptions(shipmentId: number) {
+  const [exceptions, types] = await Promise.all([
+    scanAll<ShipmentExceptionRow>(SHIPMENT_EXCEPTIONS_TABLE),
+    scanAll<ExceptionTypeRow>(EXCEPTION_TYPES_TABLE),
+  ]);
+  const typeMap = new Map(types.map((type) => [type.id, type]));
+
+  return exceptions
+    .filter((exception) => exception.shipment_id === shipmentId)
+    .map((exception) => {
+      const type = typeMap.get(exception.exception_type_id);
+      return {
+        ...exception,
+        exception_name: type?.name ?? "Unknown",
+        default_risk: type?.default_risk ?? "ON_TRACK",
+      };
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 100);
 }
 
-export function createShipmentException(db: DatabaseSync, input: {
+export async function createShipmentException(input: {
   shipmentId: number;
   exceptionTypeId: number;
   notes?: string | null;
@@ -237,40 +201,36 @@ export function createShipmentException(db: DatabaseSync, input: {
   createdByUserId?: number | null;
 }) {
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO shipment_exceptions (
-        shipment_id, exception_type_id, status, notes, customer_message, share_with_customer,
-        created_at, created_by_user_id, resolved_at, resolved_by_user_id
-      )
-      VALUES (?, ?, 'OPEN', ?, ?, ?, ?, ?, NULL, NULL)
-    `,
-    [
-      input.shipmentId,
-      input.exceptionTypeId,
-      input.notes ?? null,
-      input.customerMessage ?? null,
-      input.shareWithCustomer ? 1 : 0,
-      ts,
-      input.createdByUserId ?? null,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("shipment_exceptions");
+  await putItem(SHIPMENT_EXCEPTIONS_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    exception_type_id: input.exceptionTypeId,
+    status: "OPEN",
+    notes: input.notes ?? null,
+    customer_message: input.customerMessage ?? null,
+    share_with_customer: input.shareWithCustomer ? 1 : 0,
+    created_at: ts,
+    created_by_user_id: input.createdByUserId ?? null,
+    resolved_at: null,
+    resolved_by_user_id: null,
+  });
+  return id;
 }
 
-export function resolveShipmentException(input: {
+export async function resolveShipmentException(input: {
   exceptionId: number;
   resolvedByUserId?: number | null;
 }) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE shipment_exceptions
-      SET status = 'RESOLVED', resolved_at = ?, resolved_by_user_id = ?
-      WHERE id = ?
-    `,
-    [nowIso(), input.resolvedByUserId ?? null, input.exceptionId],
-    db,
+  await updateItem(
+    SHIPMENT_EXCEPTIONS_TABLE,
+    { id: input.exceptionId },
+    "SET #status = :status, resolved_at = :resolved_at, resolved_by_user_id = :resolved_by_user_id",
+    {
+      ":status": "RESOLVED",
+      ":resolved_at": nowIso(),
+      ":resolved_by_user_id": input.resolvedByUserId ?? null,
+    },
+    { "#status": "status" },
   );
 }

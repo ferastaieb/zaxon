@@ -1,7 +1,7 @@
 import "server-only";
 
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll } from "@/lib/sql";
+import { nowIso, nextId, putItem, scanAll, tableName } from "@/lib/db";
+import type { DbUser } from "@/lib/data/users";
 
 export type ActivityRow = {
   id: number;
@@ -14,61 +14,56 @@ export type ActivityRow = {
   data_json: string | null;
 };
 
-export function listActivities(shipmentId: number) {
-  const db = getDb();
-  return queryAll<ActivityRow>(
-    `
-      SELECT
-        a.id,
-        a.shipment_id,
-        a.type,
-        a.message,
-        a.actor_user_id,
-        u.name AS actor_name,
-        a.created_at,
-        a.data_json
-      FROM activities a
-      LEFT JOIN users u ON u.id = a.actor_user_id
-      WHERE a.shipment_id = ?
-      ORDER BY a.created_at DESC
-      LIMIT 200
-    `,
-    [shipmentId],
-    db,
-  );
+const ACTIVITIES_TABLE = tableName("activities");
+const USERS_TABLE = tableName("users");
+
+export async function listActivities(shipmentId: number): Promise<ActivityRow[]> {
+  const [activities, users] = await Promise.all([
+    scanAll<ActivityRow>(ACTIVITIES_TABLE),
+    scanAll<Pick<DbUser, "id" | "name">>(USERS_TABLE),
+  ]);
+  const userNames = new Map(users.map((user) => [user.id, user.name]));
+
+  return activities
+    .filter((activity) => activity.shipment_id === shipmentId)
+    .map((activity) => ({
+      ...activity,
+      actor_name: activity.actor_user_id
+        ? userNames.get(activity.actor_user_id) ?? null
+        : null,
+    }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 200);
 }
 
-export function logActivity(input: {
+export async function logActivity(input: {
   shipmentId: number;
   type: string;
   message: string;
   actorUserId?: number | null;
   data?: unknown;
 }) {
-  const db = getDb();
-  execute(
-    `
-      INSERT INTO activities (shipment_id, type, message, actor_user_id, created_at, data_json)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.shipmentId,
-      input.type,
-      input.message,
-      input.actorUserId ?? null,
-      nowIso(),
-      input.data ? JSON.stringify(input.data) : null,
-    ],
-    db,
-  );
+  const id = await nextId("activities");
+  await putItem(ACTIVITIES_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    type: input.type,
+    message: input.message,
+    actor_user_id: input.actorUserId ?? null,
+    created_at: nowIso(),
+    data_json: input.data ? JSON.stringify(input.data) : null,
+  });
 }
 
-export function addComment(input: { shipmentId: number; message: string; actorUserId: number }) {
-  logActivity({
+export async function addComment(input: {
+  shipmentId: number;
+  message: string;
+  actorUserId: number;
+}) {
+  await logActivity({
     shipmentId: input.shipmentId,
     type: "COMMENT",
     message: input.message,
     actorUserId: input.actorUserId,
   });
 }
-

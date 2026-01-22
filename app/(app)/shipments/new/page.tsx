@@ -11,8 +11,8 @@ import { listWorkflowTemplates, suggestTemplate } from "@/lib/data/workflows";
 export default async function NewShipmentPage() {
   const user = await requireUser();
 
-  const customers = listParties({ type: "CUSTOMER" });
-  const templates = listWorkflowTemplates({
+  const customers = await listParties({ type: "CUSTOMER" });
+  const templates = await listWorkflowTemplates({
     includeArchived: false,
     isSubworkflow: false,
   });
@@ -56,7 +56,7 @@ export default async function NewShipmentPage() {
 
     if (!workflowTemplateId) {
       const primaryCustomerId = customerPartyIds[0] ?? 0;
-      const suggested = suggestTemplate({
+      const suggested = await suggestTemplate({
         transportMode,
         origin,
         destination,
@@ -68,7 +68,7 @@ export default async function NewShipmentPage() {
 
     if (!workflowTemplateId) redirect("/shipments/new?error=template");
 
-    const created = createShipment({
+    const created = await createShipment({
       customerPartyIds,
       transportMode,
       origin,

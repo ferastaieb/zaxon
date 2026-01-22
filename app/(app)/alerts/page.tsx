@@ -24,14 +24,14 @@ export default async function AlertsPage({
     : ({} as SearchParams);
   const showAll = readParam(resolved, "all") === "1";
 
-  const alerts = listAlerts(user.id, { includeRead: showAll });
+  const alerts = await listAlerts(user.id, { includeRead: showAll });
 
   async function markReadAction(formData: FormData) {
     "use server";
     const user = await requireUser();
     const alertId = Number(formData.get("alertId") ?? 0);
     if (!alertId) redirect("/alerts");
-    markAlertRead(alertId, user.id);
+    await markAlertRead(alertId, user.id);
     redirect("/alerts");
   }
 

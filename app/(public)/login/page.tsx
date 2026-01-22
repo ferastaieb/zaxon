@@ -21,7 +21,7 @@ export default async function LoginPage({
     ? await Promise.resolve(searchParams)
     : ({} as SearchParams);
 
-  if (countUsers() === 0) redirect("/setup");
+  if ((await countUsers()) === 0) redirect("/setup");
   if (await getCurrentUser()) redirect("/shipments");
 
   const error = readParam(resolved, "error");
@@ -34,7 +34,7 @@ export default async function LoginPage({
     const nextRaw = String(formData.get("next") ?? "/shipments");
     const safeNext = nextRaw.startsWith("/") ? nextRaw : "/shipments";
 
-    const user = getUserByPhone(phone);
+    const user = await getUserByPhone(phone);
     if (!user) redirect(`/login?error=invalid&next=${encodeURIComponent(safeNext)}`);
     if (user.disabled) redirect(`/login?error=disabled&next=${encodeURIComponent(safeNext)}`);
     if (!verifyPassword(password, user.password_hash)) {

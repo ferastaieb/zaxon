@@ -1,8 +1,7 @@
 import "server-only";
 
 import type { PartyType, TaskStatus } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import { getItem, nextId, nowIso, putItem, scanAll, tableName, updateItem } from "@/lib/db";
 
 export type TaskRow = {
   id: number;
@@ -22,28 +21,39 @@ export type TaskRow = {
   updated_at: string;
 };
 
-export function listTasks(shipmentId: number) {
-  const db = getDb();
-  return queryAll<TaskRow>(
-    `
-      SELECT
-        t.*,
-        u.name AS assignee_name,
-        p.name AS related_party_name,
-        p.type AS related_party_type
-      FROM tasks t
-      LEFT JOIN users u ON u.id = t.assignee_user_id
-      LEFT JOIN parties p ON p.id = t.related_party_id
-      WHERE t.shipment_id = ?
-      ORDER BY t.created_at DESC
-      LIMIT 200
-    `,
-    [shipmentId],
-    db,
-  );
+const TASKS_TABLE = tableName("tasks");
+const USERS_TABLE = tableName("users");
+const PARTIES_TABLE = tableName("parties");
+
+export async function listTasks(shipmentId: number): Promise<TaskRow[]> {
+  const [tasks, users, parties] = await Promise.all([
+    scanAll<TaskRow>(TASKS_TABLE),
+    scanAll<{ id: number; name: string }>(USERS_TABLE),
+    scanAll<{ id: number; name: string; type: PartyType }>(PARTIES_TABLE),
+  ]);
+  const userMap = new Map(users.map((user) => [user.id, user.name]));
+  const partyMap = new Map(parties.map((party) => [party.id, party]));
+
+  return tasks
+    .filter((task) => task.shipment_id === shipmentId)
+    .map((task) => {
+      const party = task.related_party_id
+        ? partyMap.get(task.related_party_id) ?? null
+        : null;
+      return {
+        ...task,
+        assignee_name: task.assignee_user_id
+          ? userMap.get(task.assignee_user_id) ?? null
+          : null,
+        related_party_name: party?.name ?? null,
+        related_party_type: party?.type ?? null,
+      };
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 200);
 }
 
-export function createTask(input: {
+export async function createTask(input: {
   shipmentId: number;
   title: string;
   relatedPartyId?: number | null;
@@ -54,77 +64,74 @@ export function createTask(input: {
   linkedExceptionId?: number | null;
   createdByUserId?: number | null;
 }) {
-  const db = getDb();
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO tasks (
-        shipment_id, title, related_party_id, assignee_user_id, assignee_role, due_at, status, linked_exception_id,
-        created_at, created_by_user_id, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.shipmentId,
-      input.title,
-      input.relatedPartyId ?? null,
-      input.assigneeUserId ?? null,
-      input.assigneeRole ?? null,
-      input.dueAt ?? null,
-      input.status ?? "OPEN",
-      input.linkedExceptionId ?? null,
-      ts,
-      input.createdByUserId ?? null,
-      ts,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("tasks");
+  await putItem(TASKS_TABLE, {
+    id,
+    shipment_id: input.shipmentId,
+    title: input.title,
+    related_party_id: input.relatedPartyId ?? null,
+    assignee_user_id: input.assigneeUserId ?? null,
+    assignee_role: input.assigneeRole ?? null,
+    due_at: input.dueAt ?? null,
+    status: input.status ?? "OPEN",
+    linked_exception_id: input.linkedExceptionId ?? null,
+    created_at: ts,
+    created_by_user_id: input.createdByUserId ?? null,
+    updated_at: ts,
+  });
+  return id;
 }
 
-export function updateTask(input: {
+export async function updateTask(input: {
   taskId: number;
   status?: TaskStatus;
   relatedPartyId?: number | null;
 }) {
-  const db = getDb();
-  const fields: string[] = ["updated_at = ?"];
-  const params: Array<string | number | null> = [nowIso()];
+  const parts: string[] = ["updated_at = :updated_at"];
+  const values: Record<string, unknown> = { ":updated_at": nowIso() };
+  const names: Record<string, string> = {};
 
   if (input.status) {
-    fields.push("status = ?");
-    params.push(input.status);
+    parts.push("#status = :status");
+    values[":status"] = input.status;
+    names["#status"] = "status";
   }
 
   if (input.relatedPartyId !== undefined) {
-    fields.push("related_party_id = ?");
-    params.push(input.relatedPartyId);
+    parts.push("related_party_id = :related_party_id");
+    values[":related_party_id"] = input.relatedPartyId;
   }
 
-  params.push(input.taskId);
-  execute(
-    `UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`,
-    params,
-    db,
+  await updateItem(
+    TASKS_TABLE,
+    { id: input.taskId },
+    `SET ${parts.join(", ")}`,
+    values,
+    Object.keys(names).length ? names : undefined,
   );
 }
 
-export function getTask(taskId: number) {
-  const db = getDb();
-  return queryOne<TaskRow>(
-    `
-      SELECT
-        t.*,
-        u.name AS assignee_name,
-        p.name AS related_party_name,
-        p.type AS related_party_type
-      FROM tasks t
-      LEFT JOIN users u ON u.id = t.assignee_user_id
-      LEFT JOIN parties p ON p.id = t.related_party_id
-      WHERE t.id = ?
-      LIMIT 1
-    `,
-    [taskId],
-    db,
-  );
+export async function getTask(taskId: number): Promise<TaskRow | null> {
+  const [task, users, parties] = await Promise.all([
+    getItem<TaskRow>(TASKS_TABLE, { id: taskId }),
+    scanAll<{ id: number; name: string }>(USERS_TABLE),
+    scanAll<{ id: number; name: string; type: PartyType }>(PARTIES_TABLE),
+  ]);
+  if (!task) return null;
+
+  const userMap = new Map(users.map((user) => [user.id, user.name]));
+  const partyMap = new Map(parties.map((party) => [party.id, party]));
+  const party = task.related_party_id
+    ? partyMap.get(task.related_party_id) ?? null
+    : null;
+
+  return {
+    ...task,
+    assignee_name: task.assignee_user_id
+      ? userMap.get(task.assignee_user_id) ?? null
+      : null,
+    related_party_name: party?.name ?? null,
+    related_party_type: party?.type ?? null,
+  };
 }

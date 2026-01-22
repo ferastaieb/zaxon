@@ -6,7 +6,7 @@ import { seedInitialData } from "@/lib/seed";
 
 export default async function SetupPage() {
   if (await getCurrentUser()) redirect("/shipments");
-  if (countUsers() > 0) redirect("/login");
+  if ((await countUsers()) > 0) redirect("/login");
 
   async function setupAction(formData: FormData) {
     "use server";
@@ -16,14 +16,14 @@ export default async function SetupPage() {
 
     if (!name || !phone || password.length < 6) redirect("/setup?error=invalid");
 
-    const userId = createUser({
+    const userId = await createUser({
       name,
       phone,
       role: "ADMIN",
       passwordHash: hashPassword(password),
     });
 
-    seedInitialData(userId);
+    await seedInitialData(userId);
 
     await createSession(userId);
     redirect("/shipments");

@@ -1,13 +1,21 @@
 import "server-only";
 
-import type { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 
 import type { Role, ShipmentType, TransportMode } from "@/lib/domain";
-import { getDb, inTransaction, nowIso } from "@/lib/db";
 import type { ChecklistGroup } from "@/lib/checklists";
-import { execute, jsonParse, queryAll, queryOne } from "@/lib/sql";
 import { mapStopCountdownPaths, parseStepFieldSchema } from "@/lib/stepFields";
+import { jsonParse } from "@/lib/sql";
+import {
+  deleteItem,
+  getItem,
+  nextId,
+  nowIso,
+  putItem,
+  scanAll,
+  tableName,
+  updateItem,
+} from "@/lib/db";
 
 export type WorkflowTemplateRow = {
   id: number;
@@ -56,75 +64,58 @@ export type TemplateRuleRow = {
   created_by_user_id: number | null;
 };
 
-export function listWorkflowTemplates(input?: { includeArchived?: boolean; isSubworkflow?: boolean }) {
-  const db = getDb();
-  const where: string[] = [];
-  const params: Array<string | number> = [];
-  if (!input?.includeArchived) {
-    where.push("is_archived = 0");
-  }
-  if (input?.isSubworkflow !== undefined) {
-    where.push("is_subworkflow = ?");
-    params.push(input.isSubworkflow ? 1 : 0);
-  }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  return queryAll<WorkflowTemplateRow>(
-    `
-      SELECT *
-      FROM workflow_templates
-      ${whereSql}
-      ORDER BY updated_at DESC
-    `,
-    params,
-    db,
-  );
+const WORKFLOW_TEMPLATES_TABLE = tableName("workflow_templates");
+const WORKFLOW_TEMPLATE_STEPS_TABLE = tableName("workflow_template_steps");
+const TEMPLATE_RULES_TABLE = tableName("template_rules");
+const SHIPMENTS_TABLE = tableName("shipments");
+const PARTIES_TABLE = tableName("parties");
+
+export async function listWorkflowTemplates(input?: {
+  includeArchived?: boolean;
+  isSubworkflow?: boolean;
+}) {
+  const rows = await scanAll<WorkflowTemplateRow>(WORKFLOW_TEMPLATES_TABLE);
+  return rows
+    .filter((row) => (input?.includeArchived ? true : row.is_archived === 0))
+    .filter((row) =>
+      input?.isSubworkflow === undefined
+        ? true
+        : row.is_subworkflow === (input.isSubworkflow ? 1 : 0),
+    )
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
-export function getWorkflowTemplate(
-  templateId: number,
-  db: DatabaseSync = getDb(),
-) {
-  return queryOne<WorkflowTemplateRow>(
-    "SELECT * FROM workflow_templates WHERE id = ? LIMIT 1",
-    [templateId],
-    db,
-  );
+export async function getWorkflowTemplate(templateId: number) {
+  return await getItem<WorkflowTemplateRow>(WORKFLOW_TEMPLATES_TABLE, {
+    id: templateId,
+  });
 }
 
-export function createWorkflowTemplate(input: {
+export async function createWorkflowTemplate(input: {
   name: string;
   description?: string | null;
   isSubworkflow?: boolean;
   globalVariablesJson?: string;
   createdByUserId?: number | null;
 }) {
-  const db = getDb();
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO workflow_templates (
-        name, description, is_archived, is_subworkflow, global_variables_json,
-        created_at, created_by_user_id,
-        updated_at, updated_by_user_id
-      )
-      VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.name,
-      input.description ?? null,
-      input.isSubworkflow ? 1 : 0,
-      input.globalVariablesJson ?? "[]",
-      ts,
-      input.createdByUserId ?? null,
-      ts,
-      input.createdByUserId ?? null,
-    ],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("workflow_templates");
+  await putItem(WORKFLOW_TEMPLATES_TABLE, {
+    id,
+    name: input.name,
+    description: input.description ?? null,
+    is_archived: 0,
+    is_subworkflow: input.isSubworkflow ? 1 : 0,
+    global_variables_json: input.globalVariablesJson ?? "[]",
+    created_at: ts,
+    created_by_user_id: input.createdByUserId ?? null,
+    updated_at: ts,
+    updated_by_user_id: input.createdByUserId ?? null,
+  });
+  return id;
 }
 
-export function updateWorkflowTemplate(input: {
+export async function updateWorkflowTemplate(input: {
   id: number;
   name: string;
   description?: string | null;
@@ -133,48 +124,31 @@ export function updateWorkflowTemplate(input: {
   globalVariablesJson?: string;
   updatedByUserId?: number | null;
 }) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE workflow_templates
-      SET name = ?,
-          description = ?,
-          is_archived = ?,
-          is_subworkflow = ?,
-          global_variables_json = ?,
-          updated_at = ?,
-          updated_by_user_id = ?
-      WHERE id = ?
-    `,
-    [
-      input.name,
-      input.description ?? null,
-      input.isArchived ? 1 : 0,
-      input.isSubworkflow ? 1 : 0,
-      input.globalVariablesJson ?? "[]",
-      nowIso(),
-      input.updatedByUserId ?? null,
-      input.id,
-    ],
-    db,
+  await updateItem<WorkflowTemplateRow>(
+    WORKFLOW_TEMPLATES_TABLE,
+    { id: input.id },
+    "SET #name = :name, description = :description, is_archived = :is_archived, is_subworkflow = :is_subworkflow, global_variables_json = :global_variables_json, updated_at = :updated_at, updated_by_user_id = :updated_by_user_id",
+    {
+      ":name": input.name,
+      ":description": input.description ?? null,
+      ":is_archived": input.isArchived ? 1 : 0,
+      ":is_subworkflow": input.isSubworkflow ? 1 : 0,
+      ":global_variables_json": input.globalVariablesJson ?? "[]",
+      ":updated_at": nowIso(),
+      ":updated_by_user_id": input.updatedByUserId ?? null,
+    },
+    { "#name": "name" },
   );
 }
 
-export function listTemplateSteps(templateId: number) {
-  const db = getDb();
-  return queryAll<WorkflowTemplateStepRow>(
-    `
-      SELECT *
-      FROM workflow_template_steps
-      WHERE template_id = ?
-      ORDER BY sort_order ASC
-    `,
-    [templateId],
-    db,
-  );
+export async function listTemplateSteps(templateId: number) {
+  const rows = await scanAll<WorkflowTemplateStepRow>(WORKFLOW_TEMPLATE_STEPS_TABLE);
+  return rows
+    .filter((row) => row.template_id === templateId)
+    .sort((a, b) => a.sort_order - b.sort_order);
 }
 
-export function addTemplateStep(input: {
+export async function addTemplateStep(input: {
   templateId: number;
   name: string;
   ownerRole: Role;
@@ -191,54 +165,39 @@ export function addTemplateStep(input: {
   groupTemplateId?: number | null;
   customerCompletionMessageTemplate?: string | null;
 }) {
-  const db = getDb();
+  const rows = await listTemplateSteps(input.templateId);
+  const maxOrder = rows.reduce((max, row) => Math.max(max, row.sort_order), 0);
+  const nextOrder = maxOrder + 1;
   const ts = nowIso();
-  const row = queryOne<{ max_order: number | null }>(
-    "SELECT MAX(sort_order) AS max_order FROM workflow_template_steps WHERE template_id = ?",
-    [input.templateId],
-    db,
-  );
-  const nextOrder = (row?.max_order ?? 0) + 1;
+  const id = await nextId("workflow_template_steps");
 
-  const result = execute(
-    `
-      INSERT INTO workflow_template_steps (
-        template_id, sort_order, name, owner_role,
-        required_fields_json, required_document_types_json,
-        sla_hours, customer_visible, is_external, checklist_groups_json,
-        field_schema_json, depends_on_step_ids_json, group_id, group_label, group_template_id,
-        customer_completion_message_template,
-        created_at, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.templateId,
-      nextOrder,
-      input.name,
-      input.ownerRole,
-      JSON.stringify(input.requiredFields ?? []),
-      JSON.stringify(input.requiredDocumentTypes ?? []),
-      input.slaHours ?? null,
-      input.customerVisible ? 1 : 0,
-      input.isExternal ? 1 : 0,
-      JSON.stringify(input.checklistGroups ?? []),
-      input.fieldSchemaJson ?? "{}",
-      JSON.stringify(input.dependsOnStepIds ?? []),
-      input.groupId ?? null,
-      input.groupLabel ?? null,
-      input.groupTemplateId ?? null,
+  await putItem(WORKFLOW_TEMPLATE_STEPS_TABLE, {
+    id,
+    template_id: input.templateId,
+    sort_order: nextOrder,
+    name: input.name,
+    owner_role: input.ownerRole,
+    required_fields_json: JSON.stringify(input.requiredFields ?? []),
+    required_document_types_json: JSON.stringify(input.requiredDocumentTypes ?? []),
+    sla_hours: input.slaHours ?? null,
+    customer_visible: input.customerVisible ? 1 : 0,
+    is_external: input.isExternal ? 1 : 0,
+    checklist_groups_json: JSON.stringify(input.checklistGroups ?? []),
+    field_schema_json: input.fieldSchemaJson ?? "{}",
+    depends_on_step_ids_json: JSON.stringify(input.dependsOnStepIds ?? []),
+    group_id: input.groupId ?? null,
+    group_label: input.groupLabel ?? null,
+    group_template_id: input.groupTemplateId ?? null,
+    customer_completion_message_template:
       input.customerCompletionMessageTemplate ?? null,
-      ts,
-      ts,
-    ],
-    db,
-  );
+    created_at: ts,
+    updated_at: ts,
+  });
 
-  return result.lastInsertRowid;
+  return id;
 }
 
-export function updateTemplateStep(input: {
+export async function updateTemplateStep(input: {
   stepId: number;
   name: string;
   ownerRole: Role;
@@ -252,107 +211,80 @@ export function updateTemplateStep(input: {
   dependsOnStepIds?: number[];
   customerCompletionMessageTemplate?: string | null;
 }) {
-  const db = getDb();
-  execute(
-    `
-      UPDATE workflow_template_steps
-      SET name = ?,
-          owner_role = ?,
-          required_fields_json = ?,
-          required_document_types_json = ?,
-          sla_hours = ?,
-          customer_visible = ?,
-          is_external = ?,
-          checklist_groups_json = ?,
-          field_schema_json = ?,
-          depends_on_step_ids_json = ?,
-          customer_completion_message_template = ?,
-          updated_at = ?
-      WHERE id = ?
-    `,
-    [
-      input.name,
-      input.ownerRole,
-      JSON.stringify(input.requiredFields ?? []),
-      JSON.stringify(input.requiredDocumentTypes ?? []),
-      input.slaHours ?? null,
-      input.customerVisible ? 1 : 0,
-      input.isExternal ? 1 : 0,
-      JSON.stringify(input.checklistGroups ?? []),
-      input.fieldSchemaJson ?? "{}",
-      JSON.stringify(input.dependsOnStepIds ?? []),
-      input.customerCompletionMessageTemplate ?? null,
-      nowIso(),
-      input.stepId,
-    ],
-    db,
+  await updateItem<WorkflowTemplateStepRow>(
+    WORKFLOW_TEMPLATE_STEPS_TABLE,
+    { id: input.stepId },
+    "SET #name = :name, owner_role = :owner_role, required_fields_json = :required_fields_json, required_document_types_json = :required_document_types_json, sla_hours = :sla_hours, customer_visible = :customer_visible, is_external = :is_external, checklist_groups_json = :checklist_groups_json, field_schema_json = :field_schema_json, depends_on_step_ids_json = :depends_on_step_ids_json, customer_completion_message_template = :customer_completion_message_template, updated_at = :updated_at",
+    {
+      ":name": input.name,
+      ":owner_role": input.ownerRole,
+      ":required_fields_json": JSON.stringify(input.requiredFields ?? []),
+      ":required_document_types_json": JSON.stringify(
+        input.requiredDocumentTypes ?? [],
+      ),
+      ":sla_hours": input.slaHours ?? null,
+      ":customer_visible": input.customerVisible ? 1 : 0,
+      ":is_external": input.isExternal ? 1 : 0,
+      ":checklist_groups_json": JSON.stringify(input.checklistGroups ?? []),
+      ":field_schema_json": input.fieldSchemaJson ?? "{}",
+      ":depends_on_step_ids_json": JSON.stringify(input.dependsOnStepIds ?? []),
+      ":customer_completion_message_template":
+        input.customerCompletionMessageTemplate ?? null,
+      ":updated_at": nowIso(),
+    },
+    { "#name": "name" },
   );
 }
 
-export function addSubworkflowSteps(input: {
+export async function addSubworkflowSteps(input: {
   templateId: number;
   subworkflowTemplateId: number;
   groupId?: string;
   groupLabel?: string;
 }) {
-  const db = getDb();
-  const subworkflow = getWorkflowTemplate(input.subworkflowTemplateId, db);
+  const subworkflow = await getWorkflowTemplate(input.subworkflowTemplateId);
   if (!subworkflow) return null;
 
-  const steps = listTemplateSteps(input.subworkflowTemplateId);
+  const steps = await listTemplateSteps(input.subworkflowTemplateId);
   if (!steps.length) return null;
 
   const ts = nowIso();
   const groupId = input.groupId ?? crypto.randomUUID();
   const groupLabel = input.groupLabel ?? subworkflow.name;
 
-  const row = queryOne<{ max_order: number | null }>(
-    "SELECT MAX(sort_order) AS max_order FROM workflow_template_steps WHERE template_id = ?",
-    [input.templateId],
-    db,
-  );
-  let nextOrder = (row?.max_order ?? 0) + 1;
+  const existingSteps = await listTemplateSteps(input.templateId);
+  let nextOrder =
+    existingSteps.reduce((max, row) => Math.max(max, row.sort_order), 0) + 1;
+
   const stepIdMap = new Map<number, number>();
+  const createdSteps: Array<{ oldId: number; newId: number }> = [];
 
   for (const step of steps) {
-    const inserted = execute(
-      `
-        INSERT INTO workflow_template_steps (
-          template_id, sort_order, name, owner_role,
-          required_fields_json, required_document_types_json,
-          sla_hours, customer_visible, is_external, checklist_groups_json,
-          field_schema_json, depends_on_step_ids_json, group_id, group_label, group_template_id,
-          customer_completion_message_template,
-          created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        input.templateId,
-        nextOrder,
-        step.name,
-        step.owner_role,
-        step.required_fields_json,
-        step.required_document_types_json,
-        step.sla_hours ?? null,
-        step.customer_visible,
-        step.is_external,
-        step.checklist_groups_json,
-        step.field_schema_json ?? "{}",
-        step.depends_on_step_ids_json ?? "[]",
-        groupId,
-        groupLabel,
-        input.subworkflowTemplateId,
+    const newId = await nextId("workflow_template_steps");
+    await putItem(WORKFLOW_TEMPLATE_STEPS_TABLE, {
+      id: newId,
+      template_id: input.templateId,
+      sort_order: nextOrder,
+      name: step.name,
+      owner_role: step.owner_role,
+      required_fields_json: step.required_fields_json,
+      required_document_types_json: step.required_document_types_json,
+      sla_hours: step.sla_hours ?? null,
+      customer_visible: step.customer_visible,
+      is_external: step.is_external,
+      checklist_groups_json: step.checklist_groups_json,
+      field_schema_json: step.field_schema_json ?? "{}",
+      depends_on_step_ids_json: step.depends_on_step_ids_json ?? "[]",
+      group_id: groupId,
+      group_label: groupLabel,
+      group_template_id: input.subworkflowTemplateId,
+      customer_completion_message_template:
         step.customer_completion_message_template ?? null,
-        ts,
-        ts,
-      ],
-      db,
-    );
-    const insertedId = inserted.lastInsertRowid;
-    if (insertedId) {
-      stepIdMap.set(step.id, insertedId);
-    }
+      created_at: ts,
+      updated_at: ts,
+    });
+    stepIdMap.set(step.id, newId);
+    createdSteps.push({ oldId: step.id, newId });
     nextOrder += 1;
   }
 
@@ -361,28 +293,29 @@ export function addSubworkflowSteps(input: {
       const mappedId = stepIdMap.get(step.id);
       if (!mappedId) continue;
       const rawDeps = jsonParse(step.depends_on_step_ids_json, [] as number[]);
-      if (!rawDeps.length) continue;
-      const mappedDeps = rawDeps
-        .map((id) => stepIdMap.get(id))
-        .filter((id): id is number => !!id);
-      execute(
-        "UPDATE workflow_template_steps SET depends_on_step_ids_json = ? WHERE id = ?",
-        [JSON.stringify(mappedDeps), mappedId],
-        db,
-      );
-    }
-    for (const step of steps) {
-      const mappedId = stepIdMap.get(step.id);
-      if (!mappedId) continue;
-      const schema = parseStepFieldSchema(step.field_schema_json);
-      if (!schema.fields.length) continue;
-      const mappedSchema = mapStopCountdownPaths(schema, (id) => stepIdMap.get(id) ?? null);
-      if (JSON.stringify(schema) !== JSON.stringify(mappedSchema)) {
-        execute(
-          "UPDATE workflow_template_steps SET field_schema_json = ? WHERE id = ?",
-          [JSON.stringify(mappedSchema), mappedId],
-          db,
+      if (rawDeps.length) {
+        const mappedDeps = rawDeps
+          .map((id) => stepIdMap.get(id))
+          .filter((id): id is number => !!id);
+        await updateItem(
+          WORKFLOW_TEMPLATE_STEPS_TABLE,
+          { id: mappedId },
+          "SET depends_on_step_ids_json = :depends_on_step_ids_json",
+          { ":depends_on_step_ids_json": JSON.stringify(mappedDeps) },
         );
+      }
+
+      const schema = parseStepFieldSchema(step.field_schema_json);
+      if (schema.fields.length) {
+        const mappedSchema = mapStopCountdownPaths(schema, (id) => stepIdMap.get(id) ?? null);
+        if (JSON.stringify(schema) !== JSON.stringify(mappedSchema)) {
+          await updateItem(
+            WORKFLOW_TEMPLATE_STEPS_TABLE,
+            { id: mappedId },
+            "SET field_schema_json = :field_schema_json",
+            { ":field_schema_json": JSON.stringify(mappedSchema) },
+          );
+        }
       }
     }
   }
@@ -390,85 +323,71 @@ export function addSubworkflowSteps(input: {
   return groupId;
 }
 
-export function deleteTemplateStepGroup(input: { templateId: number; groupId: string }) {
-  const db = getDb();
-  execute(
-    "DELETE FROM workflow_template_steps WHERE template_id = ? AND group_id = ?",
-    [input.templateId, input.groupId],
-    db,
+export async function deleteTemplateStepGroup(input: { templateId: number; groupId: string }) {
+  const rows = await scanAll<WorkflowTemplateStepRow>(WORKFLOW_TEMPLATE_STEPS_TABLE);
+  const targets = rows.filter(
+    (row) => row.template_id === input.templateId && row.group_id === input.groupId,
   );
+  for (const step of targets) {
+    await deleteItem(WORKFLOW_TEMPLATE_STEPS_TABLE, { id: step.id });
+  }
 }
 
-export function deleteTemplateStep(stepId: number) {
-  const db = getDb();
-  execute("DELETE FROM workflow_template_steps WHERE id = ?", [stepId], db);
+export async function deleteTemplateStep(stepId: number) {
+  await deleteItem(WORKFLOW_TEMPLATE_STEPS_TABLE, { id: stepId });
 }
 
-export function moveTemplateStep(input: { templateId: number; stepId: number; dir: "up" | "down" }) {
-  const db = getDb();
-  const steps = queryAll<{ id: number; sort_order: number }>(
-    `
-      SELECT id, sort_order
-      FROM workflow_template_steps
-      WHERE template_id = ?
-      ORDER BY sort_order ASC
-    `,
-    [input.templateId],
-    db,
-  );
-  const idx = steps.findIndex((s) => s.id === input.stepId);
+export async function moveTemplateStep(input: {
+  templateId: number;
+  stepId: number;
+  dir: "up" | "down";
+}) {
+  const steps = await listTemplateSteps(input.templateId);
+  const idx = steps.findIndex((step) => step.id === input.stepId);
   if (idx === -1) return;
   const swapWith = input.dir === "up" ? idx - 1 : idx + 1;
   if (swapWith < 0 || swapWith >= steps.length) return;
 
   const a = steps[idx]!;
   const b = steps[swapWith]!;
-  const maxOrder = steps.reduce((max, step) => Math.max(max, step.sort_order), 0);
-  const tempOrder = maxOrder + 1000;
+  const ts = nowIso();
 
-  inTransaction(db, () => {
-    execute(
-      "UPDATE workflow_template_steps SET sort_order = ?, updated_at = ? WHERE id = ?",
-      [tempOrder, nowIso(), a.id],
-      db,
-    );
-    execute(
-      "UPDATE workflow_template_steps SET sort_order = ?, updated_at = ? WHERE id = ?",
-      [a.sort_order, nowIso(), b.id],
-      db,
-    );
-    execute(
-      "UPDATE workflow_template_steps SET sort_order = ?, updated_at = ? WHERE id = ?",
-      [b.sort_order, nowIso(), a.id],
-      db,
-    );
-  });
-}
-
-export function listTemplateRules() {
-  const db = getDb();
-  return queryAll<
-    TemplateRuleRow & {
-      template_name: string;
-      customer_name: string | null;
-    }
-  >(
-    `
-      SELECT
-        r.*,
-        t.name AS template_name,
-        c.name AS customer_name
-      FROM template_rules r
-      JOIN workflow_templates t ON t.id = r.template_id
-      LEFT JOIN parties c ON c.id = r.customer_party_id
-      ORDER BY r.id DESC
-    `,
-    [],
-    db,
+  await updateItem(
+    WORKFLOW_TEMPLATE_STEPS_TABLE,
+    { id: a.id },
+    "SET sort_order = :sort_order, updated_at = :updated_at",
+    { ":sort_order": b.sort_order, ":updated_at": ts },
+  );
+  await updateItem(
+    WORKFLOW_TEMPLATE_STEPS_TABLE,
+    { id: b.id },
+    "SET sort_order = :sort_order, updated_at = :updated_at",
+    { ":sort_order": a.sort_order, ":updated_at": ts },
   );
 }
 
-export function createTemplateRule(input: {
+export async function listTemplateRules() {
+  const [rules, templates, parties] = await Promise.all([
+    scanAll<TemplateRuleRow>(TEMPLATE_RULES_TABLE),
+    scanAll<{ id: number; name: string }>(WORKFLOW_TEMPLATES_TABLE),
+    scanAll<{ id: number; name: string }>(PARTIES_TABLE),
+  ]);
+
+  const templateMap = new Map(templates.map((t) => [t.id, t.name]));
+  const partyMap = new Map(parties.map((p) => [p.id, p.name]));
+
+  return rules
+    .map((rule) => ({
+      ...rule,
+      template_name: templateMap.get(rule.template_id) ?? "Unknown",
+      customer_name: rule.customer_party_id
+        ? partyMap.get(rule.customer_party_id) ?? null
+        : null,
+    }))
+    .sort((a, b) => b.id - a.id);
+}
+
+export async function createTemplateRule(input: {
   templateId: number;
   transportMode?: TransportMode | null;
   origin?: string | null;
@@ -477,99 +396,96 @@ export function createTemplateRule(input: {
   customerPartyId?: number | null;
   createdByUserId?: number | null;
 }) {
-  const db = getDb();
-  const result = execute(
-    `
-      INSERT INTO template_rules (
-        template_id, transport_mode, origin, destination, shipment_type, customer_party_id,
-        created_at, created_by_user_id
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      input.templateId,
-      input.transportMode ?? null,
-      input.origin ?? null,
-      input.destination ?? null,
-      input.shipmentType ?? null,
-      input.customerPartyId ?? null,
-      nowIso(),
-      input.createdByUserId ?? null,
-    ],
-    db,
+  const id = await nextId("template_rules");
+  await putItem(TEMPLATE_RULES_TABLE, {
+    id,
+    template_id: input.templateId,
+    transport_mode: input.transportMode ?? null,
+    origin: input.origin ?? null,
+    destination: input.destination ?? null,
+    shipment_type: input.shipmentType ?? null,
+    customer_party_id: input.customerPartyId ?? null,
+    created_at: nowIso(),
+    created_by_user_id: input.createdByUserId ?? null,
+  });
+  return id;
+}
+
+export async function deleteTemplateRule(ruleId: number) {
+  await deleteItem(TEMPLATE_RULES_TABLE, { id: ruleId });
+}
+
+export async function getWorkflowTemplateUsage(templateId: number) {
+  const [shipments, steps] = await Promise.all([
+    scanAll<{ id: number; workflow_template_id: number | null }>(SHIPMENTS_TABLE),
+    scanAll<{ id: number; group_template_id: number | null }>(
+      WORKFLOW_TEMPLATE_STEPS_TABLE,
+    ),
+  ]);
+  const hasShipments = shipments.some(
+    (shipment) => shipment.workflow_template_id === templateId,
   );
-  return result.lastInsertRowid;
-}
-
-export function deleteTemplateRule(ruleId: number) {
-  const db = getDb();
-  execute("DELETE FROM template_rules WHERE id = ?", [ruleId], db);
-}
-
-export function getWorkflowTemplateUsage(templateId: number) {
-  const db = getDb();
-  const shipment = queryOne<{ id: number }>(
-    "SELECT id FROM shipments WHERE workflow_template_id = ? LIMIT 1",
-    [templateId],
-    db,
+  const usedAsSubworkflow = steps.some(
+    (step) => step.group_template_id === templateId,
   );
-  const stepGroup = queryOne<{ id: number }>(
-    "SELECT id FROM workflow_template_steps WHERE group_template_id = ? LIMIT 1",
-    [templateId],
-    db,
-  );
-  return {
-    hasShipments: !!shipment,
-    usedAsSubworkflow: !!stepGroup,
-  };
+  return { hasShipments, usedAsSubworkflow };
 }
 
-export function deleteWorkflowTemplate(templateId: number) {
-  const db = getDb();
-  execute("DELETE FROM workflow_templates WHERE id = ?", [templateId], db);
+export async function deleteWorkflowTemplate(templateId: number) {
+  await deleteItem(WORKFLOW_TEMPLATES_TABLE, { id: templateId });
 }
 
-export function suggestTemplate(input: {
+export async function suggestTemplate(input: {
   transportMode: TransportMode;
   origin: string;
   destination: string;
   shipmentType: ShipmentType;
   customerPartyId: number;
 }) {
-  const db = getDb();
-  const match = queryOne<{ template_id: number }>(
-    `
-      SELECT
-        r.template_id,
-        (
-          (CASE WHEN r.transport_mode IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN r.origin IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN r.destination IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN r.shipment_type IS NOT NULL THEN 1 ELSE 0 END) +
-          (CASE WHEN r.customer_party_id IS NOT NULL THEN 1 ELSE 0 END)
-        ) AS score
-      FROM template_rules r
-      JOIN workflow_templates t ON t.id = r.template_id AND t.is_archived = 0
-      WHERE (r.transport_mode IS NULL OR r.transport_mode = ?)
-        AND (r.origin IS NULL OR LOWER(r.origin) = LOWER(?))
-        AND (r.destination IS NULL OR LOWER(r.destination) = LOWER(?))
-        AND (r.shipment_type IS NULL OR r.shipment_type = ?)
-        AND (r.customer_party_id IS NULL OR r.customer_party_id = ?)
-      ORDER BY score DESC, r.id DESC
-      LIMIT 1
-    `,
-    [
-      input.transportMode,
-      input.origin.trim(),
-      input.destination.trim(),
-      input.shipmentType,
-      input.customerPartyId,
-    ],
-    db,
+  const [rules, templates] = await Promise.all([
+    scanAll<TemplateRuleRow>(TEMPLATE_RULES_TABLE),
+    scanAll<WorkflowTemplateRow>(WORKFLOW_TEMPLATES_TABLE),
+  ]);
+
+  const activeTemplates = new Set(
+    templates.filter((t) => t.is_archived === 0).map((t) => t.id),
   );
 
-  if (!match) return null;
-  return getWorkflowTemplate(match.template_id, db);
+  const candidates = rules
+    .filter((rule) => activeTemplates.has(rule.template_id))
+    .filter((rule) =>
+      rule.transport_mode ? rule.transport_mode === input.transportMode : true,
+    )
+    .filter((rule) =>
+      rule.origin ? rule.origin.toLowerCase() === input.origin.trim().toLowerCase() : true,
+    )
+    .filter((rule) =>
+      rule.destination
+        ? rule.destination.toLowerCase() === input.destination.trim().toLowerCase()
+        : true,
+    )
+    .filter((rule) =>
+      rule.shipment_type ? rule.shipment_type === input.shipmentType : true,
+    )
+    .filter((rule) =>
+      rule.customer_party_id ? rule.customer_party_id === input.customerPartyId : true,
+    )
+    .map((rule) => {
+      const score =
+        (rule.transport_mode ? 1 : 0) +
+        (rule.origin ? 1 : 0) +
+        (rule.destination ? 1 : 0) +
+        (rule.shipment_type ? 1 : 0) +
+        (rule.customer_party_id ? 1 : 0);
+      return { rule, score };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.rule.id - a.rule.id;
+    });
+
+  if (!candidates.length) return null;
+  return await getWorkflowTemplate(candidates[0]!.rule.template_id);
 }
 
 export function parseRequiredFields(step: WorkflowTemplateStepRow): string[] {

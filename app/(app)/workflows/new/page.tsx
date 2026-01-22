@@ -18,7 +18,7 @@ export default async function NewWorkflowTemplatePage() {
     const globalsRaw = String(formData.get("globalVariablesJson") ?? "");
     const globals = parseWorkflowGlobalVariables(globalsRaw);
     if (!name) redirect("/workflows/new?error=invalid");
-    const id = createWorkflowTemplate({
+    const id = await createWorkflowTemplate({
       name,
       description,
       isSubworkflow,

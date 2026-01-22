@@ -25,8 +25,8 @@ export default async function UsersAdminPage({
     : ({} as SearchParams);
   const error = readParam(resolved, "error");
 
-  const users = listUsers();
-  const summaries = listUserSummaries();
+  const users = await listUsers();
+  const summaries = await listUserSummaries();
   const summaryById = new Map(summaries.map((s) => [s.user_id, s]));
 
   async function createUserAction(formData: FormData) {
@@ -43,7 +43,7 @@ export default async function UsersAdminPage({
     }
 
     try {
-      createUser({
+      await createUser({
         name,
         phone,
         role,
@@ -63,7 +63,7 @@ export default async function UsersAdminPage({
     const userId = Number(formData.get("userId") ?? 0);
     const disabled = String(formData.get("disabled") ?? "") === "1";
     if (!userId) redirect("/admin/users?error=invalid");
-    setUserDisabled(userId, disabled);
+    await setUserDisabled(userId, disabled);
     redirect("/admin/users");
   }
 

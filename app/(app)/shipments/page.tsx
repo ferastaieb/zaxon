@@ -52,8 +52,8 @@ export default async function ShipmentsPage({
     ? (statusRaw as ShipmentOverallStatus)
     : undefined;
 
-  const customers = listParties({ type: "CUSTOMER" });
-  const shipments = listShipmentsForUser({
+  const customers = await listParties({ type: "CUSTOMER" });
+  const shipments = await listShipmentsForUser({
     userId: user.id,
     role: user.role,
     q: q.trim() || undefined,

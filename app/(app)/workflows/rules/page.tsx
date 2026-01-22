@@ -18,12 +18,12 @@ import {
 
 export default async function WorkflowRulesPage() {
   await requireAdmin();
-  const templates = listWorkflowTemplates({
+  const templates = await listWorkflowTemplates({
     includeArchived: false,
     isSubworkflow: false,
   });
-  const customers = listParties({ type: "CUSTOMER" });
-  const rules = listTemplateRules();
+  const customers = await listParties({ type: "CUSTOMER" });
+  const rules = await listTemplateRules();
 
   async function createRuleAction(formData: FormData) {
     "use server";
@@ -42,7 +42,7 @@ export default async function WorkflowRulesPage() {
 
     if (!templateId) redirect("/workflows/rules?error=invalid");
 
-    createTemplateRule({
+    await createTemplateRule({
       templateId,
       transportMode,
       origin,
@@ -59,7 +59,7 @@ export default async function WorkflowRulesPage() {
     await requireAdmin();
     const ruleId = Number(formData.get("ruleId") ?? 0);
     if (!ruleId) redirect("/workflows/rules?error=invalid");
-    deleteTemplateRule(ruleId);
+    await deleteTemplateRule(ruleId);
     redirect("/workflows/rules");
   }
 

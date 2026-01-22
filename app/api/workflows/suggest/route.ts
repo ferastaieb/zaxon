@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ template: null });
   }
 
-  const template = suggestTemplate({
+  const template = await suggestTemplate({
     transportMode,
     origin,
     destination,

@@ -55,36 +55,36 @@ export default async function ShipmentDetailsPage({
   const id = Number(shipmentId);
   if (!id) redirect("/shipments");
 
-  requireShipmentAccess(user, id);
-  const existing = getShipment(id);
-  if (!existing) redirect("/shipments");
+  await requireShipmentAccess(user, id);
+  await refreshShipmentDerivedState({ shipmentId: id });
 
-  refreshShipmentDerivedState({ shipmentId: id });
-
-  const shipment = getShipment(id);
+  const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
-  const shipmentCustomers = listShipmentCustomers(id);
+  const shipmentCustomers = await listShipmentCustomers(id);
   const shipmentCustomerIds = shipmentCustomers.map((c) => c.id);
   const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
-  const shipmentGoods = listShipmentGoods({ shipmentId: id, ownerUserId: user.id });
-  const allocationGoods = listShipmentGoodsForAllocations({
+  const shipmentGoods = await listShipmentGoods({
     shipmentId: id,
     ownerUserId: user.id,
   });
-  const goods = listGoodsForUser(user.id);
-  const inventoryBalances = listInventoryBalances(user.id);
-  const inventoryTransactions = listInventoryTransactionsForShipmentCustomers({
+  const allocationGoods = await listShipmentGoodsForAllocations({
+    shipmentId: id,
+    ownerUserId: user.id,
+  });
+  const goods = await listGoodsForUser(user.id);
+  const inventoryBalances = await listInventoryBalances(user.id);
+  const inventoryTransactions = await listInventoryTransactionsForShipmentCustomers({
     ownerUserId: user.id,
     shipmentId: id,
     canAccessAllShipments,
     limit: 200,
   });
-  const shipmentLinks = listShipmentLinksForShipment({
+  const shipmentLinks = await listShipmentLinksForShipment({
     shipmentId: id,
     userId: user.id,
     role: user.role,
   });
-  const connectableCandidates = listConnectableShipments({
+  const connectableCandidates = await listConnectableShipments({
     customerPartyIds: shipmentCustomerIds,
     userId: user.id,
     role: user.role,
@@ -96,25 +96,28 @@ export default async function ShipmentDetailsPage({
   const connectableShipments = connectableCandidates.filter(
     (s) => !connectedIds.has(s.id),
   );
-  const connectedShipments = shipmentLinks.map((link) => {
-    const connectedGoods = listShipmentGoods({
-      shipmentId: link.connected_shipment_id,
-      ownerUserId: user.id,
-    });
-    const connectedDocs = listDocuments(link.connected_shipment_id);
-    const connectedTrackingToken = getTrackingTokenForShipment(
-      link.connected_shipment_id,
-    );
-    return {
-      ...link,
-      goods: connectedGoods,
-      docs: connectedDocs,
-      trackingToken: connectedTrackingToken,
-    };
-  });
+  const connectedShipments = await Promise.all(
+    shipmentLinks.map(async (link) => {
+      const [connectedGoods, connectedDocs, connectedTrackingToken] =
+        await Promise.all([
+          listShipmentGoods({
+            shipmentId: link.connected_shipment_id,
+            ownerUserId: user.id,
+          }),
+          listDocuments(link.connected_shipment_id),
+          getTrackingTokenForShipment(link.connected_shipment_id),
+        ]);
+      return {
+        ...link,
+        goods: connectedGoods,
+        docs: connectedDocs,
+        trackingToken: connectedTrackingToken,
+      };
+    }),
+  );
 
   const template = shipment.workflow_template_id
-    ? getWorkflowTemplate(shipment.workflow_template_id)
+    ? await getWorkflowTemplate(shipment.workflow_template_id)
     : null;
   const workflowGlobals = template
     ? parseWorkflowGlobalVariables(template.global_variables_json)
@@ -123,20 +126,20 @@ export default async function ShipmentDetailsPage({
     shipment.workflow_global_values_json,
   );
 
-  const steps = listShipmentSteps(id);
+  const steps = await listShipmentSteps(id);
   const internalSteps = steps.filter((s) => !s.is_external);
   const trackingSteps = steps.filter((s) => s.is_external);
-  const jobIds = listShipmentJobIds(id);
-  const tasks = listTasks(id);
-  const docs = listDocuments(id);
-  const docRequests = listDocumentRequests(id);
-  const exceptions = listShipmentExceptions(id);
-  const exceptionTypes = listExceptionTypes({ includeArchived: false });
-  const activities = listActivities(id);
-  const trackingToken = getTrackingTokenForShipment(id);
+  const jobIds = await listShipmentJobIds(id);
+  const tasks = await listTasks(id);
+  const docs = await listDocuments(id);
+  const docRequests = await listDocumentRequests(id);
+  const exceptions = await listShipmentExceptions(id);
+  const exceptionTypes = await listExceptionTypes({ includeArchived: false });
+  const activities = await listActivities(id);
+  const trackingToken = await getTrackingTokenForShipment(id);
 
-  const activeUsers = listActiveUsers();
-  const parties = listParties();
+  const activeUsers = await listActiveUsers();
+  const parties = await listParties();
   const partiesById = new Map(parties.map((p) => [p.id, p]));
   const customers = parties.filter((p) => p.type === "CUSTOMER");
   const suppliers = parties.filter((p) => p.type === "SUPPLIER");

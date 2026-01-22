@@ -1,8 +1,15 @@
 import "server-only";
 
 import type { Role } from "@/lib/domain";
-import { getDb, nowIso } from "@/lib/db";
-import { execute, queryAll, queryOne } from "@/lib/sql";
+import {
+  getItem,
+  nowIso,
+  nextId,
+  scanAll,
+  tableName,
+  updateItem,
+  putItem,
+} from "@/lib/db";
 
 export type DbUser = {
   id: number;
@@ -23,129 +30,149 @@ export type UserSummaryRow = {
   shipment_count: number;
 };
 
-export function countUsers(): number {
-  const db = getDb();
-  const row = queryOne<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM users",
-    [],
-    db,
-  );
-  return row?.count ?? 0;
+const USERS_TABLE = tableName("users");
+const GOODS_TABLE = tableName("goods");
+const INVENTORY_BALANCES_TABLE = tableName("inventory_balances");
+const SHIPMENT_ACCESS_TABLE = tableName("shipment_access");
+const SHIPMENTS_TABLE = tableName("shipments");
+
+export async function countUsers(): Promise<number> {
+  const users = await scanAll<DbUser>(USERS_TABLE);
+  return users.length;
 }
 
-export function listUsers(): Pick<
-  DbUser,
-  "id" | "name" | "phone" | "role" | "disabled" | "created_at"
->[] {
-  const db = getDb();
-  return queryAll(
-    `
-      SELECT id, name, phone, role, disabled, created_at
-      FROM users
-      ORDER BY created_at DESC
-    `,
-    [],
-    db,
-  );
+export async function listUsers(): Promise<
+  Pick<DbUser, "id" | "name" | "phone" | "role" | "disabled" | "created_at">[]
+> {
+  const users = await scanAll<DbUser>(USERS_TABLE);
+  return users
+    .map((user) => ({
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,
+      disabled: user.disabled,
+      created_at: user.created_at,
+    }))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export function listUserSummaries(): UserSummaryRow[] {
-  const db = getDb();
-  return queryAll<UserSummaryRow>(
-    `
-      SELECT
-        u.id AS user_id,
-        COALESCE(g.goods_count, 0) AS goods_count,
-        COALESCE(ib.inventory_goods_count, 0) AS inventory_goods_count,
-        COALESCE(ib.inventory_total_quantity, 0) AS inventory_total_quantity,
-        CASE
-          WHEN u.role IN ('ADMIN', 'FINANCE') THEN (
-            SELECT COUNT(*) FROM shipments
-          )
-          ELSE COALESCE(sa.shipment_count, 0)
-        END AS shipment_count
-      FROM users u
-      LEFT JOIN (
-        SELECT owner_user_id, COUNT(*) AS goods_count
-        FROM goods
-        GROUP BY owner_user_id
-      ) g ON g.owner_user_id = u.id
-      LEFT JOIN (
-        SELECT owner_user_id,
-          COUNT(*) AS inventory_goods_count,
-          COALESCE(SUM(quantity), 0) AS inventory_total_quantity
-        FROM inventory_balances
-        GROUP BY owner_user_id
-      ) ib ON ib.owner_user_id = u.id
-      LEFT JOIN (
-        SELECT user_id, COUNT(DISTINCT shipment_id) AS shipment_count
-        FROM shipment_access
-        GROUP BY user_id
-      ) sa ON sa.user_id = u.id
-      ORDER BY u.created_at DESC
-    `,
-    [],
-    db,
-  );
+export async function listUserSummaries(): Promise<UserSummaryRow[]> {
+  const [users, goods, balances, accessRows, shipments] = await Promise.all([
+    scanAll<DbUser>(USERS_TABLE),
+    scanAll<{ owner_user_id: number }>(GOODS_TABLE),
+    scanAll<{ owner_user_id: number; quantity: number }>(INVENTORY_BALANCES_TABLE),
+    scanAll<{ user_id: number; shipment_id: number }>(SHIPMENT_ACCESS_TABLE),
+    scanAll<{ id: number }>(SHIPMENTS_TABLE),
+  ]);
+
+  const goodsCount = new Map<number, number>();
+  for (const row of goods) {
+    goodsCount.set(row.owner_user_id, (goodsCount.get(row.owner_user_id) ?? 0) + 1);
+  }
+
+  const inventoryCounts = new Map<number, { count: number; total: number }>();
+  for (const row of balances) {
+    const current = inventoryCounts.get(row.owner_user_id) ?? { count: 0, total: 0 };
+    current.count += 1;
+    current.total += Number(row.quantity ?? 0);
+    inventoryCounts.set(row.owner_user_id, current);
+  }
+
+  const shipmentAccessCounts = new Map<number, Set<number>>();
+  for (const row of accessRows) {
+    if (!shipmentAccessCounts.has(row.user_id)) {
+      shipmentAccessCounts.set(row.user_id, new Set());
+    }
+    shipmentAccessCounts.get(row.user_id)?.add(row.shipment_id);
+  }
+
+  const totalShipments = shipments.length;
+
+  return users
+    .map((user) => {
+      const inventory = inventoryCounts.get(user.id) ?? { count: 0, total: 0 };
+      const shipmentCount =
+        user.role === "ADMIN" || user.role === "FINANCE"
+          ? totalShipments
+          : shipmentAccessCounts.get(user.id)?.size ?? 0;
+      return {
+        user_id: user.id,
+        goods_count: goodsCount.get(user.id) ?? 0,
+        inventory_goods_count: inventory.count,
+        inventory_total_quantity: inventory.total,
+        shipment_count: shipmentCount,
+      };
+    })
+    .sort((a, b) => {
+      const aUser = users.find((u) => u.id === a.user_id);
+      const bUser = users.find((u) => u.id === b.user_id);
+      const aCreated = aUser?.created_at ?? "";
+      const bCreated = bUser?.created_at ?? "";
+      return bCreated.localeCompare(aCreated);
+    });
 }
 
-export function listActiveUsers(): Pick<DbUser, "id" | "name" | "role">[] {
-  const db = getDb();
-  return queryAll(
-    "SELECT id, name, role FROM users WHERE disabled = 0 ORDER BY name ASC",
-    [],
-    db,
-  );
+export async function listActiveUsers(): Promise<Pick<DbUser, "id" | "name" | "role">[]> {
+  const users = await scanAll<DbUser>(USERS_TABLE);
+  return users
+    .filter((user) => user.disabled === 0)
+    .map((user) => ({ id: user.id, name: user.name, role: user.role }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function listActiveUserIdsByRole(role: Role): number[] {
-  const db = getDb();
-  const rows = queryAll<{ id: number }>(
-    "SELECT id FROM users WHERE role = ? AND disabled = 0 ORDER BY id ASC",
-    [role],
-    db,
-  );
-  return rows.map((r) => r.id);
+export async function listActiveUserIdsByRole(role: Role): Promise<number[]> {
+  const users = await scanAll<DbUser>(USERS_TABLE);
+  return users
+    .filter((user) => user.role === role && user.disabled === 0)
+    .sort((a, b) => a.id - b.id)
+    .map((user) => user.id);
 }
 
-export function getUserByPhone(phone: string): DbUser | null {
-  const db = getDb();
-  return queryOne<DbUser>(
-    "SELECT * FROM users WHERE phone = ? LIMIT 1",
-    [phone],
-    db,
-  );
+export async function getUserByPhone(phone: string): Promise<DbUser | null> {
+  const users = await scanAll<DbUser>(USERS_TABLE);
+  return users.find((user) => user.phone === phone) ?? null;
 }
 
-export function getUserById(id: number): DbUser | null {
-  const db = getDb();
-  return queryOne<DbUser>("SELECT * FROM users WHERE id = ? LIMIT 1", [id], db);
+export async function getUserById(id: number): Promise<DbUser | null> {
+  return await getItem<DbUser>(USERS_TABLE, { id });
 }
 
-export function createUser(input: {
+export async function createUser(input: {
   name: string;
   phone: string;
   role: Role;
   passwordHash: string;
-}): number {
-  const db = getDb();
+}): Promise<number> {
+  const existing = await getUserByPhone(input.phone);
+  if (existing) {
+    throw new Error("Phone number already exists");
+  }
+
   const ts = nowIso();
-  const result = execute(
-    `
-      INSERT INTO users (name, phone, role, password_hash, disabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 0, ?, ?)
-    `,
-    [input.name, input.phone, input.role, input.passwordHash, ts, ts],
-    db,
-  );
-  return result.lastInsertRowid;
+  const id = await nextId("users");
+  await putItem(USERS_TABLE, {
+    id,
+    name: input.name,
+    phone: input.phone,
+    role: input.role,
+    password_hash: input.passwordHash,
+    disabled: 0,
+    created_at: ts,
+    updated_at: ts,
+  });
+
+  return id;
 }
 
-export function setUserDisabled(userId: number, disabled: boolean) {
-  const db = getDb();
-  execute(
-    "UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?",
-    [disabled ? 1 : 0, nowIso(), userId],
-    db,
+export async function setUserDisabled(userId: number, disabled: boolean) {
+  await updateItem<DbUser>(
+    USERS_TABLE,
+    { id: userId },
+    "SET disabled = :disabled, updated_at = :updated_at",
+    {
+      ":disabled": disabled ? 1 : 0,
+      ":updated_at": nowIso(),
+    },
   );
 }

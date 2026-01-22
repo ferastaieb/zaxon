@@ -3,11 +3,12 @@ import "server-only";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 
-import { getDb, inTransaction, nowIso } from "@/lib/db";
-import { execute, queryOne } from "@/lib/sql";
+import { deleteItem, getItem, nowIso, putItem, tableName } from "@/lib/db";
 
 const TRACKING_SESSION_COOKIE_NAME = "logistic_tracking_session";
 const TRACKING_SESSION_TTL_DAYS = 7;
+
+const TRACKING_SESSIONS_TABLE = tableName("tracking_sessions");
 
 function trackingSessionExpiresAt() {
   return new Date(
@@ -44,48 +45,40 @@ export async function getTrackingSessionToken(): Promise<string | null> {
 }
 
 export async function createTrackingSession(trackingToken: string): Promise<string> {
-  const db = getDb();
   const token = crypto.randomBytes(24).toString("base64url");
   const createdAt = nowIso();
   const expiresAt = trackingSessionExpiresAt();
 
-  inTransaction(db, () => {
-    execute(
-      "INSERT INTO tracking_sessions (token, tracking_token, expires_at, created_at) VALUES (?, ?, ?, ?)",
-      [token, trackingToken, expiresAt, createdAt],
-      db,
-    );
+  await putItem(TRACKING_SESSIONS_TABLE, {
+    token,
+    tracking_token: trackingToken,
+    expires_at: expiresAt,
+    created_at: createdAt,
   });
 
   await setTrackingSessionCookie(token, expiresAt);
   return token;
 }
 
-export function deleteTrackingSession(token: string) {
-  const db = getDb();
-  execute("DELETE FROM tracking_sessions WHERE token = ?", [token], db);
+export async function deleteTrackingSession(token: string) {
+  await deleteItem(TRACKING_SESSIONS_TABLE, { token });
 }
 
-export async function isTrackingSessionValid(trackingToken: string): Promise<boolean> {
+export async function isTrackingSessionValid(
+  trackingToken: string,
+): Promise<boolean> {
   const token = await getTrackingSessionToken();
   if (!token) return false;
 
-  const db = getDb();
-  const row = queryOne<{ token: string; tracking_token: string; expires_at: string }>(
-    `
-      SELECT token, tracking_token, expires_at
-      FROM tracking_sessions
-      WHERE token = ?
-      LIMIT 1
-    `,
-    [token],
-    db,
+  const row = await getItem<{ token: string; tracking_token: string; expires_at: string }>(
+    TRACKING_SESSIONS_TABLE,
+    { token },
   );
 
   if (!row || row.tracking_token !== trackingToken) return false;
 
   if (Date.parse(row.expires_at) <= Date.now()) {
-    deleteTrackingSession(token);
+    await deleteTrackingSession(token);
     return false;
   }
 

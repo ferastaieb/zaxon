@@ -22,7 +22,7 @@ export default async function NewExceptionPage() {
       redirect("/exceptions/new?error=invalid");
     }
 
-    const id = createExceptionType({
+    const id = await createExceptionType({
       name,
       description,
       defaultRisk,

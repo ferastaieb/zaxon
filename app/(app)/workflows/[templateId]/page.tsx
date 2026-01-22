@@ -84,18 +84,18 @@ export default async function WorkflowTemplateDetailsPage({
   const { templateId } = await params;
   const sp = (await searchParams) ?? {};
   const error = typeof sp.error === "string" ? sp.error : null;
-  const template = getWorkflowTemplate(Number(templateId));
+  const template = await getWorkflowTemplate(Number(templateId));
   if (!template) redirect("/workflows");
 
-  const steps = listTemplateSteps(template.id);
+  const steps = await listTemplateSteps(template.id);
   const externalBooleanOptions = buildExternalBooleanOptions(steps);
   const globalVariables = parseWorkflowGlobalVariables(
     template.global_variables_json,
   );
-  const subworkflows = listWorkflowTemplates({
+  const subworkflows = (await listWorkflowTemplates({
     includeArchived: false,
     isSubworkflow: true,
-  }).filter((t) => t.id !== template.id);
+  })).filter((t) => t.id !== template.id);
 
   async function updateTemplateAction(formData: FormData) {
     "use server";
@@ -108,7 +108,7 @@ export default async function WorkflowTemplateDetailsPage({
     const globalsRaw = String(formData.get("globalVariablesJson") ?? "");
     const globals = parseWorkflowGlobalVariables(globalsRaw);
     if (!id || !name) redirect(`/workflows/${id}?error=invalid`);
-    updateWorkflowTemplate({
+    await updateWorkflowTemplate({
       id,
       name,
       description,
@@ -125,14 +125,14 @@ export default async function WorkflowTemplateDetailsPage({
     await requireAdmin();
     const id = Number(formData.get("templateId") ?? 0);
     if (!id) redirect("/workflows?error=invalid");
-    const usage = getWorkflowTemplateUsage(id);
+    const usage = await getWorkflowTemplateUsage(id);
     if (usage.hasShipments) {
       redirect(`/workflows/${id}?error=in_use`);
     }
     if (usage.usedAsSubworkflow) {
       redirect(`/workflows/${id}?error=subworkflow_in_use`);
     }
-    deleteWorkflowTemplate(id);
+    await deleteWorkflowTemplate(id);
     redirect("/workflows");
   }
 
@@ -157,7 +157,7 @@ export default async function WorkflowTemplateDetailsPage({
     if (!templateId || !name || !Roles.includes(ownerRole)) {
       redirect(`/workflows/${templateId}?error=invalid`);
     }
-    addTemplateStep({
+    await addTemplateStep({
       templateId,
       name,
       ownerRole,
@@ -204,14 +204,14 @@ export default async function WorkflowTemplateDetailsPage({
 
     const existingStep = checklistGroups
       ? null
-      : listTemplateSteps(templateId).find((step) => step.id === stepId);
+      : (await listTemplateSteps(templateId)).find((step) => step.id === stepId);
     if (!checklistGroups && !existingStep) {
       redirect(`/workflows/${templateId}?error=invalid`);
     }
     const resolvedChecklistGroups =
       checklistGroups ?? parseChecklistGroupsJson(existingStep!.checklist_groups_json);
 
-    updateTemplateStep({
+    await updateTemplateStep({
       stepId,
       name,
       ownerRole,
@@ -236,7 +236,7 @@ export default async function WorkflowTemplateDetailsPage({
     if (!templateId || !stepId || (dir !== "up" && dir !== "down")) {
       redirect(`/workflows/${templateId}?error=invalid`);
     }
-    moveTemplateStep({ templateId, stepId, dir });
+    await moveTemplateStep({ templateId, stepId, dir });
     redirect(`/workflows/${templateId}`);
   }
 
@@ -246,7 +246,7 @@ export default async function WorkflowTemplateDetailsPage({
     const templateId = Number(formData.get("templateId") ?? 0);
     const stepId = Number(formData.get("stepId") ?? 0);
     if (!templateId || !stepId) redirect(`/workflows/${templateId}?error=invalid`);
-    deleteTemplateStep(stepId);
+    await deleteTemplateStep(stepId);
     redirect(`/workflows/${templateId}`);
   }
 
@@ -260,7 +260,7 @@ export default async function WorkflowTemplateDetailsPage({
     if (!templateId || !subworkflowTemplateId) {
       redirect(`/workflows/${templateId}?error=invalid`);
     }
-    addSubworkflowSteps({
+    await addSubworkflowSteps({
       templateId,
       subworkflowTemplateId,
     });
@@ -273,7 +273,7 @@ export default async function WorkflowTemplateDetailsPage({
     const templateId = Number(formData.get("templateId") ?? 0);
     const groupId = String(formData.get("groupId") ?? "").trim();
     if (!templateId || !groupId) redirect(`/workflows/${templateId}?error=invalid`);
-    deleteTemplateStepGroup({ templateId, groupId });
+    await deleteTemplateStepGroup({ templateId, groupId });
     redirect(`/workflows/${templateId}`);
   }
 

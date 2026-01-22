@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 
 export default async function ExceptionsPage() {
   await requireAdmin();
-  const exceptions = listExceptionTypes({ includeArchived: false });
+  const exceptions = await listExceptionTypes({ includeArchived: false });
 
   return (
     <div className="space-y-6">

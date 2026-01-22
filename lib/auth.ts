@@ -5,8 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import type { Role } from "@/lib/domain";
-import { getDb, inTransaction, nowIso } from "@/lib/db";
-import { execute, queryOne } from "@/lib/sql";
+import { deleteItem, getItem, nowIso, putItem, tableName } from "@/lib/db";
 
 const SESSION_COOKIE_NAME = "logistic_session";
 const SESSION_TTL_DAYS = 30;
@@ -18,6 +17,9 @@ export type AuthUser = {
   role: Role;
   disabled: 0 | 1;
 };
+
+const USERS_TABLE = tableName("users");
+const USER_SESSIONS_TABLE = tableName("user_sessions");
 
 function safeEqual(a: Uint8Array, b: Uint8Array) {
   if (a.length !== b.length) return false;
@@ -76,31 +78,28 @@ export async function getSessionToken(): Promise<string | null> {
 }
 
 export async function createSession(userId: number): Promise<string> {
-  const db = getDb();
   const token = crypto.randomBytes(24).toString("base64url");
   const createdAt = nowIso();
   const expiresAt = sessionExpiresAt();
 
-  inTransaction(db, () => {
-    execute(
-      "INSERT INTO user_sessions (token, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
-      [token, userId, expiresAt, createdAt],
-      db,
-    );
+  await putItem(USER_SESSIONS_TABLE, {
+    token,
+    user_id: userId,
+    expires_at: expiresAt,
+    created_at: createdAt,
   });
 
   await setSessionCookie(token, expiresAt);
   return token;
 }
 
-export function deleteSession(token: string) {
-  const db = getDb();
-  execute("DELETE FROM user_sessions WHERE token = ?", [token], db);
+export async function deleteSession(token: string) {
+  await deleteItem(USER_SESSIONS_TABLE, { token });
 }
 
 export async function logout() {
   const token = await getSessionToken();
-  if (token) deleteSession(token);
+  if (token) await deleteSession(token);
   await clearSessionCookie();
   redirect("/login");
 }
@@ -109,54 +108,34 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   const token = await getSessionToken();
   if (!token) return null;
 
-  const db = getDb();
-  const row = queryOne<{
-    token: string;
-    expires_at: string;
-    id: number;
-    name: string;
-    phone: string;
-    role: Role;
-    disabled: 0 | 1;
-  }>(
-    `
-      SELECT
-        s.token,
-        s.expires_at,
-        u.id,
-        u.name,
-        u.phone,
-        u.role,
-        u.disabled
-      FROM user_sessions s
-      JOIN users u ON u.id = s.user_id
-      WHERE s.token = ?
-      LIMIT 1
-    `,
-    [token],
-    db,
+  const session = await getItem<{ token: string; user_id: number; expires_at: string }>(
+    USER_SESSIONS_TABLE,
+    { token },
   );
+  if (!session) return null;
 
-  if (!row) {
+  if (Date.parse(session.expires_at) <= Date.now()) {
+    await deleteSession(token);
     return null;
   }
 
-  if (row.disabled) {
-    deleteSession(token);
+  const user = await getItem<AuthUser>(USERS_TABLE, { id: session.user_id });
+  if (!user) {
+    await deleteSession(token);
     return null;
   }
 
-  if (Date.parse(row.expires_at) <= Date.now()) {
-    deleteSession(token);
+  if (user.disabled) {
+    await deleteSession(token);
     return null;
   }
 
   return {
-    id: row.id,
-    name: row.name,
-    phone: row.phone,
-    role: row.role,
-    disabled: row.disabled,
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    role: user.role,
+    disabled: user.disabled,
   };
 }
 
