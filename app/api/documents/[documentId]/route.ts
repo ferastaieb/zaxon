@@ -1,11 +1,9 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
 import { getDocument } from "@/lib/data/documents";
 import { canUserAccessShipment } from "@/lib/permissions";
+import { getStorageBasename, readUpload } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -25,17 +23,17 @@ export async function GET(
   }
 
   const filePath = doc.storage_path;
-  if (!fs.existsSync(filePath)) {
-    return NextResponse.json({ error: "file_missing" }, { status: 404 });
-  }
+  const result = await readUpload(filePath);
+  if (!result) return NextResponse.json({ error: "file_missing" }, { status: 404 });
 
-  const fileName = doc.file_name || path.basename(filePath);
-  const buffer = fs.readFileSync(filePath);
+  const fileName = doc.file_name || getStorageBasename(filePath);
+  const buffer = result.buffer;
 
   return new NextResponse(buffer, {
     headers: {
-      "content-type": doc.mime_type ?? "application/octet-stream",
-      "content-length": String(buffer.byteLength),
+      "content-type":
+        doc.mime_type ?? result.contentType ?? "application/octet-stream",
+      "content-length": String(result.buffer.byteLength),
       "content-disposition": `attachment; filename="${fileName.replaceAll('"', "")}"`,
       "cache-control": "private, max-age=0, must-revalidate",
     },

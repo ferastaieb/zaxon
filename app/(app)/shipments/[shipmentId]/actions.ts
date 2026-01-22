@@ -1672,7 +1672,7 @@ export async function deleteShipmentAction(shipmentId: number) {
 
   deleteShipment(shipmentId);
   try {
-    removeShipmentUploads(shipmentId);
+    await removeShipmentUploads(shipmentId);
   } catch {
     // best-effort cleanup
   }

@@ -20,6 +20,9 @@
 # production
 /build
 
+# aws cdk
+/cdk/
+
 # misc
 .DS_Store
 *.pem
