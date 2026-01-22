@@ -12,12 +12,12 @@ export async function GET(
   context: { params: Promise<{ token: string; documentId: string }> },
 ) {
   const { token, documentId } = await context.params;
-  const shipmentId = getShipmentIdForTrackingToken(token);
+  const shipmentId = await getShipmentIdForTrackingToken(token);
   if (!shipmentId) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const authed = await isTrackingSessionValid(token);
   if (!authed) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const doc = getDocument(Number(documentId));
+  const doc = await getDocument(Number(documentId));
   if (!doc) return NextResponse.json({ error: "not_found" }, { status: 404 });
   if (doc.shipment_id !== shipmentId) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
