@@ -57,7 +57,7 @@ export default async function PartyDetailsPage({
 }) {
   const user = await requireUser();
   const { partyId } = await params;
-  const party = getParty(Number(partyId));
+  const party = await getParty(Number(partyId));
   if (!party) redirect("/parties");
   const isCustomer = party.type === "CUSTOMER";
   const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
@@ -84,6 +84,8 @@ export default async function PartyDetailsPage({
         limit: 200,
       })
     : [];
+  const [resolvedShipments, resolvedGoodsSummary, resolvedInventoryTransactions] =
+    await Promise.all([shipments, goodsSummary, inventoryTransactions]);
 
   async function updatePartyAction(formData: FormData) {
     "use server";
@@ -98,7 +100,7 @@ export default async function PartyDetailsPage({
     const notes = String(formData.get("notes") ?? "").trim() || null;
 
     if (!id || !name) redirect(`/parties/${id}?error=invalid`);
-    updateParty(id, { name, phone, email, address, notes });
+    await updateParty(id, { name, phone, email, address, notes });
     redirect(`/parties/${id}`);
   }
 
@@ -203,7 +205,7 @@ export default async function PartyDetailsPage({
                 Connected shipments
               </h2>
               <div className="text-xs text-zinc-500">
-                {shipments.length} shipments
+                {resolvedShipments.length} shipments
               </div>
             </div>
             <div className="mt-4 overflow-x-auto">
@@ -219,7 +221,7 @@ export default async function PartyDetailsPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {shipments.map((s) => (
+                  {resolvedShipments.map((s) => (
                     <tr key={s.id} className="hover:bg-zinc-50">
                       <td className="py-2 pr-4 font-medium text-zinc-900">
                         <div>{s.shipment_code}</div>
@@ -258,7 +260,7 @@ export default async function PartyDetailsPage({
                       </td>
                     </tr>
                   ))}
-                  {shipments.length === 0 ? (
+                  {resolvedShipments.length === 0 ? (
                     <tr>
                       <td className="py-6 text-sm text-zinc-500" colSpan={6}>
                         No connected shipments.
@@ -276,7 +278,7 @@ export default async function PartyDetailsPage({
                 Goods summary
               </h2>
               <div className="text-xs text-zinc-500">
-                {goodsSummary.length} goods
+                {resolvedGoodsSummary.length} goods
               </div>
             </div>
             <div className="mt-4 overflow-x-auto">
@@ -290,7 +292,7 @@ export default async function PartyDetailsPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {goodsSummary.map((g) => {
+                  {resolvedGoodsSummary.map((g) => {
                     const shipmentRefs = parseShipmentRefs(g.shipment_refs);
                     return (
                       <tr key={g.good_id}>
@@ -326,7 +328,7 @@ export default async function PartyDetailsPage({
                       </tr>
                     );
                   })}
-                  {goodsSummary.length === 0 ? (
+                  {resolvedGoodsSummary.length === 0 ? (
                     <tr>
                       <td className="py-6 text-sm text-zinc-500" colSpan={4}>
                         No goods yet.
@@ -359,7 +361,7 @@ export default async function PartyDetailsPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {inventoryTransactions.map((t) => (
+                  {resolvedInventoryTransactions.map((t) => (
                     <tr key={t.id}>
                       <td className="py-2 pr-4 text-zinc-700">
                         {new Date(t.created_at).toLocaleString()}
@@ -400,7 +402,7 @@ export default async function PartyDetailsPage({
                       </td>
                     </tr>
                   ))}
-                  {inventoryTransactions.length === 0 ? (
+                  {resolvedInventoryTransactions.length === 0 ? (
                     <tr>
                       <td className="py-6 text-sm text-zinc-500" colSpan={7}>
                         No inventory transactions yet.
