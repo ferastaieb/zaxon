@@ -13,6 +13,6 @@ declare module "node:sqlite" {
     constructor(filename: string, options?: unknown);
     exec(sql: string): void;
     prepare(sql: string): StatementSync;
+    close(): void;
   }
 }
-
