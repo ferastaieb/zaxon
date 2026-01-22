@@ -40,7 +40,7 @@ export default async function PartiesPage({
     ? (typeRaw as PartyType)
     : "CUSTOMER";
 
-  const parties = listParties({ type, q: q.trim() || undefined });
+  const parties = await listParties({ type, q: q.trim() || undefined });
 
   async function createRedirectAction() {
     "use server";
