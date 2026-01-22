@@ -30,6 +30,7 @@ export default async function UsersAdminPage({
   const importResult = readParam(resolved, "import");
   const importCount = readParam(resolved, "imported");
   const importError = readParam(resolved, "importError");
+  const showSqliteImport = false;
 
   const users = await listUsers();
   const summaries = await listUserSummaries();
@@ -118,13 +119,13 @@ export default async function UsersAdminPage({
         </div>
       ) : null}
 
-      {importResult === "success" ? (
+      {showSqliteImport && importResult === "success" ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           Imported {importCount ?? "data"} rows into DynamoDB.
         </div>
       ) : null}
 
-      {importError ? (
+      {showSqliteImport && importError ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {importError === "missing"
             ? "Upload a SQLite file to start the import."
@@ -275,41 +276,43 @@ export default async function UsersAdminPage({
           </div>
         </div>
 
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
-          <h2 className="text-sm font-semibold text-zinc-900">
-            Import from SQLite
-          </h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Upload the legacy SQLite database and migrate all tables into DynamoDB.
-          </p>
-          <form
-            action={importSqliteAction}
-            encType="multipart/form-data"
-            className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
-          >
-            <label className="block w-full sm:flex-1">
-              <div className="mb-1 text-sm font-medium text-zinc-800">
-                SQLite file
-              </div>
-              <input
-                name="sqliteFile"
-                type="file"
-                accept=".sqlite,.db"
-                className="block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                required
-              />
-            </label>
-            <button
-              type="submit"
-              className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+        {showSqliteImport ? (
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm lg:col-span-2">
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Import from SQLite
+            </h2>
+            <p className="mt-1 text-sm text-zinc-600">
+              Upload the legacy SQLite database and migrate all tables into DynamoDB.
+            </p>
+            <form
+              action={importSqliteAction}
+              encType="multipart/form-data"
+              className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
             >
-              Import data
-            </button>
-          </form>
-          <p className="mt-2 text-xs text-zinc-500">
-            This overwrites rows with matching keys and updates ID counters.
-          </p>
-        </div>
+              <label className="block w-full sm:flex-1">
+                <div className="mb-1 text-sm font-medium text-zinc-800">
+                  SQLite file
+                </div>
+                <input
+                  name="sqliteFile"
+                  type="file"
+                  accept=".sqlite,.db"
+                  className="block w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  required
+                />
+              </label>
+              <button
+                type="submit"
+                className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              >
+                Import data
+              </button>
+            </form>
+            <p className="mt-2 text-xs text-zinc-500">
+              This overwrites rows with matching keys and updates ID counters.
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   );
