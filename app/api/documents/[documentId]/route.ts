@@ -15,10 +15,10 @@ export async function GET(
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const { documentId } = await context.params;
-  const doc = getDocument(Number(documentId));
+  const doc = await getDocument(Number(documentId));
   if (!doc) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  if (!canUserAccessShipment(user, doc.shipment_id)) {
+  if (!(await canUserAccessShipment(user, doc.shipment_id))) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
