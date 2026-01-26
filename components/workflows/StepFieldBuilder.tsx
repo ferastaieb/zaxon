@@ -93,11 +93,13 @@ export function StepFieldBuilder({
   initialSchema,
   globalVariables,
   externalBooleanOptions,
+  blockedGlobalVariableIds,
 }: {
   name: string;
   initialSchema: StepFieldSchema;
   globalVariables?: WorkflowGlobalVariable[];
   externalBooleanOptions?: Array<{ label: string; value: string }>;
+  blockedGlobalVariableIds?: string[];
 }) {
   const [schema, setSchema] = useState<StepFieldSchema>(initialSchema);
   const globals = globalVariables ?? [];
@@ -116,6 +118,10 @@ export function StepFieldBuilder({
     }));
     return [...localOptions, ...(externalBooleanOptions ?? [])];
   }, [booleanOptions, externalBooleanOptions]);
+  const blockedGlobals = useMemo(
+    () => new Set(blockedGlobalVariableIds ?? []),
+    [blockedGlobalVariableIds],
+  );
 
   return (
     <div className="space-y-3">
@@ -124,6 +130,7 @@ export function StepFieldBuilder({
         onChange={(fields) => setSchema({ version: 1, fields })}
         dateGlobals={dateGlobals}
         booleanOptions={mergedBooleanOptions}
+        blockedGlobals={blockedGlobals}
       />
       <input type="hidden" name={name} value={JSON.stringify(schema)} />
     </div>
@@ -135,11 +142,13 @@ function FieldListEditor({
   onChange,
   dateGlobals,
   booleanOptions,
+  blockedGlobals,
 }: {
   fields: StepFieldDefinition[];
   onChange: (next: StepFieldDefinition[]) => void;
   dateGlobals: WorkflowGlobalVariable[];
   booleanOptions: Array<{ label: string; value: string }>;
+  blockedGlobals: Set<string>;
 }) {
   const updateField = (index: number, nextField: StepFieldDefinition) => {
     const next = fields.map((field, idx) => (idx === index ? nextField : field));
@@ -220,11 +229,19 @@ function FieldListEditor({
                   className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
                 >
                   <option value="">None</option>
-                  {dateGlobals.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.label}
-                    </option>
-                  ))}
+                  {dateGlobals.map((g) => {
+                    const isBlocked = blockedGlobals.has(g.id);
+                    const isSelected = field.linkToGlobal === g.id;
+                    return (
+                      <option
+                        key={g.id}
+                        value={g.id}
+                        disabled={isBlocked && !isSelected}
+                      >
+                        {g.label}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             ) : null}
@@ -245,11 +262,19 @@ function FieldListEditor({
                   className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
                 >
                   <option value="">None</option>
-                  {dateGlobals.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.label}
-                    </option>
-                  ))}
+                  {dateGlobals.map((g) => {
+                    const isBlocked = blockedGlobals.has(g.id);
+                    const isSelected = field.linkToGlobal === g.id;
+                    return (
+                      <option
+                        key={g.id}
+                        value={g.id}
+                        disabled={isBlocked && !isSelected}
+                      >
+                        {g.label}
+                      </option>
+                    );
+                  })}
                 </select>
 
                 <label className="block text-xs font-medium text-zinc-600">
@@ -313,20 +338,22 @@ function FieldListEditor({
                   }
                   dateGlobals={dateGlobals}
                   booleanOptions={booleanOptions}
+                  blockedGlobals={blockedGlobals}
                 />
               </div>
             ) : null}
 
             {isChoice(field) ? (
               <div className="mt-3 space-y-3 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 p-3">
-                <ChoiceOptionsEditor
-                  options={field.options}
-                  onChange={(nextOptions) =>
-                    updateField(index, { ...field, options: nextOptions })
-                  }
-                  dateGlobals={dateGlobals}
-                  booleanOptions={booleanOptions}
-                />
+              <ChoiceOptionsEditor
+                options={field.options}
+                onChange={(nextOptions) =>
+                  updateField(index, { ...field, options: nextOptions })
+                }
+                dateGlobals={dateGlobals}
+                booleanOptions={booleanOptions}
+                blockedGlobals={blockedGlobals}
+              />
               </div>
             ) : null}
           </div>
@@ -349,11 +376,13 @@ function ChoiceOptionsEditor({
   onChange,
   dateGlobals,
   booleanOptions,
+  blockedGlobals,
 }: {
   options: StepFieldChoiceOption[];
   onChange: (next: StepFieldChoiceOption[]) => void;
   dateGlobals: WorkflowGlobalVariable[];
   booleanOptions: Array<{ label: string; value: string }>;
+  blockedGlobals: Set<string>;
 }) {
   const addOption = () => {
     onChange([...options, createOption()]);
@@ -445,6 +474,7 @@ function ChoiceOptionsEditor({
               }
               dateGlobals={dateGlobals}
               booleanOptions={booleanOptions}
+              blockedGlobals={blockedGlobals}
             />
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
-import type { ShipmentType, TransportMode } from "@/lib/domain";
+import type { ShipmentType } from "@/lib/domain";
 import { suggestTemplate } from "@/lib/data/workflows";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as
     | {
-        transportMode?: TransportMode;
+        transportMode?: string;
         origin?: string;
         destination?: string;
         shipmentType?: ShipmentType;

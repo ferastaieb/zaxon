@@ -2,12 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireAdmin } from "@/lib/auth";
-import {
-  ShipmentTypes,
-  TransportModes,
-  type ShipmentType,
-  type TransportMode,
-} from "@/lib/domain";
+import { ShipmentTypes, TransportModes, type ShipmentType } from "@/lib/domain";
 import { listParties } from "@/lib/data/parties";
 import {
   createTemplateRule,
@@ -24,13 +19,20 @@ export default async function WorkflowRulesPage() {
   });
   const customers = await listParties({ type: "CUSTOMER" });
   const rules = await listTemplateRules();
+  const serviceTypes = Array.from(
+    new Set(
+      [
+        ...TransportModes,
+        ...rules.map((rule) => rule.transport_mode ?? "").filter(Boolean),
+      ].map((value) => value.trim()),
+    ),
+  ).filter(Boolean);
 
   async function createRuleAction(formData: FormData) {
     "use server";
     const user = await requireAdmin();
     const templateId = Number(formData.get("templateId") ?? 0);
-    const transportMode = (String(formData.get("transportMode") ?? "") ||
-      null) as TransportMode | null;
+    const transportMode = String(formData.get("serviceType") ?? "").trim() || null;
     const origin = String(formData.get("origin") ?? "").trim() || null;
     const destination = String(formData.get("destination") ?? "").trim() || null;
     const shipmentType = (String(formData.get("shipmentType") ?? "") ||
@@ -78,7 +80,7 @@ export default async function WorkflowRulesPage() {
               Template auto-suggestion rules
             </h1>
             <p className="mt-1 text-sm text-zinc-600">
-              If (mode + route + type + customer) then choose a template.
+              If (service type + route + type + customer) then choose a template.
             </p>
           </div>
           <Link
@@ -117,20 +119,22 @@ export default async function WorkflowRulesPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <div className="mb-1 text-sm font-medium text-zinc-800">
-                  Transport mode (optional)
+                  Service Type (optional)
                 </div>
-                <select
-                  name="transportMode"
+                <input
+                  name="serviceType"
+                  list="serviceTypeOptions"
                   className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  defaultValue=""
-                >
-                  <option value="">Any</option>
-                  {TransportModes.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
+                  placeholder="Select or type a new value"
+                />
+                <datalist id="serviceTypeOptions">
+                  {serviceTypes.map((type) => (
+                    <option key={type} value={type} />
                   ))}
-                </select>
+                </datalist>
+                <div className="mt-1 text-xs text-zinc-500">
+                  Pick an existing value or type a new service type.
+                </div>
               </label>
               <label className="block">
                 <div className="mb-1 text-sm font-medium text-zinc-800">
@@ -215,7 +219,7 @@ export default async function WorkflowRulesPage() {
               <tbody className="divide-y divide-zinc-100">
                 {rules.map((r) => {
                   const parts = [
-                    r.transport_mode ? `Mode=${r.transport_mode}` : null,
+                    r.transport_mode ? `Service=${r.transport_mode}` : null,
                     r.shipment_type ? `Type=${r.shipment_type}` : null,
                     r.origin ? `From=${r.origin}` : null,
                     r.destination ? `To=${r.destination}` : null,

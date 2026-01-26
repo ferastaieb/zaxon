@@ -2,7 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 
-import type { Role, ShipmentType, TransportMode } from "@/lib/domain";
+import type { Role, ShipmentType } from "@/lib/domain";
 import type { ChecklistGroup } from "@/lib/checklists";
 import { mapStopCountdownPaths, parseStepFieldSchema } from "@/lib/stepFields";
 import { jsonParse } from "@/lib/sql";
@@ -55,7 +55,7 @@ export type WorkflowTemplateStepRow = {
 export type TemplateRuleRow = {
   id: number;
   template_id: number;
-  transport_mode: TransportMode | null;
+  transport_mode: string | null;
   origin: string | null;
   destination: string | null;
   shipment_type: ShipmentType | null;
@@ -389,7 +389,7 @@ export async function listTemplateRules() {
 
 export async function createTemplateRule(input: {
   templateId: number;
-  transportMode?: TransportMode | null;
+  transportMode?: string | null;
   origin?: string | null;
   destination?: string | null;
   shipmentType?: ShipmentType | null;
@@ -436,7 +436,7 @@ export async function deleteWorkflowTemplate(templateId: number) {
 }
 
 export async function suggestTemplate(input: {
-  transportMode: TransportMode;
+  transportMode: string;
   origin: string;
   destination: string;
   shipmentType: ShipmentType;

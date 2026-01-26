@@ -15,6 +15,7 @@ import {
   collectBooleanFieldOptions,
   parseStepFieldSchema,
   schemaFromLegacyFields,
+  type StepFieldDefinition,
 } from "@/lib/stepFields";
 import { parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
 import {
@@ -74,6 +75,27 @@ function buildExternalBooleanOptions(
   return options;
 }
 
+function collectLinkedGlobals(fields: StepFieldDefinition[], used: Set<string>) {
+  for (const field of fields) {
+    if (field.type === "group") {
+      collectLinkedGlobals(field.fields, used);
+      continue;
+    }
+    if (field.type === "choice") {
+      for (const option of field.options) {
+        collectLinkedGlobals(option.fields, used);
+      }
+      continue;
+    }
+    if (
+      (field.type === "date" || field.type === "number") &&
+      field.linkToGlobal
+    ) {
+      used.add(field.linkToGlobal);
+    }
+  }
+}
+
 export default async function WorkflowTemplateDetailsPage({
   params,
   searchParams,
@@ -93,6 +115,15 @@ export default async function WorkflowTemplateDetailsPage({
   const globalVariables = parseWorkflowGlobalVariables(
     template.global_variables_json,
   );
+  const usedGlobalsByStep = new Map<number, Set<string>>();
+  const allUsedGlobals = new Set<string>();
+  for (const step of steps) {
+    const used = new Set<string>();
+    const schema = parseStepFieldSchema(step.field_schema_json);
+    collectLinkedGlobals(schema.fields, used);
+    usedGlobalsByStep.set(step.id, used);
+    for (const id of used) allUsedGlobals.add(id);
+  }
   const subworkflows = (await listWorkflowTemplates({
     includeArchived: false,
     isSubworkflow: true,
@@ -471,6 +502,7 @@ export default async function WorkflowTemplateDetailsPage({
                 initialSchema={{ version: 1, fields: [] }}
                 globalVariables={globalVariables}
                 externalBooleanOptions={externalBooleanOptions}
+                blockedGlobalVariableIds={Array.from(allUsedGlobals)}
               />
             </div>
             <SubmitButton
@@ -529,6 +561,10 @@ export default async function WorkflowTemplateDetailsPage({
 
         <div className="mt-4 space-y-3">
           {steps.map((s) => {
+            const stepGlobals = usedGlobalsByStep.get(s.id) ?? new Set<string>();
+            const blockedGlobals = Array.from(allUsedGlobals).filter(
+              (id) => !stepGlobals.has(id),
+            );
             const requiredDocs = parseRequiredDocumentTypes(s);
             const schemaFromStep = parseStepFieldSchema(s.field_schema_json);
             const legacyFields = parseRequiredFields(s);
@@ -701,6 +737,7 @@ export default async function WorkflowTemplateDetailsPage({
                         initialSchema={stepSchema}
                         globalVariables={globalVariables}
                         externalBooleanOptions={buildExternalBooleanOptions(steps, s.id)}
+                        blockedGlobalVariableIds={blockedGlobals}
                       />
                     </div>
 
