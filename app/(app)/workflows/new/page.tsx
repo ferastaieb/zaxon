@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { GlobalVariablesBuilder } from "@/components/workflows/GlobalVariablesBuilder";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { requireAdmin } from "@/lib/auth";
 import { createWorkflowTemplate } from "@/lib/data/workflows";
 import { parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
@@ -81,12 +82,12 @@ export default async function NewWorkflowTemplatePage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              type="submit"
+            <SubmitButton
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              pendingLabel="Creating..."
             >
               Create template
-            </button>
+            </SubmitButton>
             <Link
               href="/workflows"
               className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"

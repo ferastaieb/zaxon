@@ -55,7 +55,7 @@ export default async function NewPartyPage({
 
     if (!name || !PartyTypes.includes(type)) redirect("/parties/new?error=invalid");
 
-    const id = createParty({ type, name, phone, email, address, notes });
+    const id = await createParty({ type, name, phone, email, address, notes });
     redirect(`/parties/${id}`);
   }
 

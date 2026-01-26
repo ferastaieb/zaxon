@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { GlobalVariablesBuilder } from "@/components/workflows/GlobalVariablesBuilder";
 import { StepFieldBuilder } from "@/components/workflows/StepFieldBuilder";
 import { StepVisibilityToggle } from "@/components/workflows/StepVisibilityToggle";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { requireAdmin } from "@/lib/auth";
 import { DocumentTypes, Roles, type Role } from "@/lib/domain";
 import {
@@ -371,21 +372,21 @@ export default async function WorkflowTemplateDetailsPage({
                 Use these values in step fields for countdowns and comparisons.
               </div>
             </div>
-            <button
-              type="submit"
+            <SubmitButton
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              pendingLabel="Saving..."
             >
               Save template
-            </button>
+            </SubmitButton>
           </form>
           <form action={deleteTemplateAction} className="mt-4 space-y-2">
             <input type="hidden" name="templateId" value={template.id} />
-            <button
-              type="submit"
+            <SubmitButton
               className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              pendingLabel="Deleting..."
             >
               Delete template
-            </button>
+            </SubmitButton>
             <div className="text-xs text-zinc-500">
               Delete is blocked if the workflow is assigned to shipments or used as a subworkflow.
             </div>
@@ -472,12 +473,12 @@ export default async function WorkflowTemplateDetailsPage({
                 externalBooleanOptions={externalBooleanOptions}
               />
             </div>
-            <button
-              type="submit"
+            <SubmitButton
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+              pendingLabel="Adding..."
             >
               Add step
-            </button>
+            </SubmitButton>
           </form>
         </div>
 
@@ -503,12 +504,12 @@ export default async function WorkflowTemplateDetailsPage({
                   ))}
                 </select>
               </label>
-              <button
-                type="submit"
+              <SubmitButton
                 className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                pendingLabel="Adding..."
               >
                 Add subworkflow
-              </button>
+              </SubmitButton>
             </form>
           ) : (
             <div className="mt-4 text-sm text-zinc-500">
@@ -568,44 +569,44 @@ export default async function WorkflowTemplateDetailsPage({
                         <input type="hidden" name="templateId" value={template.id} />
                         <input type="hidden" name="stepId" value={s.id} />
                         <input type="hidden" name="dir" value="up" />
-                        <button
-                          type="submit"
+                        <SubmitButton
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          pendingLabel="Moving..."
                         >
                           Up
-                        </button>
+                        </SubmitButton>
                       </form>
                       <form action={moveStepAction}>
                         <input type="hidden" name="templateId" value={template.id} />
                         <input type="hidden" name="stepId" value={s.id} />
                         <input type="hidden" name="dir" value="down" />
-                        <button
-                          type="submit"
+                        <SubmitButton
                           className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          pendingLabel="Moving..."
                         >
                           Down
-                        </button>
+                        </SubmitButton>
                       </form>
                       <form action={deleteStepAction}>
                         <input type="hidden" name="templateId" value={template.id} />
                         <input type="hidden" name="stepId" value={s.id} />
-                        <button
-                          type="submit"
+                        <SubmitButton
                           className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                          pendingLabel="Deleting..."
                         >
                           Delete
-                        </button>
+                        </SubmitButton>
                       </form>
                       {s.group_id ? (
                         <form action={deleteStepGroupAction}>
                           <input type="hidden" name="templateId" value={template.id} />
                           <input type="hidden" name="groupId" value={s.group_id} />
-                          <button
-                            type="submit"
+                          <SubmitButton
                             className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                            pendingLabel="Removing..."
                           >
                             Remove group
-                          </button>
+                          </SubmitButton>
                         </form>
                       ) : null}
                     </div>
@@ -738,12 +739,12 @@ export default async function WorkflowTemplateDetailsPage({
                     </div>
                   </div>
 
-                    <button
-                      type="submit"
+                    <SubmitButton
                       className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                      pendingLabel="Saving..."
                     >
                       Save step
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
               </details>
