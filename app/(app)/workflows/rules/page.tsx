@@ -228,7 +228,7 @@ export default async function WorkflowRulesPage() {
                   return (
                     <tr key={r.id}>
                       <td className="py-2 pr-4 text-zinc-700">
-                        {parts.length ? parts.join(" • ") : "Any shipment"}
+                        {parts.length ? parts.join(" / ") : "Any shipment"}
                       </td>
                       <td className="py-2 pr-4 font-medium text-zinc-900">
                         {r.template_name}

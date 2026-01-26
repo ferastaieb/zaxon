@@ -94,14 +94,20 @@ export function StepFieldBuilder({
   globalVariables,
   externalBooleanOptions,
   blockedGlobalVariableIds,
+  onSchemaChange,
 }: {
   name: string;
   initialSchema: StepFieldSchema;
   globalVariables?: WorkflowGlobalVariable[];
   externalBooleanOptions?: Array<{ label: string; value: string }>;
   blockedGlobalVariableIds?: string[];
+  onSchemaChange?: (schema: StepFieldSchema) => void;
 }) {
   const [schema, setSchema] = useState<StepFieldSchema>(initialSchema);
+  const updateSchema = (next: StepFieldSchema) => {
+    setSchema(next);
+    onSchemaChange?.(next);
+  };
   const globals = globalVariables ?? [];
   const dateGlobals = useMemo(
     () => globals.filter((g) => g.type === "date"),
@@ -127,7 +133,7 @@ export function StepFieldBuilder({
     <div className="space-y-3">
       <FieldListEditor
         fields={schema.fields}
-        onChange={(fields) => setSchema({ version: 1, fields })}
+        onChange={(fields) => updateSchema({ version: 1, fields })}
         dateGlobals={dateGlobals}
         booleanOptions={mergedBooleanOptions}
         blockedGlobals={blockedGlobals}

@@ -22,24 +22,36 @@ function createVariable(): WorkflowGlobalVariable {
 export function GlobalVariablesBuilder({
   name,
   initialVariables,
+  onChange,
 }: {
   name: string;
   initialVariables: WorkflowGlobalVariable[];
+  onChange?: (variables: WorkflowGlobalVariable[]) => void;
 }) {
   const [variables, setVariables] = useState<WorkflowGlobalVariable[]>(
     initialVariables,
   );
 
+  const updateVariables = (
+    updater: (prev: WorkflowGlobalVariable[]) => WorkflowGlobalVariable[],
+  ) => {
+    setVariables((prev) => {
+      const next = updater(prev);
+      onChange?.(next);
+      return next;
+    });
+  };
+
   const addVariable = () => {
-    setVariables((prev) => [...prev, createVariable()]);
+    updateVariables((prev) => [...prev, createVariable()]);
   };
 
   const updateVariable = (index: number, next: WorkflowGlobalVariable) => {
-    setVariables((prev) => prev.map((v, idx) => (idx === index ? next : v)));
+    updateVariables((prev) => prev.map((v, idx) => (idx === index ? next : v)));
   };
 
   const removeVariable = (index: number) => {
-    setVariables((prev) => prev.filter((_, idx) => idx !== index));
+    updateVariables((prev) => prev.filter((_, idx) => idx !== index));
   };
 
   return (
