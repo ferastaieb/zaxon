@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { cn } from "@/lib/cn";
 import { Roles, type Role } from "@/lib/domain";
@@ -33,6 +39,11 @@ const NODE_WIDTH = 220;
 const NODE_HEIGHT = 96;
 const CANVAS_WIDTH = 980;
 const CANVAS_HEIGHT = 560;
+
+type PreviewRow = {
+  label: string;
+  detail: string;
+};
 
 function createId(prefix: string) {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -164,6 +175,73 @@ function collectLinkedGlobals(fields: StepFieldDefinition[], used: Set<string>) 
   }
 }
 
+function fieldLabel(field: StepFieldDefinition) {
+  return field.label?.trim() || "Untitled field";
+}
+
+function collectCustomerPreviewRows(
+  fields: StepFieldDefinition[],
+  labelPath: string[] = [],
+): PreviewRow[] {
+  const rows: PreviewRow[] = [];
+  for (const field of fields) {
+    const labelParts = [...labelPath, fieldLabel(field)];
+    const label = labelParts.join(" / ");
+    if (field.type === "group") {
+      rows.push({
+        label,
+        detail: field.repeatable ? "Repeatable group" : "Group",
+      });
+      const childPath = field.repeatable
+        ? [...labelParts, "Item 1"]
+        : labelParts;
+      rows.push(...collectCustomerPreviewRows(field.fields, childPath));
+      continue;
+    }
+    if (field.type === "choice") {
+      const optionLabels = field.options
+        .map((option) => option.label?.trim() || "Option")
+        .map((option) => option.replace(/\s+/g, " "))
+        .join(", ");
+      rows.push({
+        label,
+        detail: optionLabels ? `Choice: ${optionLabels}` : "Choice",
+      });
+      for (const option of field.options) {
+        rows.push(
+          ...collectCustomerPreviewRows(option.fields, [
+            ...labelParts,
+            option.label?.trim() || "Option",
+          ]),
+        );
+      }
+      continue;
+    }
+    if (field.type === "file") {
+      rows.push({ label, detail: "File upload" });
+      continue;
+    }
+    if (field.type === "shipment_goods") {
+      rows.push({ label, detail: "Shipment goods allocation" });
+      continue;
+    }
+    if (field.type === "boolean") {
+      rows.push({ label, detail: "Checkbox" });
+      continue;
+    }
+    if (field.type === "number") {
+      rows.push({ label, detail: "Number input" });
+      continue;
+    }
+    if (field.type === "date") {
+      rows.push({ label, detail: "Date input" });
+      continue;
+    }
+    rows.push({ label, detail: "Text input" });
+  }
+  return rows;
+}
+
 function nextPosition(index: number) {
   const col = index % 3;
   const row = Math.floor(index / 3);
@@ -178,15 +256,118 @@ export function WorkflowDesigner({
 }: {
   action: (formData: FormData) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const ignoreClickRef = useRef(false);
+
   const [steps, setSteps] = useState<DesignerStep[]>(() => initialSteps());
   const [selectedId, setSelectedId] = useState(steps[0]?.id ?? "");
   const [globalVariables, setGlobalVariables] = useState<WorkflowGlobalVariable[]>(
     [],
   );
+  const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [panState, setPanState] = useState<{
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
 
   const selectedStep =
-    steps.find((step) => step.id === selectedId) ?? steps[0];
-  const selectedIndex = steps.findIndex((step) => step.id === selectedId);
+    steps.find((step) => step.id === selectedId) ?? steps[0] ?? null;
+  const selectedIndex = selectedStep
+    ? steps.findIndex((step) => step.id === selectedStep.id)
+    : -1;
+  const connectingStep = connectingFromId
+    ? steps.find((step) => step.id === connectingFromId) ?? null
+    : null;
+  const effectiveCustomerVisible = selectedStep
+    ? selectedStep.isExternal
+      ? true
+      : selectedStep.customerVisible
+    : false;
+
+  useEffect(() => {
+    if (!steps.length) {
+      setSelectedId("");
+      return;
+    }
+    if (!steps.some((step) => step.id === selectedId)) {
+      setSelectedId(steps[0]!.id);
+    }
+  }, [steps, selectedId]);
+
+  useEffect(() => {
+    if (!draggingId) return;
+
+    const handleMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        ignoreClickRef.current = true;
+      }
+      const nextX = Math.min(
+        Math.max(0, drag.originX + dx),
+        CANVAS_WIDTH - NODE_WIDTH,
+      );
+      const nextY = Math.min(
+        Math.max(0, drag.originY + dy),
+        CANVAS_HEIGHT - NODE_HEIGHT,
+      );
+      setSteps((prev) =>
+        prev.map((step) =>
+          step.id === drag.id
+            ? { ...step, position: { x: nextX, y: nextY } }
+            : step,
+        ),
+      );
+    };
+
+    const handleUp = () => {
+      dragRef.current = null;
+      setDraggingId(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [draggingId]);
+
+  useEffect(() => {
+    if (!panState) return;
+
+    const handleMove = (event: PointerEvent) => {
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+      const dx = event.clientX - panState.startX;
+      const dy = event.clientY - panState.startY;
+      scrollEl.scrollLeft = panState.scrollLeft - dx;
+      scrollEl.scrollTop = panState.scrollTop - dy;
+    };
+
+    const handleUp = () => {
+      setPanState(null);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [panState]);
 
   const updateStep = (id: string, patch: Partial<DesignerStep>) => {
     setSteps((prev) =>
@@ -210,6 +391,98 @@ export function WorkflowDesigner({
     };
     setSteps((prev) => [...prev, next]);
     setSelectedId(id);
+  };
+
+  const removeStep = (id: string) => {
+    setSteps((prev) => {
+      const next = prev.filter((step) => step.id !== id);
+      return next.map((step) => ({
+        ...step,
+        dependsOn: step.dependsOn.filter((dep) => dep !== id),
+      }));
+    });
+    if (selectedId === id) {
+      const fallback = steps.find((step) => step.id !== id)?.id ?? "";
+      setSelectedId(fallback);
+    }
+    if (connectingFromId === id) {
+      setConnectingFromId(null);
+    }
+  };
+
+  const toggleDependency = (targetId: string, sourceId: string) => {
+    setSteps((prev) =>
+      prev.map((step) => {
+        if (step.id !== targetId) return step;
+        const next = new Set(step.dependsOn);
+        if (next.has(sourceId)) {
+          next.delete(sourceId);
+        } else {
+          next.add(sourceId);
+        }
+        return { ...step, dependsOn: Array.from(next) };
+      }),
+    );
+  };
+
+  const startNodeDrag = (
+    step: DesignerStep,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    ignoreClickRef.current = false;
+    dragRef.current = {
+      id: step.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: step.position.x,
+      originY: step.position.y,
+    };
+    setDraggingId(step.id);
+    setSelectedId(step.id);
+  };
+
+  const handleNodeClick = (stepId: string) => {
+    if (ignoreClickRef.current) {
+      ignoreClickRef.current = false;
+      return;
+    }
+    setSelectedId(stepId);
+    if (connectingFromId && connectingFromId !== stepId) {
+      const sourceIndex = steps.findIndex((step) => step.id === connectingFromId);
+      const targetIndex = steps.findIndex((step) => step.id === stepId);
+      if (sourceIndex > -1 && targetIndex > sourceIndex) {
+        toggleDependency(stepId, connectingFromId);
+      }
+      setConnectingFromId(null);
+    }
+  };
+
+  const startConnect = (stepId: string) => {
+    setSelectedId(stepId);
+    setConnectingFromId((prev) => (prev === stepId ? null : stepId));
+  };
+
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("[data-node]")
+    ) {
+      return;
+    }
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    event.preventDefault();
+    setConnectingFromId(null);
+    setPanState({
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: scrollEl.scrollLeft,
+      scrollTop: scrollEl.scrollTop,
+    });
   };
 
   const edges = useMemo<DesignerEdge[]>(() => {
@@ -292,7 +565,7 @@ export function WorkflowDesigner({
 
       <input type="hidden" name="stepsJson" value={JSON.stringify(stepsPayload)} />
 
-      <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)_320px]">
+      <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)]">
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-zinc-900">Steps</h2>
@@ -336,21 +609,37 @@ export function WorkflowDesigner({
             <div>
               <h2 className="text-sm font-semibold text-zinc-900">Canvas</h2>
               <div className="text-xs text-zinc-500">
-                Drag connections by editing dependencies in the inspector.
+                Drag nodes to move, drag the background to pan, click the dot to
+                connect to later steps.
               </div>
             </div>
             <div className="text-xs text-zinc-400">Grid view</div>
           </div>
 
-          <div className="mt-4 overflow-auto">
+          {connectingStep ? (
+            <div className="mt-3 text-xs text-blue-700">
+              Connecting from: {connectingStep.name || "Untitled step"}. Click
+              another node to link.
+            </div>
+          ) : null}
+
+          <div
+            ref={scrollRef}
+            className={cn(
+              "mt-4 overflow-auto rounded-xl border border-zinc-100",
+              panState ? "cursor-grabbing" : "cursor-grab",
+            )}
+            onPointerDown={startPan}
+          >
             <div
-              className="relative rounded-xl border border-zinc-100"
+              className="relative"
               style={{
                 width: CANVAS_WIDTH,
                 height: CANVAS_HEIGHT,
                 backgroundImage:
                   "radial-gradient(#e5e7eb 1px, transparent 1px)",
                 backgroundSize: "24px 24px",
+                touchAction: "none",
               }}
             >
               <svg
@@ -397,16 +686,19 @@ export function WorkflowDesigner({
 
               {steps.map((step, index) => {
                 const selected = selectedId === step.id;
+                const isConnectingSource = connectingFromId === step.id;
                 return (
-                  <button
+                  <div
                     key={step.id}
-                    type="button"
-                    onClick={() => setSelectedId(step.id)}
+                    data-node="true"
+                    onClick={() => handleNodeClick(step.id)}
+                    onPointerDown={(event) => startNodeDrag(step, event)}
                     className={cn(
                       "absolute z-10 rounded-xl border bg-white p-3 text-left shadow-sm transition",
                       selected
                         ? "border-zinc-900 ring-2 ring-zinc-200"
                         : "border-zinc-200 hover:border-zinc-400",
+                      draggingId === step.id ? "cursor-grabbing" : "cursor-grab",
                     )}
                     style={{
                       left: step.position.x,
@@ -415,6 +707,22 @@ export function WorkflowDesigner({
                       height: NODE_HEIGHT,
                     }}
                   >
+                    <button
+                      type="button"
+                      data-connector="true"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        startConnect(step.id);
+                      }}
+                      className={cn(
+                        "absolute -right-2 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border",
+                        isConnectingSource
+                          ? "border-blue-500 bg-blue-500"
+                          : "border-zinc-300 bg-white",
+                      )}
+                      aria-label="Connect to another step"
+                    />
                     <div className="text-[10px] uppercase text-zinc-400">
                       Step {index + 1}
                     </div>
@@ -424,135 +732,143 @@ export function WorkflowDesigner({
                     <div className="mt-1 text-[11px] text-zinc-500">
                       {step.ownerRole} - {step.schema.fields.length} fields
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-zinc-900">Inspector</h2>
-          {selectedStep ? (
-            <div className="mt-4 space-y-4">
+      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-zinc-900">Inspector</h2>
+        {selectedStep ? (
+          <div className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-xs text-zinc-500">Selected step</div>
                 <div className="text-sm font-semibold text-zinc-900">
                   {selectedStep.name || "Untitled step"}
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => removeStep(selectedStep.id)}
+                className="rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
+              >
+                Remove step
+              </button>
+            </div>
 
+            <label className="block">
+              <div className="mb-1 text-sm font-medium text-zinc-800">
+                Step name
+              </div>
+              <input
+                value={selectedStep.name}
+                onChange={(e) =>
+                  updateStep(selectedStep.id, { name: e.target.value })
+                }
+                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="block">
                 <div className="mb-1 text-sm font-medium text-zinc-800">
-                  Step name
+                  Owner role
+                </div>
+                <select
+                  value={selectedStep.ownerRole}
+                  onChange={(e) =>
+                    updateStep(selectedStep.id, {
+                      ownerRole: e.target.value as Role,
+                    })
+                  }
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                >
+                  {Roles.map((role) => (
+                    <option key={role} value={role}>
+                      {role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <div className="mb-1 text-sm font-medium text-zinc-800">
+                  SLA (hours)
                 </div>
                 <input
-                  value={selectedStep.name}
+                  value={selectedStep.slaHours}
                   onChange={(e) =>
-                    updateStep(selectedStep.id, { name: e.target.value })
+                    updateStep(selectedStep.id, { slaHours: e.target.value })
                   }
+                  type="number"
+                  min={0}
                   className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+                  placeholder="24"
                 />
               </label>
+              <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={selectedStep.customerVisible}
+                  onChange={(e) =>
+                    updateStep(selectedStep.id, {
+                      customerVisible: e.target.checked,
+                    })
+                  }
+                />
+                Customer visible
+              </label>
+              <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={selectedStep.isExternal}
+                  onChange={(e) =>
+                    updateStep(selectedStep.id, {
+                      isExternal: e.target.checked,
+                    })
+                  }
+                />
+                External step
+              </label>
+            </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <div className="mb-1 text-sm font-medium text-zinc-800">
-                    Owner role
-                  </div>
-                  <select
-                    value={selectedStep.ownerRole}
-                    onChange={(e) =>
-                      updateStep(selectedStep.id, {
-                        ownerRole: e.target.value as Role,
-                      })
-                    }
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  >
-                    {Roles.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-sm font-medium text-zinc-800">
-                    SLA (hours)
-                  </div>
-                  <input
-                    value={selectedStep.slaHours}
-                    onChange={(e) =>
-                      updateStep(selectedStep.id, { slaHours: e.target.value })
-                    }
-                    type="number"
-                    min={0}
-                    className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-                    placeholder="24"
-                  />
-                </label>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-700">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedStep.customerVisible}
-                    onChange={(e) =>
-                      updateStep(selectedStep.id, {
-                        customerVisible: e.target.checked,
-                      })
-                    }
-                  />
-                  Customer visible
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={selectedStep.isExternal}
-                    onChange={(e) =>
-                      updateStep(selectedStep.id, {
-                        isExternal: e.target.checked,
-                      })
-                    }
-                  />
-                  External step
-                </label>
-              </div>
-
-              {selectedIndex > 0 ? (
-                <div>
-                  <div className="mb-2 text-sm font-medium text-zinc-800">
-                    Depends on
-                  </div>
-                  <div className="grid gap-2">
-                    {steps.slice(0, selectedIndex).map((step) => {
-                      const checked = selectedStep.dependsOn.includes(step.id);
-                      return (
-                        <label
-                          key={`${selectedStep.id}-dep-${step.id}`}
-                          className="flex items-center gap-2 text-sm text-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...selectedStep.dependsOn, step.id]
-                                : selectedStep.dependsOn.filter(
-                                    (id) => id !== step.id,
-                                  );
-                              updateStep(selectedStep.id, { dependsOn: next });
-                            }}
-                          />
-                          {step.name || "Untitled step"}
-                        </label>
-                      );
-                    })}
-                  </div>
+            {selectedIndex > 0 ? (
+              <div>
+                <div className="mb-2 text-sm font-medium text-zinc-800">
+                  Depends on
                 </div>
-              ) : null}
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {steps.slice(0, selectedIndex).map((step) => {
+                    const checked = selectedStep.dependsOn.includes(step.id);
+                    return (
+                      <label
+                        key={`${selectedStep.id}-dep-${step.id}`}
+                        className="flex items-center gap-2 text-sm text-zinc-700"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...selectedStep.dependsOn, step.id]
+                              : selectedStep.dependsOn.filter(
+                                  (id) => id !== step.id,
+                                );
+                            updateStep(selectedStep.id, { dependsOn: next });
+                          }}
+                        />
+                        {step.name || "Untitled step"}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
               <div>
                 <div className="mb-2 text-sm font-medium text-zinc-800">
                   Fields
@@ -580,58 +896,94 @@ export function WorkflowDesigner({
                 })}
               </div>
 
-              <div>
-                <div className="mb-2 text-sm font-medium text-zinc-800">
-                  Preview
-                </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                  {selectedStep.schema.fields.length ? (
-                    <div className="space-y-2">
-                      {selectedStep.schema.fields.map((field) => (
-                        <div
-                          key={field.id}
-                          className="rounded-lg border border-zinc-200 bg-white px-3 py-2"
-                        >
-                          <div className="text-xs font-semibold text-zinc-700">
-                            {field.label || "Untitled field"}
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-2 text-sm font-medium text-zinc-800">
+                    Internal preview
+                  </div>
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    {selectedStep.schema.fields.length ? (
+                      <div className="space-y-2">
+                        {selectedStep.schema.fields.map((field) => (
+                          <div
+                            key={field.id}
+                            className="rounded-lg border border-zinc-200 bg-white px-3 py-2"
+                          >
+                            <div className="text-xs font-semibold text-zinc-700">
+                              {field.label || "Untitled field"}
+                            </div>
+                            <div className="mt-1 text-[11px] text-zinc-500">
+                              {field.type} -{" "}
+                              {field.required ? "required" : "optional"}
+                            </div>
                           </div>
-                          <div className="mt-1 text-[11px] text-zinc-500">
-                            {field.type} - {field.required ? "required" : "optional"}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-zinc-500">
-                      Add fields to see a preview.
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-zinc-500">
+                        Add fields to see a preview.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-4 text-sm text-zinc-500">
-              Select a step to edit fields and preview.
-            </div>
-          )}
 
-          {steps.map((step) => {
-            if (step.id === selectedStep?.id) return null;
-            return (
-              <div key={`hidden-${step.id}`} className="hidden">
-                <StepFieldBuilder
-                  name={`fieldSchema_${step.id}`}
-                  initialSchema={step.schema}
-                  globalVariables={globalVariables}
-                  blockedGlobalVariableIds={Array.from(usedGlobalsByStep.all)}
-                  onSchemaChange={(schema) =>
-                    updateStep(step.id, { schema })
-                  }
-                />
+                <div>
+                  <div className="mb-2 text-sm font-medium text-zinc-800">
+                    Customer preview
+                  </div>
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                    {!effectiveCustomerVisible ? (
+                      <div className="text-xs text-zinc-500">
+                        Hidden from the customer portal.
+                      </div>
+                    ) : selectedStep.schema.fields.length ? (
+                      <div className="space-y-2 text-xs text-zinc-600">
+                        {collectCustomerPreviewRows(
+                          selectedStep.schema.fields,
+                        ).map((row, index) => (
+                          <div
+                            key={`${selectedStep.id}-preview-${index}`}
+                            className="flex flex-wrap items-center justify-between gap-3"
+                          >
+                            <div className="font-medium text-zinc-700">
+                              {row.label}
+                            </div>
+                            <div className="text-zinc-500">{row.detail}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-zinc-500">
+                        Add fields to preview the customer view.
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 text-sm text-zinc-500">
+            Select a step to edit fields and preview.
+          </div>
+        )}
+
+        {steps.map((step) => {
+          if (step.id === selectedStep?.id) return null;
+          return (
+            <div key={`hidden-${step.id}`} className="hidden">
+              <StepFieldBuilder
+                name={`fieldSchema_${step.id}`}
+                initialSchema={step.schema}
+                globalVariables={globalVariables}
+                blockedGlobalVariableIds={Array.from(usedGlobalsByStep.all)}
+                onSchemaChange={(schema) =>
+                  updateStep(step.id, { schema })
+                }
+              />
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex items-center gap-3">
