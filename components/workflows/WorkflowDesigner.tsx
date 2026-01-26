@@ -242,6 +242,208 @@ function collectCustomerPreviewRows(
   return rows;
 }
 
+function InternalPreviewFields({
+  schema,
+  globalVariables,
+}: {
+  schema: StepFieldSchema;
+  globalVariables: WorkflowGlobalVariable[];
+}) {
+  const [choiceTabs, setChoiceTabs] = useState<Record<string, string>>({});
+  const globalLabelMap = useMemo(
+    () => new Map(globalVariables.map((variable) => [variable.id, variable.label])),
+    [globalVariables],
+  );
+
+  const renderFields = (
+    fields: StepFieldDefinition[],
+    path: string[] = [],
+  ) => {
+    return fields.map((field) => {
+      const fieldPath = [...path, field.id];
+      const fieldKey = fieldPath.join("/");
+      const label = fieldLabel(field);
+
+      if (field.type === "text" || field.type === "number" || field.type === "date") {
+        const inputType = field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
+        const globalLabel = field.linkToGlobal
+          ? globalLabelMap.get(field.linkToGlobal) ?? null
+          : null;
+        const helperText =
+          field.type === "date" && globalLabel
+            ? `Sets global date: ${globalLabel}`
+            : field.type === "number" && globalLabel
+              ? `Countdown from: ${globalLabel}`
+              : null;
+        return (
+          <label key={fieldKey} className="block">
+            <div className="mb-1 text-xs font-medium text-zinc-600">{label}</div>
+            <input
+              type={inputType}
+              disabled
+              placeholder="Enter value..."
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+            />
+            {helperText ? (
+              <div className="mt-1 text-[11px] text-zinc-500">{helperText}</div>
+            ) : null}
+          </label>
+        );
+      }
+
+      if (field.type === "boolean") {
+        return (
+          <label
+            key={fieldKey}
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700"
+          >
+            <input
+              type="checkbox"
+              disabled
+              className="h-4 w-4 rounded border border-zinc-300"
+            />
+            <span>{label}</span>
+          </label>
+        );
+      }
+
+      if (field.type === "file") {
+        return (
+          <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="text-xs font-medium text-zinc-700">{label}</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="block">
+                <div className="mb-1 text-[11px] font-medium text-zinc-600">
+                  Upload file
+                </div>
+                <input
+                  type="file"
+                  disabled
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
+                />
+              </label>
+              <div className="text-[11px] text-zinc-500">No file uploaded</div>
+            </div>
+          </div>
+        );
+      }
+
+      if (field.type === "shipment_goods") {
+        return (
+          <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="text-xs font-medium text-zinc-700">{label}</div>
+            <div className="mt-2 text-xs text-zinc-500">
+              Shipment goods will appear here in the shipment view.
+            </div>
+          </div>
+        );
+      }
+
+      if (field.type === "group") {
+        if (field.repeatable) {
+          return (
+            <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
+              <div className="flex items-center justify-between text-xs font-medium text-zinc-700">
+                <span>{label}</span>
+                <button
+                  type="button"
+                  disabled
+                  className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 disabled:bg-zinc-100"
+                >
+                  Add item
+                </button>
+              </div>
+              <div className="mt-3 space-y-3">
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+                  <div className="mb-2 text-xs font-medium text-zinc-700">
+                    Item 1
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {renderFields(field.fields, [...fieldPath, "0"])}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="text-xs font-medium text-zinc-700">{label}</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {renderFields(field.fields, fieldPath)}
+            </div>
+          </div>
+        );
+      }
+
+      if (field.type === "choice") {
+        const choiceKey = fieldPath.join("/");
+        const activeOptionId =
+          choiceTabs[choiceKey] ?? field.options[0]?.id ?? "";
+        return (
+          <div key={fieldKey} className="rounded-lg border border-zinc-200 bg-white p-3">
+            <div className="text-xs font-medium text-zinc-700">{label}</div>
+            <div className="mt-3">
+              <div className="flex flex-wrap gap-2 border-b border-zinc-200 pb-2">
+                {field.options.map((option) => {
+                  const optionLabel = option.label?.trim() || "Option";
+                  const isActive = option.id === activeOptionId;
+                  return (
+                    <button
+                      key={`${choiceKey}-tab-${option.id}`}
+                      type="button"
+                      onClick={() =>
+                        setChoiceTabs((prev) => ({ ...prev, [choiceKey]: option.id }))
+                      }
+                      className={cn(
+                        "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                        isActive
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50",
+                      )}
+                    >
+                      {optionLabel}
+                      {option.is_final ? " (Final)" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-3">
+                {field.options.map((option) => {
+                  if (option.id !== activeOptionId) return null;
+                  const optionPath = [...fieldPath, option.id];
+                  return (
+                    <div key={`${choiceKey}-panel-${option.id}`} className="grid gap-3 sm:grid-cols-2">
+                      {renderFields(option.fields, optionPath)}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return null;
+    });
+  };
+
+  if (!schema.fields.length) {
+    return (
+      <div className="text-xs text-zinc-500">
+        Add fields to see a preview.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="text-xs font-medium text-zinc-700">Step fields</div>
+      <div className="mt-2 space-y-3">{renderFields(schema.fields)}</div>
+    </div>
+  );
+}
+
 function nextPosition(index: number) {
   const col = index % 3;
   const row = Math.floor(index / 3);
@@ -868,7 +1070,7 @@ export function WorkflowDesigner({
               </div>
             ) : null}
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-4">
               <div>
                 <div className="mb-2 text-sm font-medium text-zinc-800">
                   Fields
@@ -896,67 +1098,54 @@ export function WorkflowDesigner({
                 })}
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <div className="mb-2 text-sm font-medium text-zinc-800">
-                    Internal preview
-                  </div>
-                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                    {selectedStep.schema.fields.length ? (
-                      <div className="space-y-2">
-                        {selectedStep.schema.fields.map((field) => (
-                          <div
-                            key={field.id}
-                            className="rounded-lg border border-zinc-200 bg-white px-3 py-2"
-                          >
-                            <div className="text-xs font-semibold text-zinc-700">
-                              {field.label || "Untitled field"}
-                            </div>
-                            <div className="mt-1 text-[11px] text-zinc-500">
-                              {field.type} -{" "}
-                              {field.required ? "required" : "optional"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-zinc-500">
-                        Add fields to see a preview.
-                      </div>
-                    )}
-                  </div>
+              <div>
+                <div className="mb-2 text-sm font-medium text-zinc-800">
+                  Preview
                 </div>
-
-                <div>
-                  <div className="mb-2 text-sm font-medium text-zinc-800">
-                    Customer preview
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-2 text-xs font-medium text-zinc-600">
+                      Internal preview
+                    </div>
+                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <InternalPreviewFields
+                        schema={selectedStep.schema}
+                        globalVariables={globalVariables}
+                      />
+                    </div>
                   </div>
-                  <div className="rounded-xl border border-zinc-200 bg-white p-3">
-                    {!effectiveCustomerVisible ? (
-                      <div className="text-xs text-zinc-500">
-                        Hidden from the customer portal.
-                      </div>
-                    ) : selectedStep.schema.fields.length ? (
-                      <div className="space-y-2 text-xs text-zinc-600">
-                        {collectCustomerPreviewRows(
-                          selectedStep.schema.fields,
-                        ).map((row, index) => (
-                          <div
-                            key={`${selectedStep.id}-preview-${index}`}
-                            className="flex flex-wrap items-center justify-between gap-3"
-                          >
-                            <div className="font-medium text-zinc-700">
-                              {row.label}
+
+                  <div>
+                    <div className="mb-2 text-xs font-medium text-zinc-600">
+                      Customer preview
+                    </div>
+                    <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                      {!effectiveCustomerVisible ? (
+                        <div className="text-xs text-zinc-500">
+                          Hidden from the customer portal.
+                        </div>
+                      ) : selectedStep.schema.fields.length ? (
+                        <div className="space-y-2 text-xs text-zinc-600">
+                          {collectCustomerPreviewRows(
+                            selectedStep.schema.fields,
+                          ).map((row, index) => (
+                            <div
+                              key={`${selectedStep.id}-preview-${index}`}
+                              className="flex flex-wrap items-center justify-between gap-3"
+                            >
+                              <div className="font-medium text-zinc-700">
+                                {row.label}
+                              </div>
+                              <div className="text-zinc-500">{row.detail}</div>
                             </div>
-                            <div className="text-zinc-500">{row.detail}</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-zinc-500">
-                        Add fields to preview the customer view.
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-zinc-500">
+                          Add fields to preview the customer view.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
