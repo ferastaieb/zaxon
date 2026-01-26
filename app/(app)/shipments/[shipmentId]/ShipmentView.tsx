@@ -1989,17 +1989,18 @@ function StepFieldInputs({
                 const choiceValue = fieldValues[field.id];
                 const choiceValues = toRecord(choiceValue);
                 const choiceMissing = hasMissingUnderPath(missingPaths, encodedPath) && !disabled;
-                const finalOption = field.options.find((opt) => opt.is_final);
-                const finalComplete = finalOption
-                    ? isOptionComplete(
+                const finalOptions = field.options.filter((opt) => opt.is_final);
+                const completedFinalOptions = finalOptions.filter((option) =>
+                    isOptionComplete(
                         stepId,
-                        finalOption,
-                        choiceValues[finalOption.id],
+                        option,
+                        choiceValues[option.id],
                         docTypes,
                         missingPaths,
-                        [...fieldPath, finalOption.id],
-                    )
-                    : false;
+                        [...fieldPath, option.id],
+                    ),
+                );
+                const finalComplete = completedFinalOptions.length > 0;
                 const optionWithValue = field.options.find((option) =>
                     hasAnyFieldValue(
                         stepId,
@@ -2010,7 +2011,10 @@ function StepFieldInputs({
                     ),
                 );
                 const fallbackOptionId = optionWithValue?.id ?? field.options[0]?.id ?? "";
-                const activeOptionId = choiceTabs[encodedPath] ?? (finalOption && finalComplete ? finalOption.id : fallbackOptionId);
+                const primaryFinalId = completedFinalOptions[0]?.id ?? finalOptions[0]?.id ?? "";
+                const activeOptionId =
+                    choiceTabs[encodedPath] ??
+                    (finalComplete && primaryFinalId ? primaryFinalId : fallbackOptionId);
 
                 return (
                     <div key={fieldKey} className={`rounded-lg border bg-white p-3 ${choiceMissing ? "border-red-200" : "border-zinc-200"}`}>
@@ -2020,7 +2024,7 @@ function StepFieldInputs({
                                 {field.options.map((option) => {
                                     const optionPath = [...fieldPath, option.id];
                                     const optionEncoded = encodeFieldPath(optionPath);
-                                    const superseded = !!finalOption && finalComplete && option.id !== finalOption.id;
+                                    const superseded = finalComplete && !option.is_final;
                                     const optionMissing = hasMissingUnderPath(missingPaths, optionEncoded) && !superseded && !disabled;
                                     const isActive = option.id === activeOptionId;
                                     const baseClasses = "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors";
@@ -2050,7 +2054,7 @@ function StepFieldInputs({
                                     const optionPath = [...fieldPath, option.id];
                                     const optionEncoded = encodeFieldPath(optionPath);
                                     const optionValues = toRecord(choiceValues[option.id]);
-                                    const superseded = !!finalOption && finalComplete && option.id !== finalOption.id;
+                                    const superseded = finalComplete && !option.is_final;
                                     const optionMissing = hasMissingUnderPath(missingPaths, optionEncoded) && !superseded && !disabled;
                                     const isActive = option.id === activeOptionId;
                                     const optionHasValue = hasAnyFieldValue(

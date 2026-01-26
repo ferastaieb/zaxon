@@ -77,7 +77,7 @@ export default async function NewWorkflowTemplatePage() {
               initialVariables={[]}
             />
             <div className="mt-1 text-xs text-zinc-500">
-              Use these values in step fields for countdowns and comparisons.
+              Variables are named values you can reference in step fields for countdowns and rules.
             </div>
           </div>
 

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { CreateShipmentForm } from "@/components/shipments/CreateShipmentForm";
 import { assertCanWrite, canWrite, requireUser } from "@/lib/auth";
-import { ShipmentTypes, TransportModes, type ShipmentType, type TransportMode } from "@/lib/domain";
+import { TransportModes, type ShipmentType, type TransportMode } from "@/lib/domain";
 import { listParties } from "@/lib/data/parties";
 import { createShipment } from "@/lib/data/shipments";
 import { listWorkflowTemplates, suggestTemplate } from "@/lib/data/workflows";
@@ -28,7 +28,7 @@ export default async function NewShipmentPage() {
     const transportMode = String(formData.get("transportMode") ?? "") as TransportMode;
     const origin = String(formData.get("origin") ?? "").trim();
     const destination = String(formData.get("destination") ?? "").trim();
-    const shipmentType = String(formData.get("shipmentType") ?? "") as ShipmentType;
+    const shipmentType = (transportMode === "LAND" ? "LAND" : "FCL") as ShipmentType;
     const cargoDescription = "Not set";
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
@@ -47,7 +47,6 @@ export default async function NewShipmentPage() {
     if (
       customerPartyIds.length === 0 ||
       !TransportModes.includes(transportMode) ||
-      !ShipmentTypes.includes(shipmentType) ||
       !origin ||
       !destination
     ) {
@@ -64,6 +63,14 @@ export default async function NewShipmentPage() {
         customerPartyId: primaryCustomerId,
       });
       workflowTemplateId = suggested?.id ?? null;
+    }
+
+    if (!workflowTemplateId) {
+      const fallbackTemplates = await listWorkflowTemplates({
+        includeArchived: false,
+        isSubworkflow: false,
+      });
+      workflowTemplateId = fallbackTemplates[0]?.id ?? null;
     }
 
     if (!workflowTemplateId) redirect("/shipments/new?error=template");

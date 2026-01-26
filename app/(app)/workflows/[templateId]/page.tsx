@@ -6,7 +6,7 @@ import { StepFieldBuilder } from "@/components/workflows/StepFieldBuilder";
 import { StepVisibilityToggle } from "@/components/workflows/StepVisibilityToggle";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { requireAdmin } from "@/lib/auth";
-import { DocumentTypes, Roles, type Role } from "@/lib/domain";
+import { Roles, type Role } from "@/lib/domain";
 import {
   parseChecklistGroupsInput,
   parseChecklistGroupsJson,
@@ -364,14 +364,14 @@ export default async function WorkflowTemplateDetailsPage({
               <div className="mb-2 text-sm font-medium text-zinc-800">
                 Workflow variables
               </div>
-              <GlobalVariablesBuilder
-                name="globalVariablesJson"
-                initialVariables={globalVariables}
-              />
-              <div className="mt-1 text-xs text-zinc-500">
-                Use these values in step fields for countdowns and comparisons.
-              </div>
+            <GlobalVariablesBuilder
+              name="globalVariablesJson"
+              initialVariables={globalVariables}
+            />
+            <div className="mt-1 text-xs text-zinc-500">
+              Variables are named values you can reference in step fields for countdowns and rules.
             </div>
+          </div>
             <SubmitButton
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
               pendingLabel="Saving..."
@@ -529,7 +529,7 @@ export default async function WorkflowTemplateDetailsPage({
 
         <div className="mt-4 space-y-3">
           {steps.map((s) => {
-            const requiredDocs = new Set(parseRequiredDocumentTypes(s));
+            const requiredDocs = parseRequiredDocumentTypes(s);
             const schemaFromStep = parseStepFieldSchema(s.field_schema_json);
             const legacyFields = parseRequiredFields(s);
             const dependsOn = new Set(parseDependsOn(s.depends_on_step_ids_json));
@@ -717,27 +717,13 @@ export default async function WorkflowTemplateDetailsPage({
                     </label>
                   </div>
 
-                  <div>
-                    <div className="mb-2 text-sm font-medium text-zinc-800">
-                      Required documents
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {DocumentTypes.map((dt) => (
-                        <label
-                          key={dt}
-                          className="flex items-center gap-2 text-sm text-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            name="requiredDocs"
-                            value={dt}
-                            defaultChecked={requiredDocs.has(dt)}
-                          />
-                          {dt}
-                        </label>
+                  {requiredDocs.length ? (
+                    <div className="hidden">
+                      {requiredDocs.map((doc) => (
+                        <input key={doc} type="hidden" name="requiredDocs" value={doc} />
                       ))}
                     </div>
-                  </div>
+                  ) : null}
 
                     <SubmitButton
                       className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"

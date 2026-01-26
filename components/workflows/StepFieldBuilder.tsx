@@ -369,10 +369,9 @@ function ChoiceOptionsEditor({
   };
 
   const markFinal = (index: number, isFinal: boolean) => {
-    const next = options.map((opt, idx) => ({
-      ...opt,
-      is_final: idx === index ? isFinal : false,
-    }));
+    const next = options.map((opt, idx) =>
+      idx === index ? { ...opt, is_final: isFinal } : opt,
+    );
     onChange(next);
   };
 
@@ -395,7 +394,7 @@ function ChoiceOptionsEditor({
                 checked={!!option.is_final}
                 onChange={(e) => markFinal(index, e.target.checked)}
               />
-              Final option
+              Final option(s)
             </label>
             <label className="md:col-span-2 flex items-center gap-2 text-sm text-zinc-700">
               <input

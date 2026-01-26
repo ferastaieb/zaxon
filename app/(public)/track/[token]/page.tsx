@@ -360,22 +360,23 @@ function collectChoiceMessages(input: {
 
     if (field.type === "choice") {
       const choiceValues = isPlainObject(fieldValue) ? fieldValue : {};
-      const finalOption = field.options.find((opt) => opt.is_final);
-      const finalHasValue =
-        finalOption &&
-        isPlainObject(choiceValues[finalOption.id]) &&
-        hasAnyFieldValue({
-          fields: finalOption.fields,
-          values: choiceValues[finalOption.id] as StepFieldValues,
-          stepId: input.stepId,
-          docByType: input.docByType,
-          valuePath: [...path, finalOption.id],
-        });
+      const finalOptions = field.options.filter((opt) => opt.is_final);
+      const finalHasValue = finalOptions.some((option) => {
+        const optionValue = choiceValues[option.id];
+        return (
+          isPlainObject(optionValue) &&
+          hasAnyFieldValue({
+            fields: option.fields,
+            values: optionValue as StepFieldValues,
+            stepId: input.stepId,
+            docByType: input.docByType,
+            valuePath: [...path, option.id],
+          })
+        );
+      });
 
       for (const option of field.options) {
-        if (finalHasValue && finalOption && option.id !== finalOption.id) {
-          continue;
-        }
+        if (finalHasValue && !option.is_final) continue;
         const optionValue = choiceValues[option.id];
         const optionValues = isPlainObject(optionValue)
           ? (optionValue as StepFieldValues)

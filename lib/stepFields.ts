@@ -530,10 +530,10 @@ function collectMissingForFields(
     if (field.type === "choice") {
       const choiceValue = getValueAtPath(context.values, fieldPath);
       const choiceValues = isPlainObject(choiceValue) ? choiceValue : {};
-      const finalOption = field.options.find((o) => o.is_final);
-      const finalComplete = finalOption
-        ? isOptionComplete(finalOption, context, fieldPath, choiceValues)
-        : false;
+      const finalOptions = field.options.filter((o) => o.is_final);
+      const finalComplete = finalOptions.some((option) =>
+        isOptionComplete(option, context, fieldPath, choiceValues),
+      );
 
       let anyComplete = false;
       for (const option of field.options) {
@@ -546,9 +546,7 @@ function collectMissingForFields(
       }
 
       for (const option of field.options) {
-        if (finalComplete && finalOption && option.id !== finalOption.id) {
-          continue;
-        }
+        if (finalComplete && !option.is_final) continue;
         const optionValue = choiceValues[option.id];
         const optionPath = [...fieldPath, option.id];
         const hasValue = hasAnyFieldValue(option.fields, context, optionPath, optionValue);
