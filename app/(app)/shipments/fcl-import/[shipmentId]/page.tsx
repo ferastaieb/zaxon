@@ -11,6 +11,7 @@ import {
   listShipmentCustomers,
   listShipmentJobIds,
   listShipmentSteps,
+  syncShipmentStepsFromTemplate,
 } from "@/lib/data/shipments";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { parseStepFieldValues } from "@/lib/stepFields";
@@ -19,6 +20,7 @@ import {
   extractContainerNumbers,
   normalizeContainerNumbers,
 } from "@/lib/fclImport/helpers";
+import { ensureFclImportTemplate } from "@/lib/fclImport/template";
 import type { DocumentRow } from "@/lib/data/documents";
 import { updateFclStepAction } from "./actions";
 
@@ -63,13 +65,38 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
   const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
 
-  const [customers, steps, jobIds, docs, trackingToken] = await Promise.all([
+  const [customers, jobIds, docs, trackingToken] = await Promise.all([
     listShipmentCustomers(id),
-    listShipmentSteps(id),
     listShipmentJobIds(id),
     listDocuments(id),
     getTrackingTokenForShipment(id),
   ]);
+
+  const templateId = await ensureFclImportTemplate({ createdByUserId: user.id });
+  let steps = await listShipmentSteps(id);
+  const requiredSteps = [
+    FCL_IMPORT_STEP_NAMES.vesselTracking,
+    FCL_IMPORT_STEP_NAMES.containersDischarge,
+    FCL_IMPORT_STEP_NAMES.containerPullOut,
+    FCL_IMPORT_STEP_NAMES.containerDelivery,
+    FCL_IMPORT_STEP_NAMES.orderReceived,
+  ];
+
+  if (shipment.workflow_template_id === templateId) {
+    const hasTemplateSteps = requiredSteps.every((name) =>
+      steps.some((step) => step.name === name),
+    );
+    if (!hasTemplateSteps) {
+      const synced = await syncShipmentStepsFromTemplate({
+        shipmentId: id,
+        templateId,
+        createdByUserId: shipment.created_by_user_id ?? user.id,
+      });
+      if (synced.added > 0) {
+        steps = await listShipmentSteps(id);
+      }
+    }
+  }
 
   const stepData = steps.map((step) => ({
     id: step.id,
@@ -86,14 +113,6 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
   if (!containerNumbers.length) {
     containerNumbers = normalizeContainerNumbers([shipment.container_number ?? ""]);
   }
-
-  const requiredSteps = [
-    FCL_IMPORT_STEP_NAMES.vesselTracking,
-    FCL_IMPORT_STEP_NAMES.containersDischarge,
-    FCL_IMPORT_STEP_NAMES.containerPullOut,
-    FCL_IMPORT_STEP_NAMES.containerDelivery,
-    FCL_IMPORT_STEP_NAMES.orderReceived,
-  ];
 
   const hasTemplateSteps = requiredSteps.every((name) =>
     stepData.some((step) => step.name === name),

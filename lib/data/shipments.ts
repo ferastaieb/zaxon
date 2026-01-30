@@ -650,3 +650,114 @@ export async function createShipment(input: {
 
   return { shipmentId, shipmentCode, trackingToken };
 }
+
+export async function syncShipmentStepsFromTemplate(input: {
+  shipmentId: number;
+  templateId: number;
+  createdByUserId?: number | null;
+}) {
+  const [templateSteps, shipmentSteps] = await Promise.all([
+    listTemplateSteps(input.templateId),
+    listShipmentSteps(input.shipmentId),
+  ]);
+
+  if (!templateSteps.length) {
+    return { added: 0 };
+  }
+
+  const existingByName = new Map(shipmentSteps.map((step) => [step.name, step]));
+  const stepIdMap = new Map<number, number>();
+  const createdStepIds = new Set<number>();
+  const ts = nowIso();
+
+  for (const step of templateSteps) {
+    const existing = existingByName.get(step.name);
+    if (existing) {
+      stepIdMap.set(step.id, existing.id);
+      continue;
+    }
+
+    const stepId = await nextId("shipment_steps");
+    await putItem(SHIPMENT_STEPS_TABLE, {
+      id: stepId,
+      shipment_id: input.shipmentId,
+      sort_order: step.sort_order,
+      name: step.name,
+      owner_role: step.owner_role,
+      related_party_id: null,
+      status: "PENDING",
+      notes: null,
+      required_fields_json: step.required_fields_json,
+      required_document_types_json: step.required_document_types_json,
+      field_values_json: "{}",
+      field_schema_json: step.field_schema_json ?? "{}",
+      is_external: step.is_external,
+      checklist_groups_json: step.checklist_groups_json,
+      depends_on_step_ids_json: JSON.stringify([]),
+      sla_hours: step.sla_hours ?? null,
+      due_at: null,
+      started_at: null,
+      completed_at: null,
+      customer_visible: step.is_external ? 1 : step.customer_visible,
+      customer_completion_message_template:
+        step.customer_completion_message_template ?? null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    stepIdMap.set(step.id, stepId);
+    createdStepIds.add(stepId);
+
+    const userIds = await listActiveUserIdsByRole(step.owner_role);
+    for (const userId of userIds) {
+      await grantShipmentAccess({
+        shipmentId: input.shipmentId,
+        userId,
+        grantedByUserId: input.createdByUserId ?? null,
+      });
+    }
+  }
+
+  if (createdStepIds.size) {
+    for (const step of templateSteps) {
+      const mappedId = stepIdMap.get(step.id);
+      if (!mappedId || !createdStepIds.has(mappedId)) continue;
+
+      const updateParts: string[] = [];
+      const values: Record<string, unknown> = {};
+
+      const rawDeps = jsonParse(step.depends_on_step_ids_json, [] as number[]);
+      if (rawDeps.length) {
+        const mappedDeps = rawDeps
+          .map((id) => stepIdMap.get(id))
+          .filter((id): id is number => !!id);
+        updateParts.push("depends_on_step_ids_json = :depends_on_step_ids_json");
+        values[":depends_on_step_ids_json"] = JSON.stringify(mappedDeps);
+      }
+
+      const schema = parseStepFieldSchema(step.field_schema_json);
+      if (schema.fields.length) {
+        const mappedSchema = mapStopCountdownPaths(schema, (id) =>
+          stepIdMap.get(id) ?? null,
+        );
+        if (JSON.stringify(schema) !== JSON.stringify(mappedSchema)) {
+          updateParts.push("field_schema_json = :field_schema_json");
+          values[":field_schema_json"] = JSON.stringify(mappedSchema);
+        }
+      }
+
+      if (updateParts.length) {
+        updateParts.push("updated_at = :updated_at");
+        values[":updated_at"] = nowIso();
+        await updateItem(
+          SHIPMENT_STEPS_TABLE,
+          { id: mappedId },
+          `SET ${updateParts.join(", ")}`,
+          values,
+        );
+      }
+    }
+  }
+
+  return { added: createdStepIds.size };
+}

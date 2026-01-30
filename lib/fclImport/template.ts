@@ -6,6 +6,7 @@ import {
   addTemplateStep,
   createWorkflowTemplate,
   listWorkflowTemplates,
+  listTemplateSteps,
 } from "@/lib/data/workflows";
 import { FCL_IMPORT_STEP_NAMES, FCL_IMPORT_TEMPLATE_NAME } from "./constants";
 
@@ -479,7 +480,22 @@ export async function ensureFclImportTemplate(input?: { createdByUserId?: number
   const existing = templates.find(
     (template) => template.name.toLowerCase() === FCL_IMPORT_TEMPLATE_NAME.toLowerCase(),
   );
-  if (existing) return existing.id;
+  if (existing) {
+    const existingSteps = await listTemplateSteps(existing.id);
+    const existingNames = new Set(existingSteps.map((step) => step.name));
+    for (const step of TEMPLATE_STEPS) {
+      if (existingNames.has(step.name)) continue;
+      await addTemplateStep({
+        templateId: existing.id,
+        name: step.name,
+        ownerRole: step.ownerRole,
+        fieldSchemaJson: JSON.stringify(step.schema),
+        customerVisible: step.customerVisible,
+        isExternal: step.isExternal,
+      });
+    }
+    return existing.id;
+  }
 
   const templateId = await createWorkflowTemplate({
     name: FCL_IMPORT_TEMPLATE_NAME,
