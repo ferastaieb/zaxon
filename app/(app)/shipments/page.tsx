@@ -78,15 +78,25 @@ export default async function ShipmentsPage({
             Create and manage shipments with steps, tasks, and documents.
           </p>
         </div>
-        <form action={createShipmentRedirectAction}>
-          <button
-            type="submit"
-            disabled={user.role === "FINANCE"}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/shipments/fcl-import/new"
+            className={`rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-100 ${
+              user.role === "FINANCE" ? "pointer-events-none opacity-50" : ""
+            }`}
           >
-            Create shipment
-          </button>
-        </form>
+            Create FCL clearance
+          </Link>
+          <form action={createShipmentRedirectAction}>
+            <button
+              type="submit"
+              disabled={user.role === "FINANCE"}
+              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              Create shipment
+            </button>
+          </form>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
