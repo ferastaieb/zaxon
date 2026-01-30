@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { canWrite, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { listActivities } from "@/lib/data/activities";
 import {
   listDocumentRequests,

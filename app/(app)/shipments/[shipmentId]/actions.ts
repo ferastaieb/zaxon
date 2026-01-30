@@ -73,7 +73,6 @@ import {
   applyStepFieldUpdates,
   collectFlatFieldValues,
   collectMissingFieldPaths,
-  decodeFieldPath,
   encodeFieldPath,
   extractStepFieldRemovals,
   extractStepFieldUpdates,

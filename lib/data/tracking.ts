@@ -78,7 +78,18 @@ export async function listCustomerVisibleSteps(shipmentId: number) {
   return steps
     .filter((step) => step.shipment_id === shipmentId && step.customer_visible === 1)
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map(({ shipment_id: _shipmentId, customer_visible: _visible, ...rest }) => rest);
+    .map((step) => ({
+      id: step.id,
+      sort_order: step.sort_order,
+      name: step.name,
+      status: step.status,
+      started_at: step.started_at,
+      completed_at: step.completed_at,
+      is_external: step.is_external,
+      field_schema_json: step.field_schema_json,
+      field_values_json: step.field_values_json,
+      required_fields_json: step.required_fields_json,
+    }));
 }
 
 export async function listCustomerVisibleDocuments(shipmentId: number) {
@@ -94,7 +105,12 @@ export async function listCustomerVisibleDocuments(shipmentId: number) {
   return docs
     .filter((doc) => doc.shipment_id === shipmentId && doc.share_with_customer === 1)
     .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at))
-    .map(({ shipment_id: _shipmentId, share_with_customer: _share, ...rest }) => rest);
+    .map((doc) => ({
+      id: doc.id,
+      document_type: doc.document_type,
+      file_name: doc.file_name,
+      uploaded_at: doc.uploaded_at,
+    }));
 }
 
 export async function listCustomerDocumentRequests(shipmentId: number) {
@@ -111,7 +127,14 @@ export async function listCustomerDocumentRequests(shipmentId: number) {
   return requests
     .filter((request) => request.shipment_id === shipmentId)
     .sort((a, b) => b.requested_at.localeCompare(a.requested_at))
-    .map(({ shipment_id: _shipmentId, ...rest }) => rest);
+    .map((request) => ({
+      id: request.id,
+      document_type: request.document_type,
+      message: request.message,
+      status: request.status,
+      requested_at: request.requested_at,
+      fulfilled_at: request.fulfilled_at,
+    }));
 }
 
 function last4Digits(phone: string | null | undefined): string | null {

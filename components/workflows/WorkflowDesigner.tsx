@@ -497,16 +497,6 @@ export function WorkflowDesigner({
     : false;
 
   useEffect(() => {
-    if (!steps.length) {
-      setSelectedId("");
-      return;
-    }
-    if (!steps.some((step) => step.id === selectedId)) {
-      setSelectedId(steps[0]!.id);
-    }
-  }, [steps, selectedId]);
-
-  useEffect(() => {
     if (!draggingId) return;
 
     const handleMove = (event: PointerEvent) => {

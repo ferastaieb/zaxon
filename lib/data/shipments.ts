@@ -15,7 +15,6 @@ import { jsonParse } from "@/lib/sql";
 import { mapStopCountdownPaths, parseStepFieldSchema } from "@/lib/stepFields";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
 import { listTemplateSteps } from "@/lib/data/workflows";
-import { logActivity } from "@/lib/data/activities";
 import {
   getItem,
   nextId,

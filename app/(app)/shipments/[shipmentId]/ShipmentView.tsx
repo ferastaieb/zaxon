@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
@@ -13,9 +13,29 @@ import {
     transportModeLabel,
     type StepStatus,
     type TaskStatus,
-    type ShipmentOverallStatus,
-    type ShipmentRisk,
 } from "@/lib/domain";
+import type { AuthUser } from "@/lib/auth";
+import type { ActivityRow } from "@/lib/data/activities";
+import type { DocumentRequestRow, DocumentRow } from "@/lib/data/documents";
+import type { ExceptionTypeRow, ShipmentExceptionRow } from "@/lib/data/exceptions";
+import type {
+    ShipmentConnectOption,
+    ShipmentJobIdRow,
+    ShipmentRow,
+    ShipmentStepRow,
+} from "@/lib/data/shipments";
+import type {
+    CustomerInventoryTransactionRow,
+    GoodRow,
+    InventoryBalanceRow,
+    ShipmentAllocationGoodRow,
+    ShipmentGoodRow,
+} from "@/lib/data/goods";
+import type { PartyRow } from "@/lib/data/parties";
+import type { ShipmentLinkSummary } from "@/lib/data/shipmentLinks";
+import type { TaskRow } from "@/lib/data/tasks";
+import type { DbUser } from "@/lib/data/users";
+import type { ChecklistGroup, ChecklistItem } from "@/lib/checklists";
 import {
     collectMissingFieldPaths,
     decodeFieldPath,
@@ -50,52 +70,75 @@ import {
     requestDocumentAction,
     resolveExceptionAction,
     updateWorkflowGlobalsAction,
-    updateDocumentFlagsAction,
     updateStepAction,
     updateTaskStatusAction,
     uploadDocumentAction,
 } from "./actions";
+
+type ShipmentViewShipment = ShipmentRow & { customer_names: string | null };
+
+type ShipmentJobIdViewRow = ShipmentJobIdRow & { created_by_name: string | null };
+
+type ConnectedShipmentRow = ShipmentLinkSummary & {
+    goods: ShipmentGoodRow[];
+    docs: DocumentRow[];
+    trackingToken: string | null;
+};
+
+type ActiveUserRow = Pick<DbUser, "id" | "name" | "role">;
+
+type MyStepRow = {
+    id: number;
+    sortOrder: number;
+    name: string;
+    status: StepStatus;
+    dueAt: string | null;
+    isExternal: boolean;
+    relatedPartyName: string | null;
+    missingFieldsCount: number;
+    missingDocsCount: number;
+};
 
 // Types (imported from lib/data/... or defined here if simple)
 // Ideally these should be imported from the source, but for now I'll define interfaces matching the data passed
 // to avoid complex import chains if they are not fully exported or if they are database rows.
 
 interface ShipmentViewProps {
-    user: any; // Replace with actual User type
-    shipment: any; // Replace with ShipmentRow & { customer_names: string | null }
-    shipmentCustomers: any[];
-    shipmentGoods: any[];
-    allocationGoods: any[];
-    goods: any[];
-    inventoryBalances: any[];
-    inventoryTransactions: any[];
-    connectableShipments: any[];
-    connectedShipments: any[];
-    steps: any[];
-    internalSteps: any[];
-    trackingSteps: any[];
-    jobIds: any[];
-    tasks: any[];
-    docs: any[];
-    docRequests: any[];
-    exceptions: any[];
-    exceptionTypes: any[];
-    activities: any[];
+    user: AuthUser;
+    shipment: ShipmentViewShipment;
+    shipmentCustomers: PartyRow[];
+    shipmentGoods: ShipmentGoodRow[];
+    allocationGoods: ShipmentAllocationGoodRow[];
+    goods: GoodRow[];
+    inventoryBalances: InventoryBalanceRow[];
+    inventoryTransactions: CustomerInventoryTransactionRow[];
+    connectableShipments: ShipmentConnectOption[];
+    connectedShipments: ConnectedShipmentRow[];
+    steps: ShipmentStepRow[];
+    internalSteps: ShipmentStepRow[];
+    trackingSteps: ShipmentStepRow[];
+    jobIds: ShipmentJobIdViewRow[];
+    tasks: TaskRow[];
+    docs: DocumentRow[];
+    docRequests: DocumentRequestRow[];
+    exceptions: ShipmentExceptionRow[];
+    exceptionTypes: ExceptionTypeRow[];
+    activities: ActivityRow[];
     trackingToken: string | null;
-    activeUsers: any[];
-    customers: any[];
-    suppliers: any[];
-    brokers: any[];
+    activeUsers: ActiveUserRow[];
+    customers: PartyRow[];
+    suppliers: PartyRow[];
+    brokers: PartyRow[];
 
     // Computed/Derived state passed from server
-    mySteps: any[];
-    myTasks: any[];
-    blockingExceptions: any[];
+    mySteps: MyStepRow[];
+    myTasks: TaskRow[];
+    blockingExceptions: ShipmentExceptionRow[];
     workflowBlocked: boolean;
-    primaryBlockingException: any;
+    primaryBlockingException: ShipmentExceptionRow | null;
     receivedDocTypes: string[];
     openDocRequestTypes: string[];
-    latestReceivedDocByType: Record<string, any>;
+    latestReceivedDocByType: Record<string, DocumentRow>;
     workflowGlobals: WorkflowGlobalVariable[];
     workflowGlobalValues: WorkflowGlobalValues;
 
@@ -104,7 +147,7 @@ interface ShipmentViewProps {
     errorStepId: number | null;
 }
 
-function riskTone(risk: string) {
+function riskTone(risk: ShipmentViewShipment["risk"]) {
     if (risk === "BLOCKED") return "red";
     if (risk === "AT_RISK") return "yellow";
     return "green";
@@ -198,7 +241,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
         jobIds,
         tasks,
         docs,
-        docRequests,
         exceptions,
         exceptionTypes,
         activities,
@@ -209,7 +251,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
         brokers,
         mySteps,
         myTasks,
-        blockingExceptions,
         workflowBlocked,
         primaryBlockingException,
         receivedDocTypes,
@@ -225,25 +266,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const router = useRouter();
     const pathname = usePathname();
     const tabParam = searchParams.get("tab");
-    const [activeTab, setActiveTab] = useState<ShipmentTabId>(() =>
-        isShipmentTab(tabParam) ? tabParam : "overview",
-    );
+    const activeTab = isShipmentTab(tabParam) ? tabParam : "overview";
     const [timelinePreviewTab, setTimelinePreviewTab] = useState<
         "workflow" | "tracking"
     >("workflow");
 
-    useEffect(() => {
-        if (isShipmentTab(tabParam)) {
-            setActiveTab(tabParam);
-            return;
-        }
-        if (!tabParam) {
-            setActiveTab("overview");
-        }
-    }, [tabParam]);
-
     const setTab = (tab: ShipmentTabId) => {
-        setActiveTab(tab);
         const params = new URLSearchParams(searchParams.toString());
         if (tab === "overview") {
             params.delete("tab");
@@ -259,12 +287,8 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const trackingLink = trackingToken ? `/track/${trackingToken}` : "-";
     const customerLabel =
         shipmentCustomers.length > 0
-            ? shipmentCustomers.map((c: any) => c.name).join(", ")
+            ? shipmentCustomers.map((c) => c.name).join(", ")
             : shipment.customer_names ?? "-";
-
-    // Helper to check if a doc type is received (using the array passed from server)
-    const isDocReceived = (type: string) => receivedDocTypes.includes(type);
-    const isDocRequested = (type: string) => openDocRequestTypes.includes(type);
 
     const stepSchemaById = useMemo(() => {
         const map = new Map<number, StepFieldSchema>();
@@ -275,10 +299,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
     }, [steps]);
 
     const stepById = useMemo(() => {
-        return new Map<number, any>(steps.map((s) => [s.id, s]));
+        return new Map<number, ShipmentStepRow>(steps.map((s) => [s.id, s]));
     }, [steps]);
 
-    const isStepBlockedByDependencies = (step: any) => {
+    const isStepBlockedByDependencies = (step: ShipmentStepRow) => {
         const dependencyIds = parseDependsOn(step);
         if (!dependencyIds.length) return false;
         return dependencyIds.some((id) => {
@@ -287,7 +311,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         });
     };
 
-    const defaultOpenInternalStepId = useMemo(() => {
+    const defaultOpenInternalStepId = (() => {
         const doable = internalSteps.find(
             (s) =>
                 s.status !== "DONE" &&
@@ -297,9 +321,9 @@ export default function ShipmentView(props: ShipmentViewProps) {
         if (doable) return doable.id;
         const next = internalSteps.find((s) => s.status !== "DONE");
         return next?.id ?? internalSteps[0]?.id ?? null;
-    }, [internalSteps, workflowBlocked, stepById]);
+    })();
 
-    const defaultOpenTrackingStepId = useMemo(() => {
+    const defaultOpenTrackingStepId = (() => {
         const doable = trackingSteps.find(
             (s) =>
                 s.status !== "DONE" &&
@@ -309,18 +333,26 @@ export default function ShipmentView(props: ShipmentViewProps) {
         if (doable) return doable.id;
         const next = trackingSteps.find((s) => s.status !== "DONE");
         return next?.id ?? trackingSteps[0]?.id ?? null;
-    }, [trackingSteps, workflowBlocked, stepById]);
+    })();
 
+    const errorStep = errorStepId ? stepById.get(errorStepId) ?? null : null;
     const [openInternalStepId, setOpenInternalStepId] = useState<number | null>(
-        () => defaultOpenInternalStepId ?? null,
+        () => (errorStep && !errorStep.is_external ? errorStep.id : defaultOpenInternalStepId ?? null),
     );
     const [openTrackingStepId, setOpenTrackingStepId] = useState<number | null>(
-        () => defaultOpenTrackingStepId ?? null,
+        () => (errorStep && errorStep.is_external ? errorStep.id : defaultOpenTrackingStepId ?? null),
     );
     const [hasTouchedInternal, setHasTouchedInternal] = useState(false);
     const [hasTouchedTracking, setHasTouchedTracking] = useState(false);
     const [dirtyFormIds, setDirtyFormIds] = useState<string[]>([]);
     const dirtyCount = dirtyFormIds.length;
+
+    const effectiveOpenInternalStepId = hasTouchedInternal
+        ? openInternalStepId
+        : openInternalStepId ?? defaultOpenInternalStepId ?? null;
+    const effectiveOpenTrackingStepId = hasTouchedTracking
+        ? openTrackingStepId
+        : openTrackingStepId ?? defaultOpenTrackingStepId ?? null;
 
     const markFormDirty = (formId: string) => {
         setDirtyFormIds((prev) => (prev.includes(formId) ? prev : [...prev, formId]));
@@ -336,31 +368,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
         const form = document.getElementById(formId) as HTMLFormElement | null;
         if (form) form.requestSubmit();
     };
-
-    useEffect(() => {
-        if (hasTouchedInternal) return;
-        if (!openInternalStepId && defaultOpenInternalStepId) {
-            setOpenInternalStepId(defaultOpenInternalStepId);
-        }
-    }, [defaultOpenInternalStepId, openInternalStepId, hasTouchedInternal]);
-
-    useEffect(() => {
-        if (hasTouchedTracking) return;
-        if (!openTrackingStepId && defaultOpenTrackingStepId) {
-            setOpenTrackingStepId(defaultOpenTrackingStepId);
-        }
-    }, [defaultOpenTrackingStepId, openTrackingStepId, hasTouchedTracking]);
-
-    useEffect(() => {
-        if (!errorStepId) return;
-        const step = stepById.get(errorStepId);
-        if (!step) return;
-        if (step.is_external) {
-            setOpenTrackingStepId(errorStepId);
-        } else {
-            setOpenInternalStepId(errorStepId);
-        }
-    }, [errorStepId, stepById]);
 
     const openStep = (stepId: number) => {
         const step = stepById.get(stepId);
@@ -396,7 +403,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         return `${step.name} / ${label}`;
     };
 
-    const renderStepper = (items: any[], openId: number | null) => {
+    const renderStepper = (items: ShipmentStepRow[], openId: number | null) => {
         if (!items.length) return null;
         const doneCount = items.filter((s) => s.status === "DONE").length;
         return (
@@ -488,7 +495,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             { id: "goods", label: "Goods", count: shipmentGoods.length },
                             { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
                             { id: "documents", label: "Documents", count: docs.length },
-                            { id: "exceptions", label: "Exceptions", count: exceptions.length, alert: exceptions.some((e: any) => e.status === "OPEN") },
+                            { id: "exceptions", label: "Exceptions", count: exceptions.length, alert: exceptions.some((e) => e.status === "OPEN") },
                             { id: "activity", label: "Activity" },
                         ].map((tab) => (
                             <button
@@ -858,7 +865,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
                                 {connectedShipments.length ? (
                                     <div className="mt-4 space-y-4">
-                                        {connectedShipments.map((link: any) => {
+                                        {connectedShipments.map((link) => {
                                             const goodsPreview = (link.goods ?? []).slice(0, 3);
                                             const docsPreview = (link.docs ?? []).slice(0, 3);
                                             return (
@@ -950,7 +957,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                             </div>
                                                             {goodsPreview.length ? (
                                                                 <ul className="mt-2 space-y-1 text-xs text-zinc-700">
-                                                                    {goodsPreview.map((g: any) => (
+                                                                    {goodsPreview.map((g) => (
                                                                         <li key={g.id}>
                                                                             {g.good_name} - {g.quantity} {g.unit_type}
                                                                         </li>
@@ -974,7 +981,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                             </div>
                                                             {docsPreview.length ? (
                                                                 <ul className="mt-2 space-y-1 text-xs text-zinc-700">
-                                                                    {docsPreview.map((d: any) => (
+                                                                    {docsPreview.map((d) => (
                                                                         <li key={d.id}>{d.document_type}</li>
                                                                     ))}
                                                                 </ul>
@@ -1017,7 +1024,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 required
                                             />
                                             <datalist id="connectable-shipments">
-                                                {connectableShipments.map((s: any) => (
+                                                {connectableShipments.map((s) => (
                                                     <option
                                                         key={s.id}
                                                         value={s.shipment_code}
@@ -1071,7 +1078,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         <div className="space-y-4">
                             <h3 className="text-lg font-semibold text-zinc-900">Internal Workflow</h3>
                             <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(internalSteps, openInternalStepId)}
+                                {renderStepper(internalSteps, effectiveOpenInternalStepId)}
                             </div>
 
                             <div className="space-y-4">
@@ -1098,7 +1105,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         tabId="workflow"
                                         stepsById={stepById}
                                         workflowGlobals={workflowGlobals}
-                                        isOpen={openInternalStepId === s.id}
+                                        isOpen={effectiveOpenInternalStepId === s.id}
                                         onToggle={() => {
                                             setHasTouchedInternal(true);
                                             setOpenInternalStepId((prev) =>
@@ -1118,7 +1125,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         <div className="space-y-4">
                             <h3 className="text-lg font-semibold text-zinc-900">Tracking milestones</h3>
                             <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(trackingSteps, openTrackingStepId)}
+                                {renderStepper(trackingSteps, effectiveOpenTrackingStepId)}
                             </div>
                             {trackingSteps.map((s) => (
                                 <StepCard
@@ -1143,7 +1150,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     tabId="tracking"
                                     stepsById={stepById}
                                     workflowGlobals={workflowGlobals}
-                                    isOpen={openTrackingStepId === s.id}
+                                    isOpen={effectiveOpenTrackingStepId === s.id}
                                     onToggle={() => {
                                         setHasTouchedTracking(true);
                                         setOpenTrackingStepId((prev) =>
@@ -1187,7 +1194,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 <tbody className="divide-y divide-zinc-100">
                                                     {shipmentGoods.map((sg) => {
                                                         const allocated =
-                                                            sg.allocated_at ||
+                                                            !!sg.allocated_at ||
                                                             sg.allocated_quantity > 0 ||
                                                             sg.inventory_quantity > 0;
                                                         return (
@@ -1374,7 +1381,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                             >
                                                 <option value="">Select customer...</option>
-                                                {shipmentCustomers.map((c: any) => (
+                                                {shipmentCustomers.map((c) => (
                                                     <option key={c.id} value={c.id}>
                                                         {c.name}
                                                     </option>
@@ -1663,13 +1670,13 @@ function StepFieldInputs({
     values: StepFieldValues;
     missingPaths: Set<string>;
     canEdit: boolean;
-    latestReceivedDocByType: Record<string, any>;
+    latestReceivedDocByType: Record<string, DocumentRow>;
     openDocRequestTypes: string[];
     workflowGlobals: WorkflowGlobalVariable[];
     workflowGlobalValues: WorkflowGlobalValues;
     docTypes: Set<string>;
-    allocationGoods: any[];
-    stepsById?: Map<number, any>;
+    allocationGoods: ShipmentAllocationGoodRow[];
+    stepsById?: Map<number, ShipmentStepRow>;
 }) {
     const [groupCounts, setGroupCounts] = useState<Record<string, number>>({});
     const [groupRemovals, setGroupRemovals] = useState<Record<string, number[]>>({});
@@ -2124,23 +2131,23 @@ function jsonParse<T>(value: string | null | undefined, fallback: T): T {
     }
 }
 
-function parseRequiredFields(step: any): string[] {
+function parseRequiredFields(step: ShipmentStepRow): string[] {
     return jsonParse(step.required_fields_json, [] as string[]);
 }
 
-function parseRequiredDocumentTypes(step: any): string[] {
+function parseRequiredDocumentTypes(step: ShipmentStepRow): string[] {
     return jsonParse(step.required_document_types_json, [] as string[]);
 }
 
-function parseChecklistGroups(step: any): any[] {
-    return jsonParse(step.checklist_groups_json, [] as any[]);
+function parseChecklistGroups(step: ShipmentStepRow): ChecklistGroup[] {
+    return jsonParse(step.checklist_groups_json, [] as ChecklistGroup[]);
 }
 
-function parseDependsOn(step: any): number[] {
+function parseDependsOn(step: ShipmentStepRow): number[] {
     return jsonParse(step.depends_on_step_ids_json, [] as number[]);
 }
 
-function getStepFieldSchema(step: any): StepFieldSchema {
+function getStepFieldSchema(step: ShipmentStepRow): StepFieldSchema {
     const schema = parseStepFieldSchema(step.field_schema_json);
     if (schema.fields.length > 0) return schema;
     const legacyFields = parseRequiredFields(step);
@@ -2148,7 +2155,7 @@ function getStepFieldSchema(step: any): StepFieldSchema {
     return schema;
 }
 
-function getStepFieldValues(step: any): StepFieldValues {
+function getStepFieldValues(step: ShipmentStepRow): StepFieldValues {
     return parseStepFieldValues(step.field_values_json);
 }
 
@@ -2335,11 +2342,39 @@ function checklistFileKey(groupName: string, itemLabel: string): string {
     return `checklist:${groupKey}:${itemKey}:file`;
 }
 
-function getFinalChecklistItem(items: any[]): any | null {
+function getFinalChecklistItem(items: ChecklistItem[]): ChecklistItem | null {
     if (!items.length) return null;
-    const explicit = items.find((i: any) => i.is_final);
+    const explicit = items.find((i) => i.is_final);
     return explicit ?? items[items.length - 1] ?? null;
 }
+
+type StepCardProps = {
+    step: ShipmentStepRow;
+    user: AuthUser;
+    shipment: ShipmentViewShipment;
+    canEdit: boolean;
+    workflowBlocked: boolean;
+    receivedDocTypes: string[];
+    openDocRequestTypes: string[];
+    latestReceivedDocByType: Record<string, DocumentRow>;
+    workflowGlobalValues: WorkflowGlobalValues;
+    workflowGlobals: WorkflowGlobalVariable[];
+    highlightRequirements: boolean;
+    highlightDependencies: boolean;
+    partiesById: Map<number, PartyRow>;
+    customers: PartyRow[];
+    suppliers: PartyRow[];
+    brokers: PartyRow[];
+    allocationGoods: ShipmentAllocationGoodRow[];
+    setTab: (tab: ShipmentTabId) => void;
+    tabId: ShipmentTabId;
+    stepsById: Map<number, ShipmentStepRow>;
+    isOpen: boolean;
+    onToggle: () => void;
+    onDirty: (formId: string) => void;
+    onClean: (formId: string) => void;
+    isDirty: boolean;
+};
 
 function StepCard({
     step,
@@ -2367,7 +2402,7 @@ function StepCard({
     onDirty,
     onClean,
     isDirty,
-}: any) {
+}: StepCardProps) {
     const fieldSchema = getStepFieldSchema(step);
     const fieldValues = getStepFieldValues(step);
     const requiredDocs = parseRequiredDocumentTypes(step);
@@ -2401,7 +2436,7 @@ function StepCard({
         if (!items.length) return false;
         const finalItem = getFinalChecklistItem(items);
         if (finalItem && isChecklistItemComplete(group, finalItem)) return false;
-        return !items.some((item: any) => isChecklistItemComplete(group, item));
+        return !items.some((item) => isChecklistItemComplete(group, item));
     });
 
     const dependencyIds = parseDependsOn(step);
@@ -2661,7 +2696,7 @@ function StepCard({
                     <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                         <div className="text-xs font-medium text-zinc-700">Checklist</div>
                         <div className="mt-2 space-y-3">
-                            {checklistGroups.map((group: any, groupIndex: number) => {
+                            {checklistGroups.map((group, groupIndex) => {
                                 const items = group.items ?? [];
                                 const finalItem = getFinalChecklistItem(items);
                                 const finalComplete = !!(
@@ -2669,7 +2704,7 @@ function StepCard({
                                 );
                                 const groupComplete =
                                     finalComplete ||
-                                    items.some((item: any) => isChecklistItemComplete(group, item));
+                                    items.some((item) => isChecklistItemComplete(group, item));
 
                                 return (
                                     <div
@@ -2680,7 +2715,7 @@ function StepCard({
                                             {group.name}
                                         </div>
                                         <div className="mt-2 space-y-2">
-                                            {items.map((item: any, itemIndex: number) => {
+                                            {items.map((item, itemIndex) => {
                                                 const docType = checklistDocType(
                                                     group.name,
                                                     item.label,
@@ -2794,7 +2829,7 @@ function StepCard({
                         <option value="">None</option>
                         {customers.length ? (
                             <optgroup label="Customers">
-                                {customers.map((p: any) => (
+                                {customers.map((p) => (
                                     <option key={p.id} value={p.id}>
                                         {p.name}
                                     </option>
@@ -2803,7 +2838,7 @@ function StepCard({
                         ) : null}
                         {suppliers.length ? (
                             <optgroup label="Suppliers">
-                                {suppliers.map((p: any) => (
+                                {suppliers.map((p) => (
                                     <option key={p.id} value={p.id}>
                                         {p.name}
                                     </option>
@@ -2812,7 +2847,7 @@ function StepCard({
                         ) : null}
                         {brokers.length ? (
                             <optgroup label="Customs brokers">
-                                {brokers.map((p: any) => (
+                                {brokers.map((p) => (
                                     <option key={p.id} value={p.id}>
                                         {p.name}
                                     </option>

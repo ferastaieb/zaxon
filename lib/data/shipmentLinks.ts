@@ -3,7 +3,6 @@ import "server-only";
 import type { ShipmentOverallStatus, ShipmentRisk, TransportMode } from "@/lib/domain";
 import {
   deleteItem,
-  getItem,
   nextId,
   nowIso,
   putItem,

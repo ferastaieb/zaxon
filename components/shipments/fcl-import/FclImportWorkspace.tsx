@@ -7,8 +7,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
-import type { StepStatus } from "@/lib/domain";
-import { overallStatusLabel, riskLabel, stepStatusLabel } from "@/lib/domain";
+import {
+  overallStatusLabel,
+  riskLabel,
+  stepStatusLabel,
+  type ShipmentOverallStatus,
+  type ShipmentRisk,
+  type StepStatus,
+} from "@/lib/domain";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import { isTruthy, normalizeContainerRows } from "@/lib/fclImport/helpers";
 import { encodeFieldPath, fieldInputName, stepFieldDocType } from "@/lib/stepFields";
@@ -43,8 +49,8 @@ type ShipmentMeta = {
   shipment_code: string;
   origin: string;
   destination: string;
-  overall_status: string;
-  risk: string;
+  overall_status: ShipmentOverallStatus;
+  risk: ShipmentRisk;
 };
 
 type WorkspaceProps = {

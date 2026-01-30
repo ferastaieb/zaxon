@@ -108,10 +108,9 @@ export function StepFieldBuilder({
     setSchema(next);
     onSchemaChange?.(next);
   };
-  const globals = globalVariables ?? [];
   const dateGlobals = useMemo(
-    () => globals.filter((g) => g.type === "date"),
-    [globals],
+    () => (globalVariables ?? []).filter((g) => g.type === "date"),
+    [globalVariables],
   );
   const booleanOptions = useMemo(
     () => collectBooleanFieldOptions(schema.fields, [], [], false),

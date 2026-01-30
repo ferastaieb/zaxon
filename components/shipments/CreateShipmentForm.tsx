@@ -165,7 +165,7 @@ export function CreateShipmentForm({
           </div>
           {customerOptions.length === 0 ? (
             <div className="mt-2 text-xs text-red-700">
-              No customers yet. Use "New customer" to add one quickly.
+              No customers yet. Use &quot;New customer&quot; to add one quickly.
             </div>
           ) : null}
         </label>
