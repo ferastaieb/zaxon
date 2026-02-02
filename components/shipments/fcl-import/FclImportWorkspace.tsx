@@ -53,6 +53,8 @@ type ShipmentMeta = {
   risk: ShipmentRisk;
 };
 
+type WorkspaceMode = "full" | "tracking" | "operations" | "container-ops";
+
 type WorkspaceProps = {
   headingClassName: string;
   shipment: ShipmentMeta;
@@ -64,6 +66,8 @@ type WorkspaceProps = {
   trackingToken: string | null;
   canEdit: boolean;
   updateAction: (formData: FormData) => void;
+  mode?: WorkspaceMode;
+  returnTo?: string;
 };
 
 type ToggleMap = Record<number, boolean>;
@@ -147,12 +151,22 @@ export function FclImportWorkspace({
   trackingToken,
   canEdit,
   updateAction,
+  mode = "full",
+  returnTo,
 }: WorkspaceProps) {
   const [showPalette, setShowPalette] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const trackingLink = trackingToken ? `/track/fcl/${trackingToken}` : "";
+  const showOverview = mode === "full";
+  const showTracking = mode === "full" || mode === "tracking";
+  const showOperations = mode === "full" || mode === "operations";
+  const showContainerOps = mode === "full" || mode === "container-ops";
+  const isFull = mode === "full";
+  const renderReturnTo = () =>
+    returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
 
   useEffect(() => {
+    if (mode !== "full") return;
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const isTyping =
@@ -174,7 +188,7 @@ export function FclImportWorkspace({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [mode]);
 
   const stepsByName = useMemo(() => {
     const map = new Map<string, StepData>();
@@ -345,124 +359,145 @@ export function FclImportWorkspace({
   };
 
   return (
-    <div className="relative overflow-hidden bg-slate-50">
-      <CanvasBackdrop className="absolute inset-0 -z-10 h-full w-full opacity-50" />
+    <div className={isFull ? "relative overflow-hidden bg-slate-50" : "relative"}>
+      {isFull ? (
+        <CanvasBackdrop className="absolute inset-0 -z-10 h-full w-full opacity-50" />
+      ) : null}
 
-      <div className="mx-auto max-w-[1400px] px-6 pb-16 pt-10">
-        <header className="flex flex-wrap items-center justify-between gap-6">
-          <div>
-            <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
-              Clearance workspace
-            </div>
-            <h1
-              className={`${headingClassName} mt-2 text-3xl font-semibold text-slate-900`}
-            >
-              {shipment.shipment_code}
-            </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-semibold text-slate-700">
-                {customerLabel}
-              </span>
-              <span>Origin: {shipment.origin}</span>
-              <span>Destination: {shipment.destination}</span>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
-            <Badge tone="blue">{riskLabel(shipment.risk)}</Badge>
-            <Link
-              href="/shipments"
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              Back
-            </Link>
-          </div>
-        </header>
-
-        <div className="mt-8 grid gap-8 lg:grid-cols-[240px_minmax(0,1fr)] transition-all duration-700">
-          <aside className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Jump to
+      <div
+        className={
+          isFull
+            ? "mx-auto max-w-[1400px] px-6 pb-16 pt-10"
+            : "mx-auto max-w-6xl"
+        }
+      >
+        {isFull ? (
+          <header className="flex flex-wrap items-center justify-between gap-6">
+            <div>
+              <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                Clearance workspace
               </div>
-              <div className="mt-3 space-y-2 text-sm">
-                {actions.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    onClick={() =>
-                      document
-                        .getElementById(action.target)
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                    }
-                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    <span>{action.label}</span>
-                    <span className="text-xs text-slate-400">Go</span>
-                  </button>
-                ))}
+              <h1
+                className={`${headingClassName} mt-2 text-3xl font-semibold text-slate-900`}
+              >
+                {shipment.shipment_code}
+              </h1>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                <span className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                  {customerLabel}
+                </span>
+                <span>Origin: {shipment.origin}</span>
+                <span>Destination: {shipment.destination}</span>
               </div>
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Container stats
-              </div>
-              <div className="mt-3 space-y-2 text-sm text-slate-700">
-                <div className="flex items-center justify-between">
-                  <span>Total</span>
-                  <span className="font-semibold">{totalContainers}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Discharged</span>
-                  <span className="font-semibold">
-                    {dischargedCount}/{totalContainers || 0}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Pulled out</span>
-                  <span className="font-semibold">
-                    {pulledOutCount}/{totalContainers || 0}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Delivered</span>
-                  <span className="font-semibold">
-                    {deliveredCount}/{totalContainers || 0}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>Returned</span>
-                  <span className="font-semibold">
-                    {returnedCount}/{totalContainers || 0}
-                  </span>
-                </div>
-              </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge tone="zinc">
+                {overallStatusLabel(shipment.overall_status)}
+              </Badge>
+              <Badge tone="blue">{riskLabel(shipment.risk)}</Badge>
+              <Link
+                href="/shipments"
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                Back
+              </Link>
             </div>
+          </header>
+        ) : null}
 
-            <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-600 shadow-sm backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Shortcuts
-              </div>
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span>Command palette</span>
-                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
-                    Ctrl + K
-                  </span>
+        <div
+          className={
+            isFull
+              ? "mt-8 grid gap-8 lg:grid-cols-[240px_minmax(0,1fr)] transition-all duration-700"
+              : "mt-4"
+          }
+        >
+          {isFull ? (
+            <aside className="space-y-6">
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Jump to
                 </div>
-                <div className="flex items-center justify-between">
-                  <span>Show help</span>
-                  <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
-                    ?
-                  </span>
+                <div className="mt-3 space-y-2 text-sm">
+                  {actions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() =>
+                        document
+                          .getElementById(action.target)
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                      }
+                      className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      <span>{action.label}</span>
+                      <span className="text-xs text-slate-400">Go</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
-          </aside>
 
-          <main className="space-y-8">
-            <section id="overview" className="space-y-6">
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Container stats
+                </div>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span>Total</span>
+                    <span className="font-semibold">{totalContainers}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Discharged</span>
+                    <span className="font-semibold">
+                      {dischargedCount}/{totalContainers || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Pulled out</span>
+                    <span className="font-semibold">
+                      {pulledOutCount}/{totalContainers || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Delivered</span>
+                    <span className="font-semibold">
+                      {deliveredCount}/{totalContainers || 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Returned</span>
+                    <span className="font-semibold">
+                      {returnedCount}/{totalContainers || 0}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 text-sm text-slate-600 shadow-sm backdrop-blur">
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Shortcuts
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span>Command palette</span>
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
+                      Ctrl + K
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Show help</span>
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
+                      ?
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          ) : null}
+
+          <main className={isFull ? "space-y-8" : "space-y-6"}>
+            {showOverview ? (
+              <section id="overview" className="space-y-6">
               <StepCard
                 id="overview-card"
                 title="Overview"
@@ -506,9 +541,11 @@ export function FclImportWorkspace({
                   </div>
                 </div>
               </StepCard>
-            </section>
+              </section>
+            ) : null}
 
-            <section id="tracking" className="space-y-6">
+            {showTracking ? (
+              <section id="tracking" className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className={`${headingClassName} text-2xl font-semibold text-slate-900`}>
                   Tracking
@@ -521,6 +558,7 @@ export function FclImportWorkspace({
               {vesselStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={vesselStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="vessel-tracking"
                     title="Vessel tracking"
@@ -573,6 +611,7 @@ export function FclImportWorkspace({
               {dischargeStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={dischargeStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="containers-discharge"
                     title="Containers discharge"
@@ -729,6 +768,7 @@ export function FclImportWorkspace({
               {pullOutStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={pullOutStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="container-pull-out"
                     title="Container pull-out from port"
@@ -880,6 +920,7 @@ export function FclImportWorkspace({
               {deliveryStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={deliveryStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="container-delivery"
                     title="Container delivered or offloaded"
@@ -1079,8 +1120,10 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-            </section>
-            <section id="operations" className="space-y-6">
+              </section>
+            ) : null}
+            {showOperations ? (
+              <section id="operations" className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className={`${headingClassName} text-2xl font-semibold text-slate-900`}>
                   Operations
@@ -1093,6 +1136,7 @@ export function FclImportWorkspace({
               {orderStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={orderStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="order-received"
                     title="Order received"
@@ -1165,6 +1209,7 @@ export function FclImportWorkspace({
               {blStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={blStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="bill-of-lading"
                     title="Bill of lading"
@@ -1489,6 +1534,7 @@ export function FclImportWorkspace({
               {invoiceStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={invoiceStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="commercial-invoice"
                     title="Commercial invoice and documents"
@@ -1670,6 +1716,7 @@ export function FclImportWorkspace({
               {deliveryOrderStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={deliveryOrderStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="delivery-order"
                     title="Delivery order"
@@ -1767,6 +1814,7 @@ export function FclImportWorkspace({
               {boeStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={boeStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="bill-of-entry"
                     title="Bill of entry passed"
@@ -1831,8 +1879,10 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-            </section>
-            <section id="container-ops" className="space-y-6">
+              </section>
+            ) : null}
+            {showContainerOps ? (
+              <section id="container-ops" className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className={`${headingClassName} text-2xl font-semibold text-slate-900`}>
                   Container operations
@@ -1845,6 +1895,7 @@ export function FclImportWorkspace({
               {tokenStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={tokenStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="token-booking"
                     title="Token booking"
@@ -1934,6 +1985,7 @@ export function FclImportWorkspace({
               {returnTokenStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={returnTokenStep.id} />
+                  {renderReturnTo()}
                   <StepCard
                     id="return-token"
                     title="Return token booking"
@@ -2008,12 +2060,13 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-            </section>
+              </section>
+            ) : null}
           </main>
         </div>
       </div>
 
-      {showPalette ? (
+      {isFull && showPalette ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"
@@ -2046,7 +2099,7 @@ export function FclImportWorkspace({
         </div>
       ) : null}
 
-      {showShortcuts ? (
+      {isFull && showShortcuts ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
             className="absolute inset-0 bg-black/40"

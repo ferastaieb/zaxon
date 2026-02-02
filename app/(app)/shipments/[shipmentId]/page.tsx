@@ -36,6 +36,7 @@ import { getWorkflowTemplate } from "@/lib/data/workflows";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { parseWorkflowGlobalValues, parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
+import { updateFclStepAction } from "../fcl-import/[shipmentId]/actions";
 import ShipmentView from "./ShipmentView";
 
 export default async function ShipmentDetailsPage({
@@ -136,6 +137,7 @@ export default async function ShipmentDetailsPage({
   const exceptionTypes = await listExceptionTypes({ includeArchived: false });
   const activities = await listActivities(id);
   const trackingToken = await getTrackingTokenForShipment(id);
+  const fclUpdateAction = updateFclStepAction.bind(null, id);
 
   const activeUsers = await listActiveUsers();
   const parties = await listParties();
@@ -245,6 +247,7 @@ export default async function ShipmentDetailsPage({
       workflowGlobalValues={workflowGlobalValues}
       error={error}
       errorStepId={errorStepId}
+      fclUpdateAction={fclUpdateAction}
     />
   );
 }

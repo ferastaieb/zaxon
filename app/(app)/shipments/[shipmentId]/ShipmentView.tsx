@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
+import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
 import {
     overallStatusLabel,
     riskLabel,
@@ -157,6 +158,9 @@ interface ShipmentViewProps {
     // Search params / Errors
     error: string | null;
     errorStepId: number | null;
+
+    // Optional FCL actions
+    fclUpdateAction?: (formData: FormData) => void;
 }
 
 function riskTone(risk: ShipmentViewShipment["risk"]) {
@@ -274,6 +278,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         workflowGlobalValues,
         error,
         errorStepId,
+        fclUpdateAction,
     } = props;
 
     const searchParams = useSearchParams();
@@ -415,6 +420,39 @@ export default function ShipmentView(props: ShipmentViewProps) {
     ).length;
     const totalContainers = containerNumbers.length;
     const showContainerStats = isFclWorkflow && totalContainers > 0;
+    const fclStepData = useMemo(() => {
+        if (!isFclWorkflow) return [];
+        return steps.map((step) => ({
+            id: step.id,
+            name: step.name,
+            status: step.status,
+            notes: step.notes ?? null,
+            values: getStepFieldValues(step),
+        }));
+    }, [isFclWorkflow, steps]);
+    const fclLatestDocsByType = useMemo(() => {
+        if (!isFclWorkflow) return {};
+        const latest: Record<string, DocumentRow> = {};
+        for (const doc of docs) {
+            const key = String(doc.document_type);
+            if (!latest[key]) {
+                latest[key] = doc;
+            }
+        }
+        return latest;
+    }, [docs, isFclWorkflow]);
+    const fclShipmentMeta = {
+        id: shipment.id,
+        shipment_code: shipment.shipment_code,
+        origin: shipment.origin,
+        destination: shipment.destination,
+        overall_status: shipment.overall_status,
+        risk: shipment.risk,
+    };
+    const fclTrackingReturnTo = `/shipments/${shipment.id}?tab=tracking-steps`;
+    const fclOperationsReturnTo = `/shipments/${shipment.id}?tab=operations-steps`;
+    const fclContainerReturnTo = `/shipments/${shipment.id}?tab=container-steps`;
+    const canUseFclTabs = isFclWorkflow && !!fclUpdateAction;
 
     const defaultOpenOperationsStepId = (() => {
         const doable = operationsStepsView.find(
@@ -1301,7 +1339,25 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     )}
 
                     {activeTab === "operations-steps" && (
-                        <div className="space-y-4">
+                        canUseFclTabs ? (
+                            <div className="space-y-6">
+                                <FclImportWorkspace
+                                    headingClassName=""
+                                    shipment={fclShipmentMeta}
+                                    customers={shipmentCustomers}
+                                    steps={fclStepData}
+                                    jobIds={jobIds}
+                                    containerNumbers={containerNumbers}
+                                    latestDocsByType={fclLatestDocsByType}
+                                    trackingToken={trackingToken}
+                                    canEdit={canEdit}
+                                    updateAction={fclUpdateAction!}
+                                    mode="operations"
+                                    returnTo={fclOperationsReturnTo}
+                                />
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
                             <h3 className="text-lg font-semibold text-zinc-900">Operations steps</h3>
                             <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
                                 {renderStepper(operationsStepsView, effectiveOpenOperationsStepId)}
@@ -1349,105 +1405,144 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     </div>
                                 ) : null}
                             </div>
-                        </div>
+                            </div>
+                        )
                     )}
 
                     {activeTab === "tracking-steps" && (
-                        <div className="space-y-4">
-                            <h3 className="text-lg font-semibold text-zinc-900">Tracking steps</h3>
-                            <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(trackingStepsView, effectiveOpenTrackingStepId)}
-                            </div>
-                            {trackingStepsView.map((s) => (
-                                <StepCard
-                                    key={s.id}
-                                    step={s}
-                                    user={user}
-                                    shipment={shipment}
+                        canUseFclTabs ? (
+                            <div className="space-y-6">
+                                <FclImportWorkspace
+                                    headingClassName=""
+                                    shipment={fclShipmentMeta}
+                                    customers={shipmentCustomers}
+                                    steps={fclStepData}
+                                    jobIds={jobIds}
+                                    containerNumbers={containerNumbers}
+                                    latestDocsByType={fclLatestDocsByType}
+                                    trackingToken={trackingToken}
                                     canEdit={canEdit}
-                                    workflowBlocked={workflowBlocked}
-                                    receivedDocTypes={receivedDocTypes}
-                                    openDocRequestTypes={openDocRequestTypes}
-                                    latestReceivedDocByType={latestReceivedDocByType}
-                                    workflowGlobalValues={workflowGlobalValues}
-                                    highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
-                                    highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
-                                    partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
-                                    customers={customers}
-                                    suppliers={suppliers}
-                                    brokers={brokers}
-                                    allocationGoods={allocationGoods}
-                                    setTab={setTab}
-                                    tabId="tracking-steps"
-                                    stepsById={stepById}
-                                    workflowGlobals={workflowGlobals}
-                                    isOpen={effectiveOpenTrackingStepId === s.id}
-                                    onToggle={() => {
-                                        setHasTouchedTracking(true);
-                                        setOpenTrackingStepId((prev) =>
-                                            prev === s.id ? null : s.id,
-                                        );
-                                    }}
-                                    onDirty={markFormDirty}
-                                    onClean={clearFormDirty}
-                                    isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                    updateAction={fclUpdateAction!}
+                                    mode="tracking"
+                                    returnTo={fclTrackingReturnTo}
                                 />
-                            ))}
-                            {trackingStepsView.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
-                                    No tracking steps configured.
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-zinc-900">Tracking steps</h3>
+                                <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
+                                    {renderStepper(trackingStepsView, effectiveOpenTrackingStepId)}
                                 </div>
-                            ) : null}
-                        </div>
+                                {trackingStepsView.map((s) => (
+                                    <StepCard
+                                        key={s.id}
+                                        step={s}
+                                        user={user}
+                                        shipment={shipment}
+                                        canEdit={canEdit}
+                                        workflowBlocked={workflowBlocked}
+                                        receivedDocTypes={receivedDocTypes}
+                                        openDocRequestTypes={openDocRequestTypes}
+                                        latestReceivedDocByType={latestReceivedDocByType}
+                                        workflowGlobalValues={workflowGlobalValues}
+                                        highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
+                                        highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
+                                        partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
+                                        customers={customers}
+                                        suppliers={suppliers}
+                                        brokers={brokers}
+                                        allocationGoods={allocationGoods}
+                                        setTab={setTab}
+                                        tabId="tracking-steps"
+                                        stepsById={stepById}
+                                        workflowGlobals={workflowGlobals}
+                                        isOpen={effectiveOpenTrackingStepId === s.id}
+                                        onToggle={() => {
+                                            setHasTouchedTracking(true);
+                                            setOpenTrackingStepId((prev) =>
+                                                prev === s.id ? null : s.id,
+                                            );
+                                        }}
+                                        onDirty={markFormDirty}
+                                        onClean={clearFormDirty}
+                                        isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                    />
+                                ))}
+                                {trackingStepsView.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                        No tracking steps configured.
+                                    </div>
+                                ) : null}
+                            </div>
+                        )
                     )}
 
                     {activeTab === "container-steps" && (
-                        <div className="space-y-4">
-                            <h3 className="text-lg font-semibold text-zinc-900">Container steps</h3>
-                            <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(containerStepsView, effectiveOpenContainerStepId)}
-                            </div>
-                            {containerStepsView.map((s) => (
-                                <StepCard
-                                    key={s.id}
-                                    step={s}
-                                    user={user}
-                                    shipment={shipment}
+                        canUseFclTabs ? (
+                            <div className="space-y-6">
+                                <FclImportWorkspace
+                                    headingClassName=""
+                                    shipment={fclShipmentMeta}
+                                    customers={shipmentCustomers}
+                                    steps={fclStepData}
+                                    jobIds={jobIds}
+                                    containerNumbers={containerNumbers}
+                                    latestDocsByType={fclLatestDocsByType}
+                                    trackingToken={trackingToken}
                                     canEdit={canEdit}
-                                    workflowBlocked={workflowBlocked}
-                                    receivedDocTypes={receivedDocTypes}
-                                    openDocRequestTypes={openDocRequestTypes}
-                                    latestReceivedDocByType={latestReceivedDocByType}
-                                    workflowGlobalValues={workflowGlobalValues}
-                                    highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
-                                    highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
-                                    partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
-                                    customers={customers}
-                                    suppliers={suppliers}
-                                    brokers={brokers}
-                                    allocationGoods={allocationGoods}
-                                    setTab={setTab}
-                                    tabId="container-steps"
-                                    stepsById={stepById}
-                                    workflowGlobals={workflowGlobals}
-                                    isOpen={effectiveOpenContainerStepId === s.id}
-                                    onToggle={() => {
-                                        setHasTouchedContainers(true);
-                                        setOpenContainerStepId((prev) =>
-                                            prev === s.id ? null : s.id,
-                                        );
-                                    }}
-                                    onDirty={markFormDirty}
-                                    onClean={clearFormDirty}
-                                    isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                    updateAction={fclUpdateAction!}
+                                    mode="container-ops"
+                                    returnTo={fclContainerReturnTo}
                                 />
-                            ))}
-                            {containerStepsView.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
-                                    No container steps configured.
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-semibold text-zinc-900">Container steps</h3>
+                                <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
+                                    {renderStepper(containerStepsView, effectiveOpenContainerStepId)}
                                 </div>
-                            ) : null}
-                        </div>
+                                {containerStepsView.map((s) => (
+                                    <StepCard
+                                        key={s.id}
+                                        step={s}
+                                        user={user}
+                                        shipment={shipment}
+                                        canEdit={canEdit}
+                                        workflowBlocked={workflowBlocked}
+                                        receivedDocTypes={receivedDocTypes}
+                                        openDocRequestTypes={openDocRequestTypes}
+                                        latestReceivedDocByType={latestReceivedDocByType}
+                                        workflowGlobalValues={workflowGlobalValues}
+                                        highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
+                                        highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
+                                        partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
+                                        customers={customers}
+                                        suppliers={suppliers}
+                                        brokers={brokers}
+                                        allocationGoods={allocationGoods}
+                                        setTab={setTab}
+                                        tabId="container-steps"
+                                        stepsById={stepById}
+                                        workflowGlobals={workflowGlobals}
+                                        isOpen={effectiveOpenContainerStepId === s.id}
+                                        onToggle={() => {
+                                            setHasTouchedContainers(true);
+                                            setOpenContainerStepId((prev) =>
+                                                prev === s.id ? null : s.id,
+                                            );
+                                        }}
+                                        onDirty={markFormDirty}
+                                        onClean={clearFormDirty}
+                                        isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                    />
+                                ))}
+                                {containerStepsView.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                        No container steps configured.
+                                    </div>
+                                ) : null}
+                            </div>
+                        )
                     )}
 
                     {activeTab === "goods" && (

@@ -38,6 +38,8 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
   await requireShipmentAccess(user, shipmentId);
 
   const stepId = Number(formData.get("stepId") ?? 0);
+  const returnToRaw = formData.get("returnTo");
+  const returnTo = typeof returnToRaw === "string" ? returnToRaw.trim() : "";
   if (!stepId) redirect(`/shipments/fcl-import/${shipmentId}?error=invalid`);
 
   const steps = await listShipmentSteps(shipmentId);
@@ -132,5 +134,8 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(returnTo);
+  }
   redirect(`/shipments/fcl-import/${shipmentId}?saved=${stepId}`);
 }
