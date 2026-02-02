@@ -344,11 +344,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
     const canDelete = user.role === "ADMIN";
-    const trackingLink = trackingToken
-        ? isFclWorkflow
-            ? `/track/fcl/${trackingToken}`
-            : `/track/${trackingToken}`
-        : "-";
     const customerLabel =
         shipmentCustomers.length > 0
             ? shipmentCustomers.map((c) => c.name).join(", ")
@@ -388,6 +383,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
             fclOperationsNames.has(step.name) ||
             fclContainerNames.has(step.name),
     );
+
+    const trackingLink = trackingToken
+        ? isFclWorkflow
+            ? `/track/fcl/${trackingToken}`
+            : `/track/${trackingToken}`
+        : "-";
 
     const trackingStepsView = isFclWorkflow
         ? steps.filter((step) => fclTrackingNames.has(step.name))
