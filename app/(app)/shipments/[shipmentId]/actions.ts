@@ -110,7 +110,6 @@ const SHIPMENT_TAB_IDS = new Set([
   "goods",
   "tasks",
   "documents",
-  "exceptions",
   "activity",
 ]);
 
@@ -886,7 +885,7 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
     );
   }
 
-  redirect(appendTabParam(`/shipments/${shipmentId}`, returnTab));
+  redirect(appendTabParam(`/shipments/${shipmentId}?saved=step-${stepId}`, returnTab));
 }
 
 export async function updateWorkflowGlobalsAction(
@@ -925,13 +924,21 @@ export async function updateWorkflowGlobalsAction(
     updatedByUserId: user.id,
   });
 
+  await logActivity({
+    shipmentId,
+    type: "WORKFLOW_GLOBALS_UPDATED",
+    message: "Global dates updated",
+    actorUserId: user.id,
+    data: { values: nextValues },
+  });
+
   await refreshShipmentDerivedState({
     shipmentId,
     actorUserId: user.id,
     updateLastUpdate: true,
   });
 
-  redirect(appendTabParam(`/shipments/${shipmentId}`, returnTab));
+  redirect(appendTabParam(`/shipments/${shipmentId}?saved=globals`, returnTab));
 }
 
 export async function addShipmentJobIdsAction(
@@ -1435,6 +1442,9 @@ export async function requestDocumentAction(
   const message = formData
     ? String(formData.get("message") ?? "").trim() || null
     : null;
+  const returnTab = formData
+    ? normalizeShipmentTab(formData.get("tab"))
+    : null;
   if (formData && !documentType) {
     documentType = String(formData.get("documentType") ?? "").trim();
   }
@@ -1461,7 +1471,7 @@ export async function requestDocumentAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(appendTabParam(`/shipments/${shipmentId}?requested=1`, returnTab));
 }
 
 export async function addCommentAction(shipmentId: number, formData: FormData) {

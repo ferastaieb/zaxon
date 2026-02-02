@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
@@ -222,7 +222,6 @@ type ShipmentTabId =
     | "goods"
     | "tasks"
     | "documents"
-    | "exceptions"
     | "activity";
 
 const SHIPMENT_TABS: ShipmentTabId[] = [
@@ -234,7 +233,6 @@ const SHIPMENT_TABS: ShipmentTabId[] = [
     "goods",
     "tasks",
     "documents",
-    "exceptions",
     "activity",
 ];
 
@@ -294,6 +292,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
                 ? "tracking-steps"
                 : tabParamRaw;
     const activeTab = isShipmentTab(tabParam) ? tabParam : "overview";
+    const [isCompactHeader, setIsCompactHeader] = useState(false);
+    const [toast, setToast] = useState<{ message: string; tone: "success" | "info" } | null>(
+        null,
+    );
     const [timelinePreviewTab, setTimelinePreviewTab] = useState<
         "operations" | "tracking" | "containers"
     >("operations");
@@ -308,6 +310,37 @@ export default function ShipmentView(props: ShipmentViewProps) {
         const next = params.toString();
         router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
     };
+
+    useEffect(() => {
+        const onScroll = () => {
+            setIsCompactHeader(window.scrollY > 70);
+        };
+        onScroll();
+        window.addEventListener("scroll", onScroll, { passive: true });
+        return () => window.removeEventListener("scroll", onScroll);
+    }, []);
+
+    useEffect(() => {
+        const saved = searchParams.get("saved");
+        const requested = searchParams.get("requested");
+        if (!saved && !requested) return;
+
+        if (saved) {
+            setToast({ message: "Saved successfully.", tone: "success" });
+        } else if (requested) {
+            setToast({ message: "Request sent to customer.", tone: "info" });
+        }
+
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete("saved");
+        params.delete("requested");
+        const next = params.toString();
+        const timeout = setTimeout(() => {
+            setToast(null);
+            router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+        }, 1800);
+        return () => clearTimeout(timeout);
+    }, [pathname, router, searchParams]);
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
     const canDelete = user.role === "ADMIN";
@@ -451,9 +484,9 @@ export default function ShipmentView(props: ShipmentViewProps) {
         overall_status: shipment.overall_status,
         risk: shipment.risk,
     };
-    const fclTrackingReturnTo = `/shipments/${shipment.id}?tab=tracking-steps`;
-    const fclOperationsReturnTo = `/shipments/${shipment.id}?tab=operations-steps`;
-    const fclContainerReturnTo = `/shipments/${shipment.id}?tab=container-steps`;
+    const fclTrackingReturnTo = `/shipments/${shipment.id}?tab=tracking-steps&saved=1`;
+    const fclOperationsReturnTo = `/shipments/${shipment.id}?tab=operations-steps&saved=1`;
+    const fclContainerReturnTo = `/shipments/${shipment.id}?tab=container-steps&saved=1`;
     const canUseFclTabs = isFclWorkflow && !!fclUpdateAction;
 
     const defaultOpenOperationsStepId = (() => {
@@ -518,6 +551,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const [hasTouchedContainers, setHasTouchedContainers] = useState(false);
     const [dirtyFormIds, setDirtyFormIds] = useState<string[]>([]);
     const dirtyCount = dirtyFormIds.length;
+    const [isGlobalSaving, setIsGlobalSaving] = useState(false);
 
     const effectiveOpenOperationsStepId = hasTouchedOperations
         ? openOperationsStepId
@@ -539,6 +573,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
     const handleGlobalSave = () => {
         if (!dirtyCount) return;
+        setIsGlobalSaving(true);
         const formId = dirtyFormIds[0];
         const form = document.getElementById(formId) as HTMLFormElement | null;
         if (form) form.requestSubmit();
@@ -623,26 +658,36 @@ export default function ShipmentView(props: ShipmentViewProps) {
     return (
         <div className="min-h-screen bg-zinc-50/50 pb-20">
             {/* Header Section */}
-            <div className="sticky top-0 z-10 border-b border-zinc-200 bg-white/80 px-6 py-4 backdrop-blur-md">
+            <div
+                className={`sticky top-0 z-10 border-b border-zinc-200 bg-white/80 px-6 backdrop-blur-md transition-all ${isCompactHeader ? "py-2" : "py-4"
+                    }`}
+            >
                 <div className="mx-auto max-w-6xl">
-                    <div className="mb-2 text-sm text-zinc-500">
-                        <Link href="/shipments" className="hover:text-zinc-900 hover:underline">
-                            Shipments
-                        </Link>{" "}
-                        <span className="text-zinc-300">/</span> {shipment.shipment_code}
-                    </div>
+                    {!isCompactHeader ? (
+                        <div className="mb-2 text-sm text-zinc-500">
+                            <Link href="/shipments" className="hover:text-zinc-900 hover:underline">
+                                Shipments
+                            </Link>{" "}
+                            <span className="text-zinc-300">/</span> {shipment.shipment_code}
+                        </div>
+                    ) : null}
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <div>
-                            <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
+                            <h1
+                                className={`font-bold tracking-tight text-zinc-900 ${isCompactHeader ? "text-xl" : "text-2xl"
+                                    }`}
+                            >
                                 {shipment.shipment_code}
                             </h1>
-                            <div className="mt-1 flex items-center gap-2 text-sm text-zinc-600">
-                                <span className="font-medium text-zinc-900">{customerLabel}</span>
-                                <span className="text-zinc-300">•</span>
-                                <span>{transportModeLabel(shipment.transport_mode)}</span>
-                                <span className="text-zinc-300">•</span>
-                                <span>{shipment.origin} → {shipment.destination}</span>
-                            </div>
+                            {!isCompactHeader ? (
+                                <div className="mt-1 flex items-center gap-2 text-sm text-zinc-600">
+                                    <span className="font-medium text-zinc-900">{customerLabel}</span>
+                                    <span className="text-zinc-300">•</span>
+                                    <span>{transportModeLabel(shipment.transport_mode)}</span>
+                                    <span className="text-zinc-300">•</span>
+                                    <span>{shipment.origin} → {shipment.destination}</span>
+                                </div>
+                            ) : null}
                         </div>
                         <div className="flex items-center gap-3">
                             <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
@@ -667,20 +712,26 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
                     {/* Tabs */}
                     <div className="mt-6 flex items-center gap-1 overflow-x-auto pb-1">
-                        {[
-                            { id: "overview", label: "Overview" },
-                            { id: "connections", label: "Connections", count: connectedShipments.length },
-                            { id: "tracking-steps", label: "Tracking steps", count: trackingStepsView.length },
-                            { id: "operations-steps", label: "Operations steps", count: operationsStepsView.length },
-                            ...(showContainerTab
-                                ? [{ id: "container-steps", label: "Container steps", count: containerStepsView.length }]
-                                : []),
-                            { id: "goods", label: "Goods", count: shipmentGoods.length },
-                            { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
-                            { id: "documents", label: "Documents", count: docs.length },
-                            { id: "exceptions", label: "Exceptions", count: exceptions.length, alert: exceptions.some((e) => e.status === "OPEN") },
-                            { id: "activity", label: "Activity" },
-                        ].map((tab) => (
+                        {(
+                            [
+                                { id: "overview", label: "Overview" },
+                                { id: "connections", label: "Connections", count: connectedShipments.length },
+                                { id: "tracking-steps", label: "Tracking steps", count: trackingStepsView.length },
+                                { id: "operations-steps", label: "Operations steps", count: operationsStepsView.length },
+                                ...(showContainerTab
+                                    ? [{ id: "container-steps", label: "Container steps", count: containerStepsView.length }]
+                                    : []),
+                                { id: "goods", label: "Goods", count: shipmentGoods.length },
+                                { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
+                                { id: "documents", label: "Documents", count: docs.length },
+                                { id: "activity", label: "Activity" },
+                            ] as Array<{
+                                id: ShipmentTabId;
+                                label: string;
+                                count?: number;
+                                alert?: boolean;
+                            }>
+                        ).map((tab) => (
                             <button
                                 key={tab.id}
                                 onClick={() => setTab(tab.id as ShipmentTabId)}
@@ -794,10 +845,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     )}
                     {workflowBlocked && primaryBlockingException && (
                         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
-                            Workflow blocked by <span className="font-medium">{primaryBlockingException.exception_name}</span>.{" "}
-                            <button onClick={() => setTab("exceptions")} className="font-medium underline hover:text-red-800">
-                                View exception
-                            </button>
+                            Workflow blocked by <span className="font-medium">{primaryBlockingException.exception_name}</span>.
                         </div>
                     )}
                 </div>
@@ -1907,6 +1955,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
                                     <h3 className="font-semibold text-zinc-900">Upload Document</h3>
                                     <form action={uploadDocumentAction.bind(null, shipment.id)} className="mt-4 space-y-3">
+                                        <input type="hidden" name="tab" value="documents" />
                                         <input type="file" name="file" required className="w-full text-sm text-zinc-500 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-zinc-700 hover:file:bg-zinc-200" />
                                         <select name="documentType" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
                                             {["INVOICE", "BILL_OF_LADING", "PACKING_LIST", "CERTIFICATE", "CUSTOMS_ENTRY", "OTHER"].map(t => (
@@ -1923,6 +1972,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
                                     <h3 className="font-semibold text-zinc-900">Request Document</h3>
                                     <form action={requestDocumentAction.bind(null, shipment.id)} className="mt-4 space-y-3">
+                                        <input type="hidden" name="tab" value="documents" />
                                         <select name="documentType" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
                                             {["INVOICE", "BILL_OF_LADING", "PACKING_LIST", "CERTIFICATE", "CUSTOMS_ENTRY", "OTHER"].map(t => (
                                                 <option key={t} value={t}>{t}</option>
@@ -1936,47 +1986,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         </div>
                     )}
 
-                    {activeTab === "exceptions" && (
-                        <div className="grid gap-6 lg:grid-cols-3">
-                            <div className="lg:col-span-2 space-y-4">
-                                <h3 className="text-lg font-semibold text-zinc-900">Exceptions History</h3>
-                                {exceptions.map((e) => (
-                                    <div key={e.id} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-                                        <div className="flex justify-between">
-                                            <div>
-                                                <div className="font-medium text-zinc-900">{e.exception_name}</div>
-                                                <div className="text-sm text-zinc-500">{e.status} • {new Date(e.created_at).toLocaleString()}</div>
-                                                {e.notes && <div className="mt-2 text-sm text-zinc-600 bg-zinc-50 p-2 rounded">{e.notes}</div>}
-                                            </div>
-                                            <Badge tone={riskTone(e.default_risk)}>{riskLabel(e.default_risk)}</Badge>
-                                        </div>
-                                        {e.status === "OPEN" && canEdit && (
-                                            <form action={resolveExceptionAction.bind(null, shipment.id)} className="mt-4">
-                                                <input type="hidden" name="exceptionId" value={e.id} />
-                                                <button type="submit" className="text-sm font-medium text-blue-600 hover:underline">Mark Resolved</button>
-                                            </form>
-                                        )}
-                                    </div>
-                                ))}
-                                {exceptions.length === 0 && <div className="text-zinc-500">No exceptions logged.</div>}
-                            </div>
-                            <div>
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Log Exception</h3>
-                                    <form action={logExceptionAction.bind(null, shipment.id)} className="mt-4 space-y-3">
-                                        <select name="exceptionTypeId" required className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
-                                            <option value="">Select type...</option>
-                                            {exceptionTypes.map((et) => (
-                                                <option key={et.id} value={et.id}>{et.name}</option>
-                                            ))}
-                                        </select>
-                                        <textarea name="notes" placeholder="Internal notes..." className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" rows={3} />
-                                        <button type="submit" className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Log Exception</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    )}
 
                     {activeTab === "activity" && (
                         <div className="grid gap-6 lg:grid-cols-3">
@@ -2006,6 +2015,18 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     )}
                 </div>
             </div>
+            {toast ? (
+                <div className="fixed top-20 right-6 z-30">
+                    <div
+                        className={`rounded-xl border px-4 py-3 text-sm shadow-lg ${toast.tone === "success"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                            : "border-blue-200 bg-blue-50 text-blue-900"
+                            }`}
+                    >
+                        {toast.message}
+                    </div>
+                </div>
+            ) : null}
             <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,680px)] -translate-x-1/2 rounded-2xl border border-zinc-200 bg-white/90 p-3 shadow-lg backdrop-blur">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs font-medium text-zinc-600">
@@ -2016,10 +2037,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     <button
                         type="button"
                         onClick={handleGlobalSave}
-                        disabled={!canEdit || dirtyCount === 0}
+                        disabled={!canEdit || dirtyCount === 0 || isGlobalSaving}
                         className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                     >
-                        Save updates
+                        {isGlobalSaving ? "Saving..." : "Save updates"}
                     </button>
                 </div>
             </div>
@@ -2852,11 +2873,13 @@ function StepCard({
             : isMyStep
                 ? "border-blue-200"
                 : "border-zinc-200";
+    const cardBackground = step.status === "DONE" ? "bg-amber-50/40" : "bg-white";
+    const [isSaving, setIsSaving] = useState(false);
 
     return (
         <div
             id={`step-${step.id}`}
-            className={`scroll-mt-32 rounded-xl border bg-white ${cardBorder} border-l-4 ${statusStyles.border}`}
+            className={`scroll-mt-32 rounded-xl border ${cardBackground} ${cardBorder} border-l-4 ${statusStyles.border}`}
         >
             <div
                 className={`flex flex-wrap items-start justify-between gap-3 rounded-t-xl px-4 py-3 ${statusStyles.header} ${isOpen ? "border-b border-zinc-200" : ""}`}
@@ -2909,10 +2932,11 @@ function StepCard({
                     <button
                         type="submit"
                         form={formId}
-                        disabled={!canEdit}
+                        disabled={!canEdit || isSaving}
+                        onClick={() => setIsSaving(true)}
                         className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:bg-zinc-100"
                     >
-                        Save
+                        {isSaving ? "Saving..." : "Save"}
                     </button>
                     <button
                         type="button"
@@ -3049,7 +3073,10 @@ function StepCard({
                     action={updateStepAction.bind(null, shipment.id)}
                     className="mt-4 space-y-3"
                     onChange={() => onDirty?.(formId)}
-                    onSubmit={() => onClean?.(formId)}
+                    onSubmit={() => {
+                        setIsSaving(true);
+                        onClean?.(formId);
+                    }}
                 >
                 <input type="hidden" name="stepId" value={step.id} />
                 <input type="hidden" name="tab" value={tabId} />

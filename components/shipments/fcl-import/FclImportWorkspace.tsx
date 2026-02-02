@@ -4,6 +4,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { useFormStatus } from "react-dom";
 
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
@@ -103,6 +104,42 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Object.getPrototypeOf(value) === Object.prototype;
 }
 
+function appendQueryParam(url: string, key: string, value: string) {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function hasAnyValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.some((entry) => hasAnyValue(entry));
+  if (isPlainObject(value)) {
+    return Object.values(value).some((entry) => hasAnyValue(entry));
+  }
+  return false;
+}
+
+function SubmitButton({
+  label,
+  pendingLabel,
+  disabled,
+  className,
+}: {
+  label: string;
+  pendingLabel?: string;
+  disabled?: boolean;
+  className: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" disabled={disabled || pending} className={className}>
+      {pending ? pendingLabel ?? "Saving..." : label}
+    </button>
+  );
+}
+
 function StepCard({
   id,
   title,
@@ -121,7 +158,8 @@ function StepCard({
   return (
     <div
       id={id}
-      className="rounded-3xl border border-slate-200 bg-white/80 p-5 shadow-sm backdrop-blur"
+      className={`rounded-3xl border border-slate-200 p-5 shadow-sm backdrop-blur ${status === "DONE" ? "bg-amber-50/60" : "bg-white/80"
+        }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -169,6 +207,9 @@ export function FclImportWorkspace({
   const renderFileMeta = (stepId: number, path: string[]) => {
     const doc = getLatestDoc(stepId, path);
     const docType = buildDocKey(stepId, path);
+    const requestReturnTo = returnTo
+      ? appendQueryParam(returnTo, "requested", "1")
+      : "";
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         {doc ? (
@@ -184,7 +225,9 @@ export function FclImportWorkspace({
         {requestDocumentAction ? (
           <form action={requestDocumentAction} className="inline">
             <input type="hidden" name="documentType" value={docType} />
-            {renderReturnTo()}
+            {requestReturnTo ? (
+              <input type="hidden" name="returnTo" value={requestReturnTo} />
+            ) : null}
             <button
               type="submit"
               disabled={!canEdit}
@@ -325,11 +368,21 @@ export function FclImportWorkspace({
 
   const blValues = (blStep?.values ?? {}) as Record<string, unknown>;
   const blChoice = (blValues.bl_type ?? {}) as Record<string, unknown>;
-  const initialType =
-    (blChoice.original ? "original" : blChoice.telex ? "telex" : "") || "telex";
-  const [blType, setBlType] = useState(initialType);
-
   const originalValues = (blChoice.original ?? {}) as Record<string, unknown>;
+  const telexValues = (blChoice.telex ?? {}) as Record<string, unknown>;
+  const initialType = hasAnyValue(telexValues)
+    ? "telex"
+    : hasAnyValue(originalValues)
+      ? "original"
+      : "telex";
+  const [blType, setBlType] = useState(initialType);
+  const [blCopyChecked, setBlCopyChecked] = useState(
+    isTruthy(originalValues.bl_copy),
+  );
+  const [telexChecks, setTelexChecks] = useState<Record<string, boolean>>({
+    telex_copy_not_released: isTruthy(telexValues.telex_copy_not_released),
+    telex_copy_released: isTruthy(telexValues.telex_copy_released),
+  });
   const [originalReceived, setOriginalReceived] = useState(
     isTruthy(originalValues.original_received),
   );
@@ -599,13 +652,11 @@ export function FclImportWorkspace({
                     description={`Status: ${vesselLabel}`}
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save update"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save update
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           ETA shows until ATA is confirmed.
                         </span>
@@ -652,13 +703,11 @@ export function FclImportWorkspace({
                     description="Confirm discharge dates and last port free day for each container."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save discharge"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save discharge
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           {dischargedCount}/{totalContainers || 0} discharged
                         </span>
@@ -809,13 +858,11 @@ export function FclImportWorkspace({
                     description="Pull-out is available only for discharged containers after BOE is done."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save pull-out"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save pull-out
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           BOE status: {boeDone ? "Done" : "Pending"}
                         </span>
@@ -961,13 +1008,11 @@ export function FclImportWorkspace({
                     description="Mark delivered, offloaded, and empty return details."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save delivery"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save delivery
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           {deliveredCount}/{totalContainers || 0} delivered or offloaded
                         </span>
@@ -1177,13 +1222,11 @@ export function FclImportWorkspace({
                     description="Confirm order receipt and attach the customer file if needed."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save order"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save order
-                        </button>
+                        />
                       </div>
                     }
                   >
@@ -1251,13 +1294,11 @@ export function FclImportWorkspace({
                     description="Choose Telex or Original and upload the required documents."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save B/L"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save B/L
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           Done when Telex released, Original submitted, or Original surrendered.
                         </span>
@@ -1316,9 +1357,7 @@ export function FclImportWorkspace({
                               fileId: "telex_copy_released_file",
                             },
                           ].map((item) => {
-                            const checked = isTruthy(
-                              (blChoice.telex as Record<string, unknown>)?.[item.id],
-                            );
+                            const checked = telexChecks[item.id] ?? false;
                             return (
                               <div
                                 key={item.id}
@@ -1342,7 +1381,13 @@ export function FclImportWorkspace({
                                       item.id,
                                     ])}
                                     value="1"
-                                    defaultChecked={checked}
+                                    checked={checked}
+                                    onChange={(event) =>
+                                      setTelexChecks((prev) => ({
+                                        ...prev,
+                                        [item.id]: event.target.checked,
+                                      }))
+                                    }
                                     disabled={!canEdit}
                                     className="h-4 w-4 rounded border-slate-300"
                                   />
@@ -1400,8 +1445,12 @@ export function FclImportWorkspace({
                                   type="checkbox"
                                   name={fieldInputName(["bl_type", "original", field])}
                                   value="1"
-                                  defaultChecked={isTruthy(originalValues[field])}
+                                  checked={field === "bl_copy" ? blCopyChecked : originalReceived}
                                   onChange={(event) => {
+                                    if (field === "bl_copy") {
+                                      setBlCopyChecked(event.target.checked);
+                                      return;
+                                    }
                                     if (field === "original_received") {
                                       setOriginalReceived(event.target.checked);
                                       if (event.target.checked) {
@@ -1427,7 +1476,10 @@ export function FclImportWorkspace({
                                     "original",
                                     `${field}_file`,
                                   ])}
-                                  disabled={!canEdit || !isTruthy(originalValues[field])}
+                                  disabled={
+                                    !canEdit ||
+                                    !(field === "bl_copy" ? blCopyChecked : originalReceived)
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                                 {renderFileMeta(blStep.id, [
@@ -1568,13 +1620,11 @@ export function FclImportWorkspace({
                     description="Track copy invoices, original documents, and client approvals."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save documents"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save documents
-                        </button>
+                        />
                       </div>
                     }
                   >
@@ -1757,13 +1807,11 @@ export function FclImportWorkspace({
                     description="Delivery order is unlocked after B/L completion."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save delivery order"
                           disabled={!canEdit || !blDone}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save delivery order
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           {blDone ? "B/L done" : "Waiting for B/L"}
                         </span>
@@ -1855,13 +1903,11 @@ export function FclImportWorkspace({
                     description="Requires delivery order and invoice clearance."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save BOE"
                           disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save BOE
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           {deliveryOrderDone && invoiceDone
                             ? "Ready to submit"
@@ -1937,13 +1983,11 @@ export function FclImportWorkspace({
                     description="Token booking is unlocked after BOE."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save tokens"
                           disabled={!canEdit || !boeDone}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save tokens
-                        </button>
+                        />
                         <span className="text-xs text-slate-500">
                           {boeDone ? "BOE done" : "Waiting for BOE"}
                         </span>
@@ -2032,13 +2076,11 @@ export function FclImportWorkspace({
                     description="Book return tokens for empty containers."
                     footer={
                       <div className="flex items-center justify-between">
-                        <button
-                          type="submit"
+                        <SubmitButton
+                          label="Save return tokens"
                           disabled={!canEdit}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                        >
-                          Save return tokens
-                        </button>
+                        />
                       </div>
                     }
                   >
