@@ -152,7 +152,7 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
       stepId,
       statusRequested: manualStatus,
       fieldUpdates: Object.keys(fieldUpdates),
-      fieldRemovals: fieldRemovals.map((entry) => entry.path),
+      fieldRemovals,
       uploads: fieldUploads.map((upload) => upload.documentType),
     },
   });
