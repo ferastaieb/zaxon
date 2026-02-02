@@ -79,14 +79,6 @@ export default async function ShipmentsPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/shipments/fcl-import/new"
-            className={`rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-100 ${
-              user.role === "FINANCE" ? "pointer-events-none opacity-50" : ""
-            }`}
-          >
-            Create FCL clearance
-          </Link>
           <form action={createShipmentRedirectAction}>
             <button
               type="submit"

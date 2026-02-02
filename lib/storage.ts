@@ -10,22 +10,33 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 
 export function getUploadsRoot() {
   return process.env.UPLOADS_ROOT ?? path.join(process.cwd(), "data", "uploads");
 }
 
+let cachedUploadsBucket: string | null = null;
+let cachedUploadsRegion: string | null = null;
+let cachedUploadsPrefix: string | null = null;
+let uploadsConfigLoaded = false;
+
 function getUploadsBucket() {
-  return process.env.UPLOADS_BUCKET ?? "";
+  return process.env.UPLOADS_BUCKET?.trim() || cachedUploadsBucket || "";
 }
 
 function getUploadsRegion() {
-  return process.env.UPLOADS_REGION ?? process.env.AWS_REGION ?? "";
+  return process.env.UPLOADS_REGION ?? cachedUploadsRegion ?? process.env.AWS_REGION ?? "";
 }
 
 function getUploadsPrefix() {
-  const prefix = process.env.UPLOADS_PREFIX ?? "shipments";
+  const prefix = process.env.UPLOADS_PREFIX ?? cachedUploadsPrefix ?? "shipments";
   return prefix.replace(/^\/+|\/+$/g, "");
+}
+
+function getUploadsParamPrefix() {
+  const prefix = process.env.UPLOADS_PARAM_PREFIX ?? "/logisticZaxon/uploads";
+  return prefix.replace(/\/+$/g, "");
 }
 
 function shouldUseS3() {
@@ -33,12 +44,51 @@ function shouldUseS3() {
 }
 
 let cachedS3: S3Client | null = null;
+let cachedSsm: SSMClient | null = null;
+
+function getSsmClient() {
+  if (!cachedSsm) {
+    cachedSsm = new SSMClient({ region: getUploadsRegion() || undefined });
+  }
+  return cachedSsm;
+}
 
 function getS3Client() {
   if (!cachedS3) {
     cachedS3 = new S3Client({ region: getUploadsRegion() || undefined });
   }
   return cachedS3;
+}
+
+async function ensureUploadsConfigLoaded() {
+  if (uploadsConfigLoaded || getUploadsBucket()) {
+    uploadsConfigLoaded = true;
+    return;
+  }
+
+  uploadsConfigLoaded = true;
+  const prefix = getUploadsParamPrefix();
+  if (!prefix) return;
+
+  const ssm = getSsmClient();
+  const readParam = async (name: string) => {
+    try {
+      const response = await ssm.send(new GetParameterCommand({ Name: name }));
+      return response.Parameter?.Value ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const [bucket, region, uploadsPrefix] = await Promise.all([
+    readParam(`${prefix}/bucket`),
+    readParam(`${prefix}/region`),
+    readParam(`${prefix}/prefix`),
+  ]);
+
+  if (bucket) cachedUploadsBucket = bucket;
+  if (region) cachedUploadsRegion = region;
+  if (uploadsPrefix) cachedUploadsPrefix = uploadsPrefix;
 }
 
 export function sanitizeFileName(original: string) {
@@ -109,6 +159,8 @@ export async function saveUpload(input: {
   const buffer = Buffer.from(await input.file.arrayBuffer());
   const mimeType = input.file.type || null;
 
+  await ensureUploadsConfigLoaded();
+
   if (shouldUseS3()) {
     const bucket = getUploadsBucket();
     const key = buildS3Key(input.shipmentId, fullName);
@@ -144,6 +196,8 @@ export async function saveUpload(input: {
 }
 
 export async function readUpload(storagePath: string) {
+  await ensureUploadsConfigLoaded();
+
   if (shouldUseS3()) {
     try {
       const response = await getS3Client().send(
@@ -171,6 +225,8 @@ export async function readUpload(storagePath: string) {
 }
 
 export async function removeShipmentUploads(shipmentId: number) {
+  await ensureUploadsConfigLoaded();
+
   if (shouldUseS3()) {
     const bucket = getUploadsBucket();
     const prefix = buildShipmentPrefix(shipmentId);

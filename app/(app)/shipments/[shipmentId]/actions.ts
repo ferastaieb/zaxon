@@ -104,8 +104,9 @@ function normalizeFieldLabel(label: string) {
 const SHIPMENT_TAB_IDS = new Set([
   "overview",
   "connections",
-  "workflow",
-  "tracking",
+  "tracking-steps",
+  "operations-steps",
+  "container-steps",
   "goods",
   "tasks",
   "documents",
@@ -116,7 +117,13 @@ const SHIPMENT_TAB_IDS = new Set([
 function normalizeShipmentTab(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return SHIPMENT_TAB_IDS.has(trimmed) ? trimmed : null;
+  const normalized =
+    trimmed === "workflow"
+      ? "operations-steps"
+      : trimmed === "tracking"
+        ? "tracking-steps"
+        : trimmed;
+  return SHIPMENT_TAB_IDS.has(normalized) ? normalized : null;
 }
 
 function appendTabParam(url: string, tab: string | null) {
@@ -431,7 +438,8 @@ export async function updateStepAction(shipmentId: number, formData: FormData) {
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
-  const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
+  const returnTab =
+    normalizeShipmentTab(formData.get("tab")) ?? "operations-steps";
 
   const stepId = Number(formData.get("stepId") ?? 0);
   const status = String(formData.get("status") ?? "") as StepStatus;
@@ -888,7 +896,8 @@ export async function updateWorkflowGlobalsAction(
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
-  const returnTab = normalizeShipmentTab(formData.get("tab")) ?? "workflow";
+  const returnTab =
+    normalizeShipmentTab(formData.get("tab")) ?? "operations-steps";
 
   const shipment = await getShipment(shipmentId);
   if (!shipment) {

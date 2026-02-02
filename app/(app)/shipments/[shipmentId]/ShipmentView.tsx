@@ -37,6 +37,18 @@ import type { TaskRow } from "@/lib/data/tasks";
 import type { DbUser } from "@/lib/data/users";
 import type { ChecklistGroup, ChecklistItem } from "@/lib/checklists";
 import {
+    FCL_IMPORT_CONTAINER_STEPS,
+    FCL_IMPORT_OPERATIONS_STEPS,
+    FCL_IMPORT_STEP_NAMES,
+    FCL_IMPORT_TRACKING_STEPS,
+} from "@/lib/fclImport/constants";
+import {
+    extractContainerNumbers,
+    isTruthy,
+    normalizeContainerNumbers,
+    normalizeContainerRows,
+} from "@/lib/fclImport/helpers";
+import {
     collectMissingFieldPaths,
     decodeFieldPath,
     describeFieldPath,
@@ -199,8 +211,9 @@ function taskTone(status: TaskStatus) {
 type ShipmentTabId =
     | "overview"
     | "connections"
-    | "workflow"
-    | "tracking"
+    | "tracking-steps"
+    | "operations-steps"
+    | "container-steps"
     | "goods"
     | "tasks"
     | "documents"
@@ -210,8 +223,9 @@ type ShipmentTabId =
 const SHIPMENT_TABS: ShipmentTabId[] = [
     "overview",
     "connections",
-    "workflow",
-    "tracking",
+    "tracking-steps",
+    "operations-steps",
+    "container-steps",
     "goods",
     "tasks",
     "documents",
@@ -265,11 +279,17 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const searchParams = useSearchParams();
     const router = useRouter();
     const pathname = usePathname();
-    const tabParam = searchParams.get("tab");
+    const tabParamRaw = searchParams.get("tab");
+    const tabParam =
+        tabParamRaw === "workflow"
+            ? "operations-steps"
+            : tabParamRaw === "tracking"
+                ? "tracking-steps"
+                : tabParamRaw;
     const activeTab = isShipmentTab(tabParam) ? tabParam : "overview";
     const [timelinePreviewTab, setTimelinePreviewTab] = useState<
-        "workflow" | "tracking"
-    >("workflow");
+        "operations" | "tracking" | "containers"
+    >("operations");
 
     const setTab = (tab: ShipmentTabId) => {
         const params = new URLSearchParams(searchParams.toString());
@@ -311,48 +331,163 @@ export default function ShipmentView(props: ShipmentViewProps) {
         });
     };
 
-    const defaultOpenInternalStepId = (() => {
-        const doable = internalSteps.find(
+    const fclTrackingNames = new Set<string>(FCL_IMPORT_TRACKING_STEPS);
+    const fclOperationsNames = new Set<string>([
+        ...FCL_IMPORT_OPERATIONS_STEPS,
+        FCL_IMPORT_STEP_NAMES.shipmentCreation,
+    ]);
+    const fclContainerNames = new Set<string>(FCL_IMPORT_CONTAINER_STEPS);
+
+    const isFclWorkflow = steps.some(
+        (step) =>
+            fclTrackingNames.has(step.name) ||
+            fclOperationsNames.has(step.name) ||
+            fclContainerNames.has(step.name),
+    );
+
+    const trackingStepsView = isFclWorkflow
+        ? steps.filter((step) => fclTrackingNames.has(step.name))
+        : trackingSteps;
+    const operationsStepsView = isFclWorkflow
+        ? steps.filter((step) => fclOperationsNames.has(step.name))
+        : internalSteps;
+    const containerStepsView = isFclWorkflow
+        ? steps.filter((step) => fclContainerNames.has(step.name))
+        : [];
+    const showContainerTab = containerStepsView.length > 0;
+
+    const trackingStepIds = new Set(trackingStepsView.map((step) => step.id));
+    const containerStepIds = new Set(containerStepsView.map((step) => step.id));
+
+    const getStepTabId = (step: ShipmentStepRow): ShipmentTabId => {
+        if (trackingStepIds.has(step.id)) return "tracking-steps";
+        if (containerStepIds.has(step.id)) return "container-steps";
+        return "operations-steps";
+    };
+
+    const creationStep = steps.find(
+        (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
+    );
+    const creationValues = creationStep ? getStepFieldValues(creationStep) : {};
+    let containerNumbers = extractContainerNumbers(creationValues);
+    if (!containerNumbers.length) {
+        containerNumbers = normalizeContainerNumbers([shipment.container_number ?? ""]);
+    }
+
+    const dischargeStep = steps.find(
+        (step) => step.name === FCL_IMPORT_STEP_NAMES.containersDischarge,
+    );
+    const pullOutStep = steps.find(
+        (step) => step.name === FCL_IMPORT_STEP_NAMES.containerPullOut,
+    );
+    const deliveryStep = steps.find(
+        (step) => step.name === FCL_IMPORT_STEP_NAMES.containerDelivery,
+    );
+
+    const dischargeRows = normalizeContainerRows(
+        containerNumbers,
+        dischargeStep ? getStepFieldValues(dischargeStep) : {},
+    );
+    const pullOutRows = normalizeContainerRows(
+        containerNumbers,
+        pullOutStep ? getStepFieldValues(pullOutStep) : {},
+    );
+    const deliveryRows = normalizeContainerRows(
+        containerNumbers,
+        deliveryStep ? getStepFieldValues(deliveryStep) : {},
+    );
+
+    const dischargedCount = dischargeRows.filter(
+        (row) =>
+            isTruthy(row.container_discharged) ||
+            !!row.container_discharged_date?.trim(),
+    ).length;
+    const pulledOutCount = pullOutRows.filter(
+        (row) => isTruthy(row.pulled_out) || !!row.pull_out_date?.trim(),
+    ).length;
+    const deliveredCount = deliveryRows.filter(
+        (row) =>
+            isTruthy(row.delivered_offloaded) ||
+            !!row.delivered_offloaded_date?.trim(),
+    ).length;
+    const returnedCount = deliveryRows.filter(
+        (row) => isTruthy(row.empty_returned) || !!row.empty_returned_date?.trim(),
+    ).length;
+    const totalContainers = containerNumbers.length;
+    const showContainerStats = isFclWorkflow && totalContainers > 0;
+
+    const defaultOpenOperationsStepId = (() => {
+        const doable = operationsStepsView.find(
             (s) =>
                 s.status !== "DONE" &&
                 !workflowBlocked &&
                 !isStepBlockedByDependencies(s),
         );
         if (doable) return doable.id;
-        const next = internalSteps.find((s) => s.status !== "DONE");
-        return next?.id ?? internalSteps[0]?.id ?? null;
+        const next = operationsStepsView.find((s) => s.status !== "DONE");
+        return next?.id ?? operationsStepsView[0]?.id ?? null;
     })();
 
     const defaultOpenTrackingStepId = (() => {
-        const doable = trackingSteps.find(
+        const doable = trackingStepsView.find(
             (s) =>
                 s.status !== "DONE" &&
                 !workflowBlocked &&
                 !isStepBlockedByDependencies(s),
         );
         if (doable) return doable.id;
-        const next = trackingSteps.find((s) => s.status !== "DONE");
-        return next?.id ?? trackingSteps[0]?.id ?? null;
+        const next = trackingStepsView.find((s) => s.status !== "DONE");
+        return next?.id ?? trackingStepsView[0]?.id ?? null;
+    })();
+
+    const defaultOpenContainerStepId = (() => {
+        const doable = containerStepsView.find(
+            (s) =>
+                s.status !== "DONE" &&
+                !workflowBlocked &&
+                !isStepBlockedByDependencies(s),
+        );
+        if (doable) return doable.id;
+        const next = containerStepsView.find((s) => s.status !== "DONE");
+        return next?.id ?? containerStepsView[0]?.id ?? null;
     })();
 
     const errorStep = errorStepId ? stepById.get(errorStepId) ?? null : null;
-    const [openInternalStepId, setOpenInternalStepId] = useState<number | null>(
-        () => (errorStep && !errorStep.is_external ? errorStep.id : defaultOpenInternalStepId ?? null),
+    const errorStepTab = errorStep ? getStepTabId(errorStep) : null;
+
+    const [openOperationsStepId, setOpenOperationsStepId] = useState<number | null>(
+        () =>
+            errorStep && errorStepTab === "operations-steps"
+                ? errorStep.id
+                : defaultOpenOperationsStepId ?? null,
     );
     const [openTrackingStepId, setOpenTrackingStepId] = useState<number | null>(
-        () => (errorStep && errorStep.is_external ? errorStep.id : defaultOpenTrackingStepId ?? null),
+        () =>
+            errorStep && errorStepTab === "tracking-steps"
+                ? errorStep.id
+                : defaultOpenTrackingStepId ?? null,
     );
-    const [hasTouchedInternal, setHasTouchedInternal] = useState(false);
+    const [openContainerStepId, setOpenContainerStepId] = useState<number | null>(
+        () =>
+            errorStep && errorStepTab === "container-steps"
+                ? errorStep.id
+                : defaultOpenContainerStepId ?? null,
+    );
+    const [hasTouchedOperations, setHasTouchedOperations] = useState(false);
     const [hasTouchedTracking, setHasTouchedTracking] = useState(false);
+    const [hasTouchedContainers, setHasTouchedContainers] = useState(false);
     const [dirtyFormIds, setDirtyFormIds] = useState<string[]>([]);
     const dirtyCount = dirtyFormIds.length;
 
-    const effectiveOpenInternalStepId = hasTouchedInternal
-        ? openInternalStepId
-        : openInternalStepId ?? defaultOpenInternalStepId ?? null;
+    const effectiveOpenOperationsStepId = hasTouchedOperations
+        ? openOperationsStepId
+        : openOperationsStepId ?? defaultOpenOperationsStepId ?? null;
     const effectiveOpenTrackingStepId = hasTouchedTracking
         ? openTrackingStepId
         : openTrackingStepId ?? defaultOpenTrackingStepId ?? null;
+    const effectiveOpenContainerStepId = hasTouchedContainers
+        ? openContainerStepId
+        : openContainerStepId ?? defaultOpenContainerStepId ?? null;
 
     const markFormDirty = (formId: string) => {
         setDirtyFormIds((prev) => (prev.includes(formId) ? prev : [...prev, formId]));
@@ -372,14 +507,19 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const openStep = (stepId: number) => {
         const step = stepById.get(stepId);
         if (!step) return;
-        if (step.is_external) {
+        const nextTab = getStepTabId(step);
+        if (nextTab === "tracking-steps") {
             setHasTouchedTracking(true);
-            setTab("tracking");
+            setTab(nextTab);
             setOpenTrackingStepId(stepId);
+        } else if (nextTab === "container-steps") {
+            setHasTouchedContainers(true);
+            setTab(nextTab);
+            setOpenContainerStepId(stepId);
         } else {
-            setHasTouchedInternal(true);
-            setTab("workflow");
-            setOpenInternalStepId(stepId);
+            setHasTouchedOperations(true);
+            setTab(nextTab);
+            setOpenOperationsStepId(stepId);
         }
         setTimeout(
             () =>
@@ -490,8 +630,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         {[
                             { id: "overview", label: "Overview" },
                             { id: "connections", label: "Connections", count: connectedShipments.length },
-                            { id: "workflow", label: "Workflow" },
-                            { id: "tracking", label: "Tracking" },
+                            { id: "tracking-steps", label: "Tracking steps", count: trackingStepsView.length },
+                            { id: "operations-steps", label: "Operations steps", count: operationsStepsView.length },
+                            ...(showContainerTab
+                                ? [{ id: "container-steps", label: "Container steps", count: containerStepsView.length }]
+                                : []),
                             { id: "goods", label: "Goods", count: shipmentGoods.length },
                             { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
                             { id: "documents", label: "Documents", count: docs.length },
@@ -691,15 +834,15 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
                                     <div className="flex flex-wrap items-center justify-between gap-3">
                                         <h2 className="text-base font-semibold text-zinc-900">Timeline</h2>
-                                        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 text-xs">
+                                        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 text-xs">
                                             <button
-                                                onClick={() => setTimelinePreviewTab("workflow")}
-                                                className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "workflow"
+                                                onClick={() => setTimelinePreviewTab("operations")}
+                                                className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "operations"
                                                     ? "bg-white text-zinc-900 shadow"
                                                     : "text-zinc-500 hover:text-zinc-800"
                                                     }`}
                                             >
-                                                Internal
+                                                Operations
                                             </button>
                                             <button
                                                 onClick={() => setTimelinePreviewTab("tracking")}
@@ -710,13 +853,24 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             >
                                                 Tracking
                                             </button>
+                                            {containerStepsView.length ? (
+                                                <button
+                                                    onClick={() => setTimelinePreviewTab("containers")}
+                                                    className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "containers"
+                                                        ? "bg-white text-zinc-900 shadow"
+                                                        : "text-zinc-500 hover:text-zinc-800"
+                                                        }`}
+                                                >
+                                                    Containers
+                                                </button>
+                                            ) : null}
                                         </div>
                                     </div>
 
-                                    {timelinePreviewTab === "workflow" ? (
+                                    {timelinePreviewTab === "operations" ? (
                                         <>
                                             <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
-                                                {internalSteps.map((s) => (
+                                                {operationsStepsView.map((s) => (
                                                     <div
                                                         key={s.id}
                                                         className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
@@ -731,17 +885,17 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                     />
                                                 ))}
                                             </div>
-                                            {internalSteps.length === 0 ? (
+                                            {operationsStepsView.length === 0 ? (
                                                 <div className="mt-3 text-sm text-zinc-500 italic">
-                                                    No internal steps yet.
+                                                    No operations steps yet.
                                                 </div>
                                             ) : null}
                                         </>
-                                    ) : (
+                                    ) : timelinePreviewTab === "tracking" ? (
                                         <>
-                                            {trackingSteps.length ? (
+                                            {trackingStepsView.length ? (
                                                 <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
-                                                    {trackingSteps.map((s) => (
+                                                    {trackingStepsView.map((s) => (
                                                         <div
                                                             key={s.id}
                                                             className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
@@ -762,20 +916,53 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 </div>
                                             )}
                                         </>
+                                    ) : (
+                                        <>
+                                            {containerStepsView.length ? (
+                                                <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
+                                                    {containerStepsView.map((s) => (
+                                                        <div
+                                                            key={s.id}
+                                                            className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
+                                                                ? "bg-green-500"
+                                                                : s.status === "IN_PROGRESS"
+                                                                    ? "bg-blue-500"
+                                                                    : s.status === "BLOCKED"
+                                                                        ? "bg-red-500"
+                                                                        : "bg-zinc-200"
+                                                                }`}
+                                                            title={`${s.name}: ${stepStatusLabel(s.status)}`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 text-sm text-zinc-500 italic">
+                                                    No container steps yet.
+                                                </div>
+                                            )}
+                                        </>
                                     )}
 
                                     <div className="mt-2 text-right">
                                         <button
                                             onClick={() =>
                                                 setTab(
-                                                    timelinePreviewTab === "workflow"
-                                                        ? "workflow"
-                                                        : "tracking",
+                                                    timelinePreviewTab === "operations"
+                                                        ? "operations-steps"
+                                                        : timelinePreviewTab === "tracking"
+                                                            ? "tracking-steps"
+                                                            : "container-steps",
                                                 )
                                             }
                                             className="text-sm font-medium text-zinc-900 hover:underline"
                                         >
-                                            View {timelinePreviewTab === "workflow" ? "workflow" : "tracking"} steps
+                                            View{" "}
+                                            {timelinePreviewTab === "operations"
+                                                ? "operations"
+                                                : timelinePreviewTab === "tracking"
+                                                    ? "tracking"
+                                                    : "container"}{" "}
+                                            steps
                                         </button>
                                     </div>
                                 </div>
@@ -809,6 +996,45 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         </div>
                                     </dl>
                                 </div>
+
+                                {showContainerStats ? (
+                                    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                        <h2 className="text-base font-semibold text-zinc-900">Container stats</h2>
+                                        <dl className="mt-4 space-y-2 text-sm">
+                                            <div className="flex justify-between">
+                                                <dt className="text-zinc-500">Total</dt>
+                                                <dd className="font-medium text-zinc-900">{totalContainers}</dd>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <dt className="text-zinc-500">Discharged</dt>
+                                                <dd className="font-medium text-zinc-900">
+                                                    {dischargedCount}/{totalContainers}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <dt className="text-zinc-500">Pulled out</dt>
+                                                <dd className="font-medium text-zinc-900">
+                                                    {pulledOutCount}/{totalContainers}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <dt className="text-zinc-500">Delivered</dt>
+                                                <dd className="font-medium text-zinc-900">
+                                                    {deliveredCount}/{totalContainers}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <dt className="text-zinc-500">Returned</dt>
+                                                <dd className="font-medium text-zinc-900">
+                                                    {returnedCount}/{totalContainers}
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                        <div className="mt-2 text-xs text-zinc-500">
+                                            Live counts based on container tracking steps.
+                                        </div>
+                                    </div>
+                                ) : null}
 
                                 {/* Tracking Link */}
                                 <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
@@ -1074,15 +1300,15 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         </div>
                     )}
 
-                    {activeTab === "workflow" && (
+                    {activeTab === "operations-steps" && (
                         <div className="space-y-4">
-                            <h3 className="text-lg font-semibold text-zinc-900">Internal Workflow</h3>
+                            <h3 className="text-lg font-semibold text-zinc-900">Operations steps</h3>
                             <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(internalSteps, effectiveOpenInternalStepId)}
+                                {renderStepper(operationsStepsView, effectiveOpenOperationsStepId)}
                             </div>
 
                             <div className="space-y-4">
-                                {internalSteps.map((s) => (
+                                {operationsStepsView.map((s) => (
                                     <StepCard
                                         key={s.id}
                                         step={s}
@@ -1102,13 +1328,13 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         brokers={brokers}
                                         allocationGoods={allocationGoods}
                                         setTab={setTab}
-                                        tabId="workflow"
+                                        tabId="operations-steps"
                                         stepsById={stepById}
                                         workflowGlobals={workflowGlobals}
-                                        isOpen={effectiveOpenInternalStepId === s.id}
+                                        isOpen={effectiveOpenOperationsStepId === s.id}
                                         onToggle={() => {
-                                            setHasTouchedInternal(true);
-                                            setOpenInternalStepId((prev) =>
+                                            setHasTouchedOperations(true);
+                                            setOpenOperationsStepId((prev) =>
                                                 prev === s.id ? null : s.id,
                                             );
                                         }}
@@ -1117,17 +1343,22 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
                                     />
                                 ))}
+                                {operationsStepsView.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                        No operations steps configured.
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     )}
 
-                    {activeTab === "tracking" && (
+                    {activeTab === "tracking-steps" && (
                         <div className="space-y-4">
-                            <h3 className="text-lg font-semibold text-zinc-900">Tracking milestones</h3>
+                            <h3 className="text-lg font-semibold text-zinc-900">Tracking steps</h3>
                             <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                {renderStepper(trackingSteps, effectiveOpenTrackingStepId)}
+                                {renderStepper(trackingStepsView, effectiveOpenTrackingStepId)}
                             </div>
-                            {trackingSteps.map((s) => (
+                            {trackingStepsView.map((s) => (
                                 <StepCard
                                     key={s.id}
                                     step={s}
@@ -1147,7 +1378,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     brokers={brokers}
                                     allocationGoods={allocationGoods}
                                     setTab={setTab}
-                                    tabId="tracking"
+                                    tabId="tracking-steps"
                                     stepsById={stepById}
                                     workflowGlobals={workflowGlobals}
                                     isOpen={effectiveOpenTrackingStepId === s.id}
@@ -1162,9 +1393,58 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
                                 />
                             ))}
-                            {trackingSteps.length === 0 ? (
+                            {trackingStepsView.length === 0 ? (
                                 <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
                                     No tracking steps configured.
+                                </div>
+                            ) : null}
+                        </div>
+                    )}
+
+                    {activeTab === "container-steps" && (
+                        <div className="space-y-4">
+                            <h3 className="text-lg font-semibold text-zinc-900">Container steps</h3>
+                            <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
+                                {renderStepper(containerStepsView, effectiveOpenContainerStepId)}
+                            </div>
+                            {containerStepsView.map((s) => (
+                                <StepCard
+                                    key={s.id}
+                                    step={s}
+                                    user={user}
+                                    shipment={shipment}
+                                    canEdit={canEdit}
+                                    workflowBlocked={workflowBlocked}
+                                    receivedDocTypes={receivedDocTypes}
+                                    openDocRequestTypes={openDocRequestTypes}
+                                    latestReceivedDocByType={latestReceivedDocByType}
+                                    workflowGlobalValues={workflowGlobalValues}
+                                    highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
+                                    highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
+                                    partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
+                                    customers={customers}
+                                    suppliers={suppliers}
+                                    brokers={brokers}
+                                    allocationGoods={allocationGoods}
+                                    setTab={setTab}
+                                    tabId="container-steps"
+                                    stepsById={stepById}
+                                    workflowGlobals={workflowGlobals}
+                                    isOpen={effectiveOpenContainerStepId === s.id}
+                                    onToggle={() => {
+                                        setHasTouchedContainers(true);
+                                        setOpenContainerStepId((prev) =>
+                                            prev === s.id ? null : s.id,
+                                        );
+                                    }}
+                                    onDirty={markFormDirty}
+                                    onClean={clearFormDirty}
+                                    isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
+                                />
+                            ))}
+                            {containerStepsView.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                    No container steps configured.
                                 </div>
                             ) : null}
                         </div>
@@ -2120,7 +2400,7 @@ function StepFieldInputs({
     );
 }
 
-// Step card component shared by workflow and tracking tabs.
+// Step card component shared by operations, tracking, and container tabs.
 // Helper functions for parsing step data and handling checklists.
 function jsonParse<T>(value: string | null | undefined, fallback: T): T {
     if (!value) return fallback;

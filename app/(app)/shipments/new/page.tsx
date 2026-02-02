@@ -1,137 +1,148 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
-import { CreateShipmentForm } from "@/components/shipments/CreateShipmentForm";
+import { FclImportCreateForm } from "@/components/shipments/fcl-import/FclImportCreateForm";
 import { assertCanWrite, canWrite, requireUser } from "@/lib/auth";
-import { TransportModes, type ShipmentType, type TransportMode } from "@/lib/domain";
 import { listParties } from "@/lib/data/parties";
-import { createShipment } from "@/lib/data/shipments";
-import { listWorkflowTemplates, suggestTemplate } from "@/lib/data/workflows";
+import { createShipment, listShipmentSteps } from "@/lib/data/shipments";
+import { updateShipmentStep } from "@/lib/data/steps";
+import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
+import { ensureFclImportTemplate } from "@/lib/fclImport/template";
+import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
+import { normalizeContainerNumbers } from "@/lib/fclImport/helpers";
 
-export default async function NewShipmentPage() {
+const headingFont = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+});
+
+const bodyFont = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+});
+
+const SERVICE_TYPE_FCL = "FCL_IMPORT_CLEARANCE";
+
+type NewShipmentPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function NewShipmentPage({ searchParams }: NewShipmentPageProps) {
   const user = await requireUser();
-
   const customers = await listParties({ type: "CUSTOMER" });
-  const templates = await listWorkflowTemplates({
-    includeArchived: false,
-    isSubworkflow: false,
-  });
+  const resolved = searchParams ? await Promise.resolve(searchParams) : {};
+  const error = typeof resolved.error === "string" ? resolved.error : null;
 
   async function createShipmentAction(formData: FormData) {
     "use server";
     const user = await requireUser();
     assertCanWrite(user);
 
+    const serviceType = String(formData.get("serviceType") ?? "").trim();
     const customerPartyIds = (formData.getAll("customerPartyIds") ?? [])
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value) && value > 0);
-    const transportMode = String(formData.get("transportMode") ?? "") as TransportMode;
     const origin = String(formData.get("origin") ?? "").trim();
     const destination = String(formData.get("destination") ?? "").trim();
-    const shipmentType = (transportMode === "LAND" ? "LAND" : "FCL") as ShipmentType;
-    const cargoDescription = "Not set";
+    const containerNumbers = normalizeContainerNumbers(
+      formData.getAll("containerNumbers").map((value) => String(value)),
+    );
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
       ? Array.from(
           new Set(
             jobIdsRaw
               .split(/[,\n\r]+/)
-              .map((v) => v.trim())
+              .map((value) => value.trim())
               .filter(Boolean),
           ),
         ).slice(0, 20)
       : [];
-    const workflowTemplateIdRaw = String(formData.get("workflowTemplateId") ?? "").trim();
-    let workflowTemplateId = workflowTemplateIdRaw ? Number(workflowTemplateIdRaw) : null;
 
     if (
+      serviceType !== SERVICE_TYPE_FCL ||
       customerPartyIds.length === 0 ||
-      !TransportModes.includes(transportMode) ||
       !origin ||
-      !destination
+      !destination ||
+      containerNumbers.length === 0
     ) {
       redirect("/shipments/new?error=invalid");
     }
 
-    if (!workflowTemplateId) {
-      const primaryCustomerId = customerPartyIds[0] ?? 0;
-      const suggested = await suggestTemplate({
-        transportMode,
-        origin,
-        destination,
-        shipmentType,
-        customerPartyId: primaryCustomerId,
-      });
-      workflowTemplateId = suggested?.id ?? null;
-    }
-
-    if (!workflowTemplateId) {
-      const fallbackTemplates = await listWorkflowTemplates({
-        includeArchived: false,
-        isSubworkflow: false,
-      });
-      workflowTemplateId = fallbackTemplates[0]?.id ?? null;
-    }
-
-    if (!workflowTemplateId) redirect("/shipments/new?error=template");
+    const workflowTemplateId = await ensureFclImportTemplate({
+      createdByUserId: user.id,
+    });
 
     const created = await createShipment({
       customerPartyIds,
-      transportMode,
+      transportMode: "SEA",
       origin,
       destination,
-      shipmentType,
-      cargoDescription,
+      shipmentType: "FCL",
+      cargoDescription: "FCL Import Clearance",
       jobIds: jobIds.length ? jobIds : undefined,
+      containerNumber: containerNumbers[0] ?? null,
       workflowTemplateId,
       createdByUserId: user.id,
+    });
+
+    const steps = await listShipmentSteps(created.shipmentId);
+    const creationStep = steps.find(
+      (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
+    );
+
+    if (creationStep) {
+      await updateShipmentStep({
+        stepId: creationStep.id,
+        status: "DONE",
+        fieldValuesJson: JSON.stringify({
+          containers: containerNumbers.map((number) => ({
+            container_number: number,
+          })),
+        }),
+      });
+    }
+
+    await refreshShipmentDerivedState({
+      shipmentId: created.shipmentId,
+      actorUserId: user.id,
+      updateLastUpdate: true,
     });
 
     redirect(`/shipments/${created.shipmentId}`);
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div>
-        <div className="text-sm text-zinc-500">
-          <Link href="/shipments" className="hover:underline">
-            Shipments
-          </Link>{" "}
-          <span className="text-zinc-400">/</span> New
+    <div className={`${bodyFont.className} mx-auto max-w-6xl space-y-6`}>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.25em] text-slate-500">
+            Shipment creation
+          </div>
+          <h1
+            className={`${headingFont.className} mt-2 text-3xl font-semibold tracking-tight text-slate-900`}
+          >
+            Create shipment
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            Service type defaults to FCL Import Clearance. You can change it
+            later as more services are added.
+          </p>
         </div>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">
-          Create shipment
-        </h1>
-        <p className="mt-1 text-sm text-zinc-600">
-          Fill the basics — the workflow steps will be generated automatically.
-        </p>
+        <Link
+          href="/shipments"
+          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+        >
+          Back to shipments
+        </Link>
       </div>
 
-      {templates.length === 0 ? (
-        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-5 text-sm text-yellow-900">
-          No workflow templates found.{" "}
-          <Link href="/workflows/new" className="font-medium underline">
-            Create a template
-          </Link>{" "}
-          first.
-        </div>
-      ) : null}
-
-      {customers.length === 0 ? (
-        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-5 text-sm text-yellow-900">
-          No customers found.{" "}
-          <Link href="/parties/new?type=CUSTOMER" className="font-medium underline">
-            Create a customer
-          </Link>{" "}
-          first.
-        </div>
-      ) : null}
-
-      <CreateShipmentForm
+      <FclImportCreateForm
         customers={customers}
-        templates={templates}
         action={createShipmentAction}
         canWrite={canWrite(user.role)}
+        error={error}
       />
     </div>
   );

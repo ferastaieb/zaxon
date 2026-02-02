@@ -18,6 +18,10 @@ type CreateFormProps = {
   error: string | null;
 };
 
+const SERVICE_TYPES = [
+  { id: "FCL_IMPORT_CLEARANCE", label: "FCL Import Clearance" },
+];
+
 export function FclImportCreateForm({
   customers,
   action,
@@ -28,6 +32,13 @@ export function FclImportCreateForm({
   const [selectedCustomers, setSelectedCustomers] = useState<string[]>([]);
   const [containers, setContainers] = useState<string[]>([""]);
   const [jobIds, setJobIds] = useState("");
+  const [serviceType, setServiceType] = useState(
+    SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
+  );
+  const serviceLabel =
+    SERVICE_TYPES.find((option) => option.id === serviceType)?.label ??
+    SERVICE_TYPES[0]?.label ??
+    "FCL Import Clearance";
 
   const filteredCustomers = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -66,7 +77,7 @@ export function FclImportCreateForm({
       <div className="relative z-10 grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <section className="space-y-6">
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                   Shipment profile
@@ -76,7 +87,7 @@ export function FclImportCreateForm({
                 </h2>
               </div>
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
-                Service: FCL Import Clearance
+                Service: {serviceLabel}
               </span>
             </div>
 
@@ -87,6 +98,25 @@ export function FclImportCreateForm({
             ) : null}
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <label className="block md:col-span-2">
+                <div className="mb-1 text-sm font-medium text-slate-700">
+                  Service type
+                </div>
+                <select
+                  name="serviceType"
+                  value={serviceType}
+                  onChange={(event) => setServiceType(event.target.value)}
+                  disabled={!canWrite}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                  required
+                >
+                  {SERVICE_TYPES.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="block">
                 <div className="mb-1 text-sm font-medium text-slate-700">
                   Origin
