@@ -345,9 +345,9 @@ export function FclImportWorkspace({
 
   const actions = [
     { id: "overview", label: "Overview", target: "overview" },
-    { id: "tracking", label: "Tracking steps", target: "tracking" },
-    { id: "operations", label: "Operations steps", target: "operations" },
-    { id: "container-ops", label: "Container operations", target: "container-ops" },
+    { id: "tracking", label: "Tracking", target: "tracking" },
+    { id: "operations", label: "Operations", target: "operations" },
+    { id: "container-ops", label: "Containers", target: "container-ops" },
   ];
 
   const [dischargeToggles, setDischargeToggles] = useState<ToggleMap>(() =>

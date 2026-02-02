@@ -8,6 +8,7 @@ import {
   markDocumentRequestFulfilled,
 } from "@/lib/data/documents";
 import { logActivity } from "@/lib/data/activities";
+import { getShipment } from "@/lib/data/shipments";
 import {
   getShipmentIdForTrackingToken,
   getTrackingCustomerPhoneLast4,
@@ -18,7 +19,9 @@ import {
   listCustomerVisibleSteps,
   listTrackingConnectedShipments,
 } from "@/lib/data/tracking";
+import { getWorkflowTemplate } from "@/lib/data/workflows";
 import { overallStatusLabel, stepStatusLabel, type StepStatus } from "@/lib/domain";
+import { FCL_IMPORT_TEMPLATE_NAME } from "@/lib/fclImport/constants";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
 import {
@@ -432,6 +435,17 @@ export default async function TrackShipmentPage({
   const { token } = await params;
   const shipment = await getTrackingShipment(token);
   if (!shipment) notFound();
+
+  const fullShipment = await getShipment(shipment.id);
+  if (fullShipment?.workflow_template_id) {
+    const template = await getWorkflowTemplate(fullShipment.workflow_template_id);
+    if (
+      template?.name &&
+      template.name.toLowerCase() === FCL_IMPORT_TEMPLATE_NAME.toLowerCase()
+    ) {
+      redirect(`/track/fcl/${token}`);
+    }
+  }
 
   const isAuthed = await isTrackingSessionValid(token);
   const customerLast4 = await getTrackingCustomerPhoneLast4(token);

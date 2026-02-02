@@ -344,7 +344,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
     const canDelete = user.role === "ADMIN";
-    const trackingLink = trackingToken ? `/track/${trackingToken}` : "-";
+    const trackingLink = trackingToken
+        ? isFclWorkflow
+            ? `/track/fcl/${trackingToken}`
+            : `/track/${trackingToken}`
+        : "-";
     const customerLabel =
         shipmentCustomers.length > 0
             ? shipmentCustomers.map((c) => c.name).join(", ")
@@ -716,10 +720,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             [
                                 { id: "overview", label: "Overview" },
                                 { id: "connections", label: "Connections", count: connectedShipments.length },
-                                { id: "tracking-steps", label: "Tracking steps", count: trackingStepsView.length },
-                                { id: "operations-steps", label: "Operations steps", count: operationsStepsView.length },
+                                { id: "tracking-steps", label: "Tracking", count: trackingStepsView.length },
+                                { id: "operations-steps", label: "Operations", count: operationsStepsView.length },
                                 ...(showContainerTab
-                                    ? [{ id: "container-steps", label: "Container steps", count: containerStepsView.length }]
+                                    ? [{ id: "container-steps", label: "Containers", count: containerStepsView.length }]
                                     : []),
                                 { id: "goods", label: "Goods", count: shipmentGoods.length },
                                 { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },

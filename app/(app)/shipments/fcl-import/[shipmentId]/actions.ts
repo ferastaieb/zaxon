@@ -11,7 +11,7 @@ import {
 import { logActivity } from "@/lib/data/activities";
 import { getShipment, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
-import { StepStatuses, type StepStatus } from "@/lib/domain";
+import { StepStatuses, stepStatusLabel, type StepStatus } from "@/lib/domain";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
@@ -75,7 +75,7 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
       file: upload.file,
       filePrefix: upload.documentType,
     });
-    await addDocument({
+    const docId = await addDocument({
       shipmentId,
       documentType: upload.documentType,
       fileName: saved.fileName,
@@ -84,6 +84,14 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
       sizeBytes: saved.sizeBytes,
       source: "STAFF",
       uploadedByUserId: user.id,
+    });
+
+    await logActivity({
+      shipmentId,
+      type: "DOCUMENT_UPLOADED",
+      message: `Field document uploaded: ${upload.documentType}`,
+      actorUserId: user.id,
+      data: { docId, documentType: upload.documentType, stepId },
     });
   }
 
@@ -132,6 +140,22 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
     if (!statusOverride || statusOverride === row.status) continue;
     await updateShipmentStep({ stepId: row.id, status: statusOverride });
   }
+
+  await logActivity({
+    shipmentId,
+    type: "STEP_UPDATED",
+    message: manualStatus
+      ? `Step "${step.name}" -> ${stepStatusLabel(manualStatus)}`
+      : `Step "${step.name}" saved`,
+    actorUserId: user.id,
+    data: {
+      stepId,
+      statusRequested: manualStatus,
+      fieldUpdates: Object.keys(fieldUpdates),
+      fieldRemovals: fieldRemovals.map((entry) => entry.path),
+      uploads: fieldUploads.map((upload) => upload.documentType),
+    },
+  });
 
   await refreshShipmentDerivedState({
     shipmentId,
