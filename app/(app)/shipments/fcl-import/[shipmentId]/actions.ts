@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 
 import { assertCanWrite, requireUser } from "@/lib/auth";
-import { addDocument, listDocuments } from "@/lib/data/documents";
+import {
+  addDocument,
+  createDocumentRequest,
+  listDocuments,
+} from "@/lib/data/documents";
+import { logActivity } from "@/lib/data/activities";
 import { getShipment, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import { StepStatuses, type StepStatus } from "@/lib/domain";
@@ -138,4 +143,48 @@ export async function updateFclStepAction(shipmentId: number, formData: FormData
     redirect(returnTo);
   }
   redirect(`/shipments/fcl-import/${shipmentId}?saved=${stepId}`);
+}
+
+export async function requestFclDocumentAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  await requireShipmentAccess(user, shipmentId);
+
+  const documentType = String(formData.get("documentType") ?? "").trim();
+  const message = String(formData.get("message") ?? "").trim() || null;
+  const returnToRaw = formData.get("returnTo");
+  const returnTo = typeof returnToRaw === "string" ? returnToRaw.trim() : "";
+
+  if (!documentType) {
+    redirect(`/shipments/fcl-import/${shipmentId}?error=invalid`);
+  }
+
+  const requestId = await createDocumentRequest({
+    shipmentId,
+    documentType,
+    message,
+    requestedByUserId: user.id,
+  });
+
+  await logActivity({
+    shipmentId,
+    type: "DOCUMENT_REQUESTED",
+    message: `Customer document requested: ${documentType}`,
+    actorUserId: user.id,
+    data: { requestId, documentType },
+  });
+
+  await refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: true,
+  });
+
+  if (returnTo) {
+    redirect(returnTo);
+  }
+  redirect(`/shipments/fcl-import/${shipmentId}?requested=${requestId}`);
 }

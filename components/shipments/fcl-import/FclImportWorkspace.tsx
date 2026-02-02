@@ -66,6 +66,7 @@ type WorkspaceProps = {
   trackingToken: string | null;
   canEdit: boolean;
   updateAction: (formData: FormData) => void;
+  requestDocumentAction?: (formData: FormData) => void;
   mode?: WorkspaceMode;
   returnTo?: string;
 };
@@ -151,6 +152,7 @@ export function FclImportWorkspace({
   trackingToken,
   canEdit,
   updateAction,
+  requestDocumentAction,
   mode = "full",
   returnTo,
 }: WorkspaceProps) {
@@ -164,6 +166,37 @@ export function FclImportWorkspace({
   const isFull = mode === "full";
   const renderReturnTo = () =>
     returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
+  const renderFileMeta = (stepId: number, path: string[]) => {
+    const doc = getLatestDoc(stepId, path);
+    const docType = buildDocKey(stepId, path);
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        {doc ? (
+          <a
+            href={`/api/documents/${doc.id}`}
+            className="font-medium text-slate-700 hover:underline"
+          >
+            Download latest
+          </a>
+        ) : (
+          <span>No file uploaded yet.</span>
+        )}
+        {requestDocumentAction ? (
+          <form action={requestDocumentAction} className="inline">
+            <input type="hidden" name="documentType" value={docType} />
+            {renderReturnTo()}
+            <button
+              type="submit"
+              disabled={!canEdit}
+              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+            >
+              Request from customer
+            </button>
+          </form>
+        ) : null}
+      </div>
+    );
+  };
 
   useEffect(() => {
     if (mode !== "full") return;
@@ -1201,6 +1234,7 @@ export function FclImportWorkspace({
                           disabled={!canEdit || !orderReceived}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
+                        {renderFileMeta(orderStep.id, ["order_received_file"])}
                       </label>
                     </div>
                   </StepCard>
@@ -1241,14 +1275,7 @@ export function FclImportWorkspace({
                           disabled={!canEdit}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
-                        {getLatestDoc(blStep.id, ["draft_bl_file"]) ? (
-                          <a
-                            href={`/api/documents/${getLatestDoc(blStep.id, ["draft_bl_file"])?.id}`}
-                            className="mt-2 inline-flex text-xs text-slate-500 hover:underline"
-                          >
-                            Download latest draft
-                          </a>
-                        ) : null}
+                        {renderFileMeta(blStep.id, ["draft_bl_file"])}
                       </label>
 
                       <div className="grid gap-3 sm:grid-cols-2">
@@ -1332,22 +1359,11 @@ export function FclImportWorkspace({
                                     disabled={!canEdit || !checked}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
-                                  {getLatestDoc(blStep.id, [
+                                  {renderFileMeta(blStep.id, [
                                     "bl_type",
                                     "telex",
                                     item.fileId,
-                                  ]) ? (
-                                    <a
-                                      href={`/api/documents/${getLatestDoc(blStep.id, [
-                                        "bl_type",
-                                        "telex",
-                                        item.fileId,
-                                      ])?.id}`}
-                                      className="mt-2 inline-flex text-xs text-slate-500 hover:underline"
-                                    >
-                                      Download latest
-                                    </a>
-                                  ) : null}
+                                  ])}
                                 </div>
                               </div>
                             );
@@ -1414,6 +1430,11 @@ export function FclImportWorkspace({
                                   disabled={!canEdit || !isTruthy(originalValues[field])}
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
+                                {renderFileMeta(blStep.id, [
+                                  "bl_type",
+                                  "original",
+                                  `${field}_file`,
+                                ])}
                               </div>
                             </div>
                           ))}
@@ -1512,6 +1533,11 @@ export function FclImportWorkspace({
                                 disabled={!canEdit || !originalSurrendered}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
+                              {renderFileMeta(blStep.id, [
+                                "bl_type",
+                                "original",
+                                "original_surrendered_file",
+                              ])}
                             </div>
                           </div>
 
@@ -1578,6 +1604,7 @@ export function FclImportWorkspace({
                             disabled={!canEdit || !copyInvoice}
                             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                           />
+                          {renderFileMeta(invoiceStep.id, ["copy_invoice_file"])}
                         </div>
                       </div>
 
@@ -1645,6 +1672,7 @@ export function FclImportWorkspace({
                             disabled={!canEdit || !originalInvoice}
                             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                           />
+                          {renderFileMeta(invoiceStep.id, ["original_invoice_file"])}
                         </div>
                       </div>
 
@@ -1699,6 +1727,11 @@ export function FclImportWorkspace({
                                     disabled={!canEdit}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
+                                  {renderFileMeta(invoiceStep.id, [
+                                    "other_documents",
+                                    String(index),
+                                    "document_file",
+                                  ])}
                                 </label>
                               </div>
                             ))
@@ -1874,6 +1907,7 @@ export function FclImportWorkspace({
                           disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
+                        {renderFileMeta(boeStep.id, ["boe_file"])}
                       </label>
                     </div>
                   </StepCard>
@@ -1967,6 +2001,11 @@ export function FclImportWorkspace({
                                   disabled={!canEdit || !eligible}
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
+                                {renderFileMeta(tokenStep.id, [
+                                  "containers",
+                                  String(index),
+                                  "token_file",
+                                ])}
                               </label>
                             </div>
                             {!eligible ? (
@@ -2052,6 +2091,11 @@ export function FclImportWorkspace({
                                 disabled={!canEdit}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
+                              {renderFileMeta(returnTokenStep.id, [
+                                "containers",
+                                String(index),
+                                "return_token_file",
+                              ])}
                             </label>
                           </div>
                         </div>

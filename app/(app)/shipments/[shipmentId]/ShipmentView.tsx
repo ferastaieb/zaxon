@@ -161,6 +161,7 @@ interface ShipmentViewProps {
 
     // Optional FCL actions
     fclUpdateAction?: (formData: FormData) => void;
+    fclRequestAction?: (formData: FormData) => void;
 }
 
 function riskTone(risk: ShipmentViewShipment["risk"]) {
@@ -279,6 +280,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         error,
         errorStepId,
         fclUpdateAction,
+        fclRequestAction,
     } = props;
 
     const searchParams = useSearchParams();
@@ -1352,6 +1354,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     updateAction={fclUpdateAction!}
+                                    requestDocumentAction={fclRequestAction}
                                     mode="operations"
                                     returnTo={fclOperationsReturnTo}
                                 />
@@ -1423,6 +1426,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     updateAction={fclUpdateAction!}
+                                    requestDocumentAction={fclRequestAction}
                                     mode="tracking"
                                     returnTo={fclTrackingReturnTo}
                                 />
@@ -1491,6 +1495,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     updateAction={fclUpdateAction!}
+                                    requestDocumentAction={fclRequestAction}
                                     mode="container-ops"
                                     returnTo={fclContainerReturnTo}
                                 />

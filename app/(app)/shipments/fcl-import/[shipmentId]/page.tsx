@@ -22,7 +22,7 @@ import {
 } from "@/lib/fclImport/helpers";
 import { ensureFclImportTemplate } from "@/lib/fclImport/template";
 import type { DocumentRow } from "@/lib/data/documents";
-import { updateFclStepAction } from "./actions";
+import { requestFclDocumentAction, updateFclStepAction } from "./actions";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -155,6 +155,7 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
         trackingToken={trackingToken}
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
         updateAction={updateFclStepAction.bind(null, shipment.id)}
+        requestDocumentAction={requestFclDocumentAction.bind(null, shipment.id)}
       />
     </div>
   );
