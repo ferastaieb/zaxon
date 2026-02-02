@@ -12,6 +12,9 @@ import {
 } from "@aws-sdk/client-s3";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 
+const DEFAULT_UPLOADS_BUCKET = "logisticzaxon-uploads-250598593974-me-south-1";
+const DEFAULT_UPLOADS_REGION = "me-south-1";
+
 export function getUploadsRoot() {
   return process.env.UPLOADS_ROOT ?? path.join(process.cwd(), "data", "uploads");
 }
@@ -22,11 +25,20 @@ let cachedUploadsPrefix: string | null = null;
 let uploadsConfigLoaded = false;
 
 function getUploadsBucket() {
-  return process.env.UPLOADS_BUCKET?.trim() || cachedUploadsBucket || "";
+  return (
+    process.env.UPLOADS_BUCKET?.trim() ||
+    cachedUploadsBucket ||
+    DEFAULT_UPLOADS_BUCKET
+  );
 }
 
 function getUploadsRegion() {
-  return process.env.UPLOADS_REGION ?? cachedUploadsRegion ?? process.env.AWS_REGION ?? "";
+  return (
+    process.env.UPLOADS_REGION ??
+    cachedUploadsRegion ??
+    process.env.AWS_REGION ??
+    DEFAULT_UPLOADS_REGION
+  );
 }
 
 function getUploadsPrefix() {
