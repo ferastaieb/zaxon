@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { PartyRow } from "@/lib/data/parties";
 import {
@@ -35,6 +35,7 @@ export function FclImportCreateForm({
   const [serviceType, setServiceType] = useState(
     SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
   );
+  const containerInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const serviceLabel =
     SERVICE_TYPES.find((option) => option.id === serviceType)?.label ??
     SERVICE_TYPES[0]?.label ??
@@ -60,8 +61,15 @@ export function FclImportCreateForm({
     });
   };
 
+  const focusContainer = (index: number) => {
+    const input = containerInputRefs.current[index];
+    if (input) input.focus();
+  };
+
   const addContainer = () => {
+    const nextIndex = containers.length;
     setContainers((prev) => [...prev, ""]);
+    setTimeout(() => focusContainer(nextIndex), 0);
   };
 
   const removeContainer = (index: number) => {
@@ -252,6 +260,9 @@ export function FclImportCreateForm({
                   </div>
                   <input
                     name="containerNumbers"
+                    ref={(el) => {
+                      containerInputRefs.current[index] = el;
+                    }}
                     value={value}
                     onChange={(event) => updateContainer(index, event.target.value)}
                     onKeyDown={(event) => {
