@@ -1,17 +1,30 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { Badge } from "@/components/ui/Badge";
-import { getTrackingShipment } from "@/lib/data/tracking";
+import {
+  addDocument,
+  listDocumentRequests,
+  markDocumentRequestFulfilled,
+} from "@/lib/data/documents";
+import { logActivity } from "@/lib/data/activities";
+import {
+  getShipmentIdForTrackingToken,
+  getTrackingShipment,
+  listCustomerDocumentRequests,
+} from "@/lib/data/tracking";
 import { listShipmentSteps } from "@/lib/data/shipments";
 import { overallStatusLabel, stepStatusLabel, type StepStatus } from "@/lib/domain";
 import { parseStepFieldValues } from "@/lib/stepFields";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import {
   extractContainerNumbers,
+  isTruthy,
   normalizeContainerNumbers,
   normalizeContainerRows,
 } from "@/lib/fclImport/helpers";
+import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
+import { saveUpload } from "@/lib/storage";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -25,6 +38,7 @@ const bodyFont = IBM_Plex_Sans({
 
 type TrackPageProps = {
   params: Promise<{ token: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function statusTone(status: StepStatus) {
@@ -41,10 +55,26 @@ function formatDate(value: string | null | undefined) {
   return parsed.toLocaleDateString();
 }
 
-export default async function FclTrackingPage({ params }: TrackPageProps) {
+function daysUntil(dateRaw: string | undefined) {
+  if (!dateRaw) return null;
+  const date = new Date(dateRaw);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const diff = date.getTime() - now.getTime();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+export default async function FclTrackingPage({
+  params,
+  searchParams,
+}: TrackPageProps) {
   const { token } = await params;
   const shipment = await getTrackingShipment(token);
   if (!shipment) notFound();
+  const resolved = searchParams
+    ? await Promise.resolve(searchParams)
+    : ({} as SearchParams);
+  const uploaded = readParam(resolved, "uploaded") === "1";
 
   const steps = await listShipmentSteps(shipment.id);
   const stepByName = new Map(steps.map((step) => [step.name, step]));
@@ -59,6 +89,8 @@ export default async function FclTrackingPage({ params }: TrackPageProps) {
   const dischargeStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containersDischarge);
   const pullOutStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containerPullOut);
   const deliveryStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containerDelivery);
+  const invoiceStep = stepByName.get(FCL_IMPORT_STEP_NAMES.commercialInvoice);
+  const boeStep = stepByName.get(FCL_IMPORT_STEP_NAMES.billOfEntry);
 
   const vesselValues = parseStepFieldValues(vesselStep?.field_values_json);
   const dischargeRows = normalizeContainerRows(
@@ -82,6 +114,88 @@ export default async function FclTrackingPage({ params }: TrackPageProps) {
       ? "Vessel sailing"
       : "ETA pending";
 
+  const invoiceValues = parseStepFieldValues(invoiceStep?.field_values_json);
+  const boeValues = parseStepFieldValues(boeStep?.field_values_json);
+  const boeDate = typeof boeValues.boe_date === "string" ? boeValues.boe_date : "";
+  const invoiceOptionRaw =
+    typeof invoiceValues.invoice_option === "string"
+      ? invoiceValues.invoice_option
+      : "";
+  const invoiceOption =
+    invoiceOptionRaw ||
+    (isTruthy(invoiceValues.proceed_with_copy) ? "COPY_FINE" : "") ||
+    (isTruthy(invoiceValues.original_invoice_received) ? "ORIGINAL" : "");
+  const messageDaysLeft = (() => {
+    if (!boeDate) return null;
+    const boe = new Date(boeDate);
+    if (Number.isNaN(boe.getTime())) return null;
+    const deadline = new Date(boe.getTime() + 20 * 24 * 60 * 60 * 1000);
+    return daysUntil(deadline.toISOString());
+  })();
+
+  const requests = await listCustomerDocumentRequests(shipment.id);
+
+  async function uploadRequestedDocAction(
+    tokenValue: string,
+    requestId: number,
+    formData: FormData,
+  ) {
+    "use server";
+    const shipmentId = await getShipmentIdForTrackingToken(tokenValue);
+    if (!shipmentId) redirect(`/track/fcl/${tokenValue}?error=invalid`);
+
+    const file = formData.get("file");
+    if (!file || !(file instanceof File)) {
+      redirect(`/track/fcl/${tokenValue}?error=file`);
+    }
+
+    const req = (await listDocumentRequests(shipmentId)).find(
+      (request) => request.id === requestId,
+    );
+    if (!req || req.status !== "OPEN") {
+      redirect(`/track/fcl/${tokenValue}?error=request`);
+    }
+
+    const upload = await saveUpload({
+      shipmentId,
+      file,
+      filePrefix: `CUSTOMER-${req.document_type}`,
+    });
+
+    const docId = await addDocument({
+      shipmentId,
+      documentType: req.document_type,
+      fileName: upload.fileName,
+      storagePath: upload.storagePath,
+      mimeType: upload.mimeType,
+      sizeBytes: upload.sizeBytes,
+      isRequired: true,
+      isReceived: true,
+      shareWithCustomer: true,
+      source: "CUSTOMER",
+      documentRequestId: req.id,
+      uploadedByUserId: null,
+    });
+
+    await markDocumentRequestFulfilled(req.id);
+
+    await logActivity({
+      shipmentId,
+      type: "CUSTOMER_DOCUMENT_UPLOADED",
+      message: `Customer uploaded: ${req.document_type}`,
+      actorUserId: null,
+      data: { docId, requestId: req.id },
+    });
+
+    await refreshShipmentDerivedState({
+      shipmentId,
+      actorUserId: null,
+      updateLastUpdate: true,
+    });
+
+    redirect(`/track/fcl/${tokenValue}?uploaded=1`);
+  }
+
   return (
     <div className={`${bodyFont.className} min-h-screen bg-slate-50`}>
       <div className="mx-auto max-w-5xl space-y-6 px-6 py-10">
@@ -104,6 +218,58 @@ export default async function FclTrackingPage({ params }: TrackPageProps) {
             </span>
           </div>
         </header>
+
+        {uploaded ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            Document uploaded successfully. Thank you!
+          </div>
+        ) : null}
+
+        {invoiceStep ? (
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Commercial invoice
+                </div>
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  BOE invoice option
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  This selection guides how we proceed with BOE.
+                </div>
+              </div>
+              <Badge tone={statusTone(invoiceStep.status)}>
+                {stepStatusLabel(invoiceStep.status)}
+              </Badge>
+            </div>
+
+            {invoiceOption === "COPY_20_DAYS" ? (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                Please notify your exporter to courier the original invoice to
+                our office to avoid a fine of 1,000 AED upon passing the Bill of
+                Entry.{" "}
+                {messageDaysLeft !== null ? (
+                  <span>Fine will be paid within {messageDaysLeft} days.</span>
+                ) : (
+                  <span>Set BOE date to calculate remaining days.</span>
+                )}
+              </div>
+            ) : invoiceOption === "COPY_FINE" ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                Proceeding with copy invoice and 1,000 AED fine.
+              </div>
+            ) : invoiceOption === "ORIGINAL" ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                Proceeding with original invoice.
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                No invoice option selected yet.
+              </div>
+            )}
+          </section>
+        ) : null}
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
@@ -263,7 +429,65 @@ export default async function FclTrackingPage({ params }: TrackPageProps) {
             ) : null}
           </div>
         </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Requested documents
+              </div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">
+                Upload requested files
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {requests
+              .filter((r) => r.status === "OPEN")
+              .map((r) => (
+                <div key={r.id} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-medium text-slate-900">
+                    {r.document_type}
+                  </div>
+                  {r.message ? (
+                    <div className="mt-1 text-sm text-slate-600">{r.message}</div>
+                  ) : null}
+                  <form
+                    action={uploadRequestedDocAction.bind(null, token, r.id)}
+                    className="mt-3 flex flex-wrap items-center gap-2"
+                  >
+                    <input
+                      name="file"
+                      type="file"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
+                      required
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                    >
+                      Upload
+                    </button>
+                  </form>
+                </div>
+              ))}
+
+            {requests.filter((r) => r.status === "OPEN").length === 0 ? (
+              <div className="text-sm text-slate-500">
+                No documents requested right now.
+              </div>
+            ) : null}
+          </div>
+        </section>
       </div>
     </div>
   );
+}
+type SearchParams = Record<string, string | string[] | undefined>;
+
+function readParam(params: SearchParams, key: string): string | undefined {
+  const value = params[key];
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value[0];
+  return value;
 }

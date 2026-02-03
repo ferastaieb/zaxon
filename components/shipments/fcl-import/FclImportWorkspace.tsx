@@ -245,12 +245,23 @@ export function FclImportWorkspace({
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         {doc ? (
-          <a
-            href={`/api/documents/${doc.id}`}
-            className="font-medium text-slate-700 hover:underline"
-          >
-            Download latest
-          </a>
+          <>
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-900">
+              Uploaded
+              <span className="font-medium text-emerald-800">
+                {doc.file_name}
+              </span>
+            </span>
+            <span>
+              {new Date(doc.uploaded_at).toLocaleDateString()}
+            </span>
+            <a
+              href={`/api/documents/${doc.id}`}
+              className="font-medium text-slate-700 hover:underline"
+            >
+              Download latest
+            </a>
+          </>
         ) : (
           <span>No file uploaded yet.</span>
         )}
