@@ -47,6 +47,7 @@ type DocumentMeta = {
   id: number;
   file_name: string;
   uploaded_at: string;
+  source?: "STAFF" | "CUSTOMER";
 };
 
 type ShipmentMeta = {
@@ -68,6 +69,7 @@ type WorkspaceProps = {
   jobIds: JobIdRow[];
   containerNumbers: string[];
   latestDocsByType: Record<string, DocumentMeta>;
+  openDocRequestTypes?: string[];
   trackingToken: string | null;
   canEdit: boolean;
   canAdminEdit?: boolean;
@@ -200,6 +202,7 @@ export function FclImportWorkspace({
   trackingToken,
   canEdit,
   canAdminEdit = false,
+  openDocRequestTypes = [],
   updateAction,
   requestDocumentAction,
   mode = "full",
@@ -213,6 +216,10 @@ export function FclImportWorkspace({
   const showOperations = mode === "full" || mode === "operations";
   const showContainerOps = mode === "full" || mode === "container-ops";
   const isFull = mode === "full";
+  const openRequestSet = useMemo(
+    () => new Set(openDocRequestTypes.map((type) => String(type))),
+    [openDocRequestTypes],
+  );
   const [isRequestPending, startRequestTransition] = useTransition();
   const [requestingDocType, setRequestingDocType] = useState<string | null>(null);
   const [editUnlocked, setEditUnlocked] = useState<Record<number, boolean>>({});
@@ -241,6 +248,9 @@ export function FclImportWorkspace({
   const renderFileMeta = (stepId: number, path: string[]) => {
     const doc = getLatestDoc(stepId, path);
     const docType = buildDocKey(stepId, path);
+    const step = stepsById.get(stepId);
+    const requestLocked = !canEditStep(step);
+    const isRequested = openRequestSet.has(docType);
     const requestReturnTo = returnTo
       ? appendQueryParam(returnTo, "requested", "1")
       : "";
@@ -254,6 +264,11 @@ export function FclImportWorkspace({
                 {doc.file_name}
               </span>
             </span>
+            {doc.source === "CUSTOMER" ? (
+              <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
+                Uploaded by customer
+              </span>
+            ) : null}
             <span>
               {new Date(doc.uploaded_at).toLocaleDateString()}
             </span>
@@ -270,7 +285,11 @@ export function FclImportWorkspace({
         {requestDocumentAction ? (
           <button
             type="button"
-            disabled={!canEdit || (isRequestPending && requestingDocType === docType)}
+            disabled={
+              requestLocked ||
+              isRequested ||
+              (isRequestPending && requestingDocType === docType)
+            }
             onClick={() => {
               startRequestTransition(() => {
                 setRequestingDocType(docType);
@@ -284,7 +303,9 @@ export function FclImportWorkspace({
             }}
             className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
           >
-            {isRequestPending && requestingDocType === docType ? (
+            {isRequested ? (
+              "Requested"
+            ) : isRequestPending && requestingDocType === docType ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
                 Requesting...
@@ -326,6 +347,11 @@ export function FclImportWorkspace({
   const stepsByName = useMemo(() => {
     const map = new Map<string, StepData>();
     steps.forEach((step) => map.set(step.name, step));
+    return map;
+  }, [steps]);
+  const stepsById = useMemo(() => {
+    const map = new Map<number, StepData>();
+    steps.forEach((step) => map.set(step.id, step));
     return map;
   }, [steps]);
 

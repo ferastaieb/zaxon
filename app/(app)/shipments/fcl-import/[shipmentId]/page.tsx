@@ -4,7 +4,7 @@ import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
 import { requireUser } from "@/lib/auth";
-import { listDocuments } from "@/lib/data/documents";
+import { listDocumentRequests, listDocuments } from "@/lib/data/documents";
 import {
   getShipment,
   getTrackingTokenForShipment,
@@ -39,8 +39,10 @@ type ShipmentPageProps = {
 };
 
 function buildLatestDocMap(docs: DocumentRow[]) {
-  const latest: Record<string, { id: number; file_name: string; uploaded_at: string }> =
-    {};
+  const latest: Record<
+    string,
+    { id: number; file_name: string; uploaded_at: string; source: "STAFF" | "CUSTOMER" }
+  > = {};
   for (const doc of docs) {
     const key = String(doc.document_type);
     if (!latest[key]) {
@@ -48,6 +50,7 @@ function buildLatestDocMap(docs: DocumentRow[]) {
         id: doc.id,
         file_name: doc.file_name,
         uploaded_at: doc.uploaded_at,
+        source: doc.source,
       };
     }
   }
@@ -65,12 +68,16 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
   const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
 
-  const [customers, jobIds, docs, trackingToken] = await Promise.all([
+  const [customers, jobIds, docs, docRequests, trackingToken] = await Promise.all([
     listShipmentCustomers(id),
     listShipmentJobIds(id),
     listDocuments(id),
+    listDocumentRequests(id),
     getTrackingTokenForShipment(id),
   ]);
+  const openDocRequestTypes = docRequests
+    .filter((request) => request.status === "OPEN")
+    .map((request) => String(request.document_type));
 
   const templateId = await ensureFclImportTemplate({ createdByUserId: user.id });
   let steps = await listShipmentSteps(id);
@@ -152,6 +159,7 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
         jobIds={jobIds}
         containerNumbers={containerNumbers}
         latestDocsByType={buildLatestDocMap(docs)}
+        openDocRequestTypes={openDocRequestTypes}
         trackingToken={trackingToken}
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
         canAdminEdit={user.role === "ADMIN"}

@@ -472,11 +472,19 @@ export default function ShipmentView(props: ShipmentViewProps) {
     }, [isFclWorkflow, steps]);
     const fclLatestDocsByType = useMemo(() => {
         if (!isFclWorkflow) return {};
-        const latest: Record<string, DocumentRow> = {};
+        const latest: Record<
+            string,
+            { id: number; file_name: string; uploaded_at: string; source: "STAFF" | "CUSTOMER" }
+        > = {};
         for (const doc of docs) {
             const key = String(doc.document_type);
             if (!latest[key]) {
-                latest[key] = doc;
+                latest[key] = {
+                    id: doc.id,
+                    file_name: doc.file_name,
+                    uploaded_at: doc.uploaded_at,
+                    source: doc.source,
+                };
             }
         }
         return latest;
@@ -1404,6 +1412,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     jobIds={jobIds}
                                     containerNumbers={containerNumbers}
                                     latestDocsByType={fclLatestDocsByType}
+                                    openDocRequestTypes={openDocRequestTypes}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     canAdminEdit={user.role === "ADMIN"}
@@ -1477,6 +1486,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     jobIds={jobIds}
                                     containerNumbers={containerNumbers}
                                     latestDocsByType={fclLatestDocsByType}
+                                    openDocRequestTypes={openDocRequestTypes}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     canAdminEdit={user.role === "ADMIN"}
@@ -1547,6 +1557,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     jobIds={jobIds}
                                     containerNumbers={containerNumbers}
                                     latestDocsByType={fclLatestDocsByType}
+                                    openDocRequestTypes={openDocRequestTypes}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
                                     canAdminEdit={user.role === "ADMIN"}
