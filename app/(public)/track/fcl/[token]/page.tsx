@@ -2,8 +2,10 @@ import { notFound, redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { Badge } from "@/components/ui/Badge";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import {
   addDocument,
+  listDocuments,
   listDocumentRequests,
   markDocumentRequestFulfilled,
 } from "@/lib/data/documents";
@@ -78,6 +80,11 @@ export default async function FclTrackingPage({
 
   const steps = await listShipmentSteps(shipment.id);
   const stepByName = new Map(steps.map((step) => [step.name, step]));
+  const docs = await listDocuments(shipment.id);
+  const customerUploads = docs
+    .filter((doc) => doc.source === "CUSTOMER" && doc.share_with_customer)
+    .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at))
+    .slice(0, 50);
 
   const creationStep = stepByName.get(FCL_IMPORT_STEP_NAMES.shipmentCreation);
   let containerNumbers = extractContainerNumbers(
@@ -461,12 +468,12 @@ export default async function FclTrackingPage({
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm"
                       required
                     />
-                    <button
-                      type="submit"
+                    <SubmitButton
+                      pendingLabel="Uploading..."
                       className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
                     >
                       Upload
-                    </button>
+                    </SubmitButton>
                   </form>
                 </div>
               ))}
@@ -474,6 +481,46 @@ export default async function FclTrackingPage({
             {requests.filter((r) => r.status === "OPEN").length === 0 ? (
               <div className="text-sm text-slate-500">
                 No documents requested right now.
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Your uploads
+              </div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">
+                Documents you uploaded
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {customerUploads.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 p-4 text-sm text-slate-700"
+              >
+                <div>
+                  <div className="font-medium text-slate-900">{doc.document_type}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {doc.file_name} ·{" "}
+                    {new Date(doc.uploaded_at).toLocaleString()}
+                  </div>
+                </div>
+                <a
+                  href={`/api/track/${token}/documents/${doc.id}`}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                >
+                  Download
+                </a>
+              </div>
+            ))}
+            {customerUploads.length === 0 ? (
+              <div className="text-sm text-slate-500">
+                No documents uploaded yet.
               </div>
             ) : null}
           </div>

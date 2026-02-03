@@ -284,9 +284,14 @@ export function FclImportWorkspace({
             }}
             className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
           >
-            {isRequestPending && requestingDocType === docType
-              ? "Requesting..."
-              : "Request from customer"}
+            {isRequestPending && requestingDocType === docType ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-slate-400" />
+                Requesting...
+              </span>
+            ) : (
+              "Request from customer"
+            )}
           </button>
         ) : null}
       </div>
