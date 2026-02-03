@@ -42,15 +42,24 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
       : "PENDING";
   }
 
+  const orderStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.orderReceived];
+  const orderValues = orderStep?.values ?? {};
+  const orderReceived = isTruthy(orderValues.order_received);
+  statuses[FCL_IMPORT_STEP_NAMES.orderReceived] = orderReceived ? "DONE" : "PENDING";
+
+  const trackingEnabled = orderReceived;
+
   const vesselStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.vesselTracking];
   const vesselValues = vesselStep?.values ?? {};
   const eta = getString(vesselValues, "eta");
   const ata = getString(vesselValues, "ata");
-  statuses[FCL_IMPORT_STEP_NAMES.vesselTracking] = ata
-    ? "DONE"
-    : eta
-      ? "IN_PROGRESS"
-      : "PENDING";
+  statuses[FCL_IMPORT_STEP_NAMES.vesselTracking] = !trackingEnabled
+    ? "PENDING"
+    : ata
+      ? "DONE"
+      : eta
+        ? "IN_PROGRESS"
+        : "PENDING";
   const vesselArrived = !!ata;
 
   const dischargeStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.containersDischarge];
@@ -62,7 +71,7 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
     return isTruthy(row.container_discharged) || !!row.container_discharged_date?.trim();
   }).length;
   statuses[FCL_IMPORT_STEP_NAMES.containersDischarge] =
-    !containerTotal || !vesselArrived
+    !containerTotal || !trackingEnabled || !vesselArrived
       ? "PENDING"
       : dischargedCount === 0
         ? "PENDING"
@@ -78,7 +87,9 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
   const telexReleased =
     isTruthy(telexValues.telex_copy_released) &&
     hasFile(blStep, ["bl_type", "telex", "telex_copy_released_file"], input.docTypes);
+  const originalReceived = isTruthy(originalValues.original_received);
   const originalSubmitted =
+    originalReceived &&
     isTruthy(originalValues.original_submitted) &&
     !!getString(originalValues, "original_submitted_date");
   const originalSurrendered =
@@ -101,22 +112,30 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
 
   const invoiceStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.commercialInvoice];
   const invoiceValues = invoiceStep?.values ?? {};
+  const legacyCopy = isTruthy(invoiceValues.proceed_with_copy);
+  const legacyOriginal = isTruthy(invoiceValues.original_invoice_received);
+  const invoiceOption =
+    getString(invoiceValues, "invoice_option") ||
+    (legacyCopy ? "COPY_FINE" : legacyOriginal ? "ORIGINAL" : "");
+  const optionA = invoiceOption === "COPY_20_DAYS";
+  const optionB = invoiceOption === "COPY_FINE";
+  const optionC = invoiceOption === "ORIGINAL";
   const copyInvoiceReceived = isTruthy(invoiceValues.copy_invoice_received);
   const copyInvoiceFile = hasFile(invoiceStep, ["copy_invoice_file"], input.docTypes);
-  const proceedWithCopy = isTruthy(invoiceValues.proceed_with_copy);
   const originalInvoiceReceived = isTruthy(invoiceValues.original_invoice_received);
   const originalInvoiceFile = hasFile(
     invoiceStep,
     ["original_invoice_file"],
     input.docTypes,
   );
-  const invoiceDone = proceedWithCopy || (originalInvoiceReceived && originalInvoiceFile);
+  const invoiceDone = optionB || optionC;
   const invoiceTouched =
     copyInvoiceReceived ||
     copyInvoiceFile ||
     originalInvoiceReceived ||
     originalInvoiceFile ||
-    proceedWithCopy;
+    !!invoiceOption ||
+    legacyCopy;
   statuses[FCL_IMPORT_STEP_NAMES.commercialInvoice] = invoiceDone
     ? "DONE"
     : invoiceTouched
@@ -127,11 +146,16 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
   const deliveryValues = deliveryStep?.values ?? {};
   const deliveryObtained = isTruthy(deliveryValues.delivery_order_obtained);
   const deliveryDate = getString(deliveryValues, "delivery_order_date");
+  const deliveryFile = hasFile(
+    deliveryStep,
+    ["delivery_order_file"],
+    input.docTypes,
+  );
   const deliveryTouched =
     deliveryObtained ||
     !!deliveryDate ||
     !!getString(deliveryValues, "delivery_order_validity");
-  const deliveryDone = blDone && deliveryObtained && !!deliveryDate;
+  const deliveryDone = blDone && deliveryObtained && !!deliveryDate && deliveryFile;
   statuses[FCL_IMPORT_STEP_NAMES.deliveryOrder] = !blDone
     ? "PENDING"
     : deliveryDone
@@ -146,7 +170,7 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
   const boeNumber = getString(boeValues, "boe_number");
   const boeFile = hasFile(boeStep, ["boe_file"], input.docTypes);
   const boeTouched = !!boeDate || !!boeNumber || boeFile;
-  const boeReady = deliveryDone && invoiceDone;
+  const boeReady = deliveryDone && (invoiceDone || optionA);
   const boeDone = boeReady && !!boeDate && !!boeNumber && boeFile;
   statuses[FCL_IMPORT_STEP_NAMES.billOfEntry] = !boeReady
     ? "PENDING"
@@ -165,7 +189,7 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
     return isTruthy(row.pulled_out) || !!row.pull_out_date?.trim();
   }).length;
   statuses[FCL_IMPORT_STEP_NAMES.containerPullOut] =
-    !containerTotal || !boeDone || dischargedCount === 0
+    !containerTotal || !trackingEnabled || !boeDone || dischargedCount === 0
       ? "PENDING"
       : pulledOutCount === 0
         ? "PENDING"
@@ -184,20 +208,13 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
     );
   }).length;
   statuses[FCL_IMPORT_STEP_NAMES.containerDelivery] =
-    !containerTotal
+    !containerTotal || !trackingEnabled
       ? "PENDING"
       : deliveredCount === 0
         ? "PENDING"
         : deliveredCount >= containerTotal
           ? "DONE"
           : "IN_PROGRESS";
-
-  const orderStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.orderReceived];
-  const orderValues = orderStep?.values ?? {};
-  const orderReceived = isTruthy(orderValues.order_received);
-  statuses[FCL_IMPORT_STEP_NAMES.orderReceived] = orderReceived
-    ? "DONE"
-    : "PENDING";
 
   const tokenStep = input.stepsByName[FCL_IMPORT_STEP_NAMES.tokenBooking];
   const tokenRows = normalizeContainerRows(

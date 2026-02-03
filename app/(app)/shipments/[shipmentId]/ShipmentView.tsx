@@ -1406,6 +1406,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     latestDocsByType={fclLatestDocsByType}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
+                                    canAdminEdit={user.role === "ADMIN"}
                                     updateAction={fclUpdateAction!}
                                     requestDocumentAction={fclRequestAction}
                                     mode="operations"
@@ -1478,6 +1479,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     latestDocsByType={fclLatestDocsByType}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
+                                    canAdminEdit={user.role === "ADMIN"}
                                     updateAction={fclUpdateAction!}
                                     requestDocumentAction={fclRequestAction}
                                     mode="tracking"
@@ -1547,6 +1549,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     latestDocsByType={fclLatestDocsByType}
                                     trackingToken={trackingToken}
                                     canEdit={canEdit}
+                                    canAdminEdit={user.role === "ADMIN"}
                                     updateAction={fclUpdateAction!}
                                     requestDocumentAction={fclRequestAction}
                                     mode="container-ops"

@@ -17,7 +17,11 @@ import {
   type StepStatus,
 } from "@/lib/domain";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
-import { isTruthy, normalizeContainerRows } from "@/lib/fclImport/helpers";
+import {
+  extractContainerNumbers,
+  isTruthy,
+  normalizeContainerRows,
+} from "@/lib/fclImport/helpers";
 import { encodeFieldPath, fieldInputName, stepFieldDocType } from "@/lib/stepFields";
 import { CanvasBackdrop } from "./CanvasBackdrop";
 
@@ -66,6 +70,7 @@ type WorkspaceProps = {
   latestDocsByType: Record<string, DocumentMeta>;
   trackingToken: string | null;
   canEdit: boolean;
+  canAdminEdit?: boolean;
   updateAction: (formData: FormData) => void;
   requestDocumentAction?: (formData: FormData) => void;
   mode?: WorkspaceMode;
@@ -97,6 +102,11 @@ function valueString(values: Record<string, unknown>, key: string) {
 
 function buildDocKey(stepId: number, path: string[]) {
   return stepFieldDocType(stepId, encodeFieldPath(path));
+}
+
+function asArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isPlainObject) as Record<string, unknown>[];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -158,7 +168,7 @@ function StepCard({
   return (
     <div
       id={id}
-      className={`rounded-3xl border border-slate-200 p-5 shadow-sm backdrop-blur ${status === "DONE" ? "bg-amber-50/60" : "bg-white/80"
+      className={`rounded-3xl border border-slate-200 p-5 shadow-sm backdrop-blur ${status === "DONE" ? "bg-emerald-50/70" : "bg-white/80"
         }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -189,6 +199,7 @@ export function FclImportWorkspace({
   latestDocsByType,
   trackingToken,
   canEdit,
+  canAdminEdit = false,
   updateAction,
   requestDocumentAction,
   mode = "full",
@@ -202,6 +213,27 @@ export function FclImportWorkspace({
   const showOperations = mode === "full" || mode === "operations";
   const showContainerOps = mode === "full" || mode === "container-ops";
   const isFull = mode === "full";
+  const [editUnlocked, setEditUnlocked] = useState<Record<number, boolean>>({});
+  const isStepLocked = (step?: StepData | null) =>
+    !!step && step.status === "DONE" && !(canAdminEdit && editUnlocked[step.id]);
+  const canEditStep = (step?: StepData | null) =>
+    !!step && canEdit && !isStepLocked(step);
+  const toggleStepEdit = (stepId: number) => {
+    setEditUnlocked((prev) => ({ ...prev, [stepId]: !prev[stepId] }));
+  };
+  const renderAdminEdit = (step?: StepData | null) => {
+    if (!step || !canAdminEdit || step.status !== "DONE") return null;
+    const unlocked = !!editUnlocked[step.id];
+    return (
+      <button
+        type="button"
+        onClick={() => toggleStepEdit(step.id)}
+        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+      >
+        {unlocked ? "Lock step" : "Edit step"}
+      </button>
+    );
+  };
   const renderReturnTo = () =>
     returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
   const renderFileMeta = (stepId: number, path: string[]) => {
@@ -276,6 +308,7 @@ export function FclImportWorkspace({
     ? customers.map((customer) => customer.name).join(", ")
     : "Customer";
 
+  const creationStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.shipmentCreation);
   const vesselStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.vesselTracking);
   const dischargeStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.containersDischarge);
   const pullOutStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.containerPullOut);
@@ -342,6 +375,7 @@ export function FclImportWorkspace({
     : vesselEta
       ? "Vessel sailing"
       : "ETA pending";
+  const trackingLocked = !orderReceived;
 
   const actions = [
     { id: "overview", label: "Overview", target: "overview" },
@@ -365,6 +399,17 @@ export function FclImportWorkspace({
   const [orderReceived, setOrderReceived] = useState(
     isTruthy(orderStep?.values?.order_received),
   );
+  const [creationContainers, setCreationContainers] = useState(() => {
+    const existing = creationStep
+      ? extractContainerNumbers(creationStep.values)
+      : [];
+    const seed = existing.length ? existing : containerNumbers;
+    return seed.length ? seed : [""];
+  });
+  const orderFiles = asArray(orderStep?.values?.order_received_files);
+  const [orderFileRows, setOrderFileRows] = useState(
+    orderFiles.length ? orderFiles : [{}],
+  );
 
   const blValues = (blStep?.values ?? {}) as Record<string, unknown>;
   const blChoice = (blValues.bl_type ?? {}) as Record<string, unknown>;
@@ -386,6 +431,9 @@ export function FclImportWorkspace({
   const [originalReceived, setOriginalReceived] = useState(
     isTruthy(originalValues.original_received),
   );
+  const [originalSubmitted, setOriginalSubmitted] = useState(
+    isTruthy(originalValues.original_submitted),
+  );
   const [originalSurrendered, setOriginalSurrendered] = useState(
     isTruthy(originalValues.original_surrendered),
   );
@@ -397,6 +445,13 @@ export function FclImportWorkspace({
   const [originalInvoice, setOriginalInvoice] = useState(
     isTruthy(invoiceValues.original_invoice_received),
   );
+  const [invoiceOption, setInvoiceOption] = useState(() => {
+    const raw = valueString(invoiceValues, "invoice_option");
+    if (raw) return raw;
+    if (isTruthy(invoiceValues.proceed_with_copy)) return "COPY_FINE";
+    if (isTruthy(invoiceValues.original_invoice_received)) return "ORIGINAL";
+    return "";
+  });
   const initialOtherDocs = (() => {
     const raw = invoiceValues.other_documents;
     if (!Array.isArray(raw)) return [];
@@ -434,6 +489,14 @@ export function FclImportWorkspace({
     const remaining = daysUntil(deadline.toISOString());
     return remaining;
   })();
+
+  const addOrderFile = () => {
+    setOrderFileRows((prev) => [...prev, {}]);
+  };
+
+  const addContainerRow = () => {
+    setCreationContainers((prev) => [...prev, ""]);
+  };
 
   const addOtherDoc = () => {
     setOtherDocs((prev) => [...prev, { document_name: "" }]);
@@ -640,6 +703,11 @@ export function FclImportWorkspace({
                   Client-visible milestones
                 </span>
               </div>
+              {trackingLocked ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Tracking starts once Order Received is confirmed in Operations.
+                </div>
+              ) : null}
 
               {vesselStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
@@ -654,12 +722,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save update"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          ETA shows until ATA is confirmed.
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            ETA shows until ATA is confirmed.
+                          </span>
+                          {renderAdminEdit(vesselStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -672,7 +743,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["eta"])}
                           defaultValue={vesselEta}
-                          disabled={!canEdit}
+                          disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -684,7 +755,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["ata"])}
                           defaultValue={vesselAta}
-                          disabled={!canEdit}
+                          disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -705,12 +776,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save discharge"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(dischargeStep) || trackingLocked}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          {dischargedCount}/{totalContainers || 0} discharged
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            {dischargedCount}/{totalContainers || 0} discharged
+                          </span>
+                          {renderAdminEdit(dischargeStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -760,7 +834,7 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEdit}
+                                  disabled={!canEditStep(dischargeStep) || trackingLocked}
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Discharged
@@ -799,7 +873,9 @@ export function FclImportWorkspace({
                                     "container_discharged_date",
                                   ])}
                                   defaultValue={row.container_discharged_date ?? ""}
-                                  disabled={!canEdit || !toggle}
+                                  disabled={
+                                    !canEditStep(dischargeStep) || trackingLocked || !toggle
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -824,7 +900,9 @@ export function FclImportWorkspace({
                                     "last_port_free_day",
                                   ])}
                                   defaultValue={row.last_port_free_day ?? ""}
-                                  disabled={!canEdit || !toggle}
+                                  disabled={
+                                    !canEditStep(dischargeStep) || trackingLocked || !toggle
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -860,12 +938,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save pull-out"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(pullOutStep) || trackingLocked}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          BOE status: {boeDone ? "Done" : "Pending"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            BOE status: {boeDone ? "Done" : "Pending"}
+                          </span>
+                          {renderAdminEdit(pullOutStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -914,7 +995,11 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEdit || !eligible}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible
+                                  }
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Pulled out
@@ -953,7 +1038,12 @@ export function FclImportWorkspace({
                                     "pull_out_date",
                                   ])}
                                   defaultValue={row.pull_out_date ?? ""}
-                                  disabled={!canEdit || !eligible || !toggle}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible ||
+                                    !toggle
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -978,7 +1068,12 @@ export function FclImportWorkspace({
                                     "pull_out_destination",
                                   ])}
                                   defaultValue={row.pull_out_destination ?? ""}
-                                  disabled={!canEdit || !eligible || !toggle}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible ||
+                                    !toggle
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   placeholder="Warehouse or yard"
                                 />
@@ -1010,12 +1105,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save delivery"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(deliveryStep) || trackingLocked}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          {deliveredCount}/{totalContainers || 0} delivered or offloaded
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            {deliveredCount}/{totalContainers || 0} delivered or offloaded
+                          </span>
+                          {renderAdminEdit(deliveryStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -1063,7 +1161,7 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEdit}
+                                  disabled={!canEditStep(deliveryStep) || trackingLocked}
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Delivered or offloaded
@@ -1102,7 +1200,11 @@ export function FclImportWorkspace({
                                     "delivered_offloaded_date",
                                   ])}
                                   defaultValue={row.delivered_offloaded_date ?? ""}
-                                  disabled={!canEdit || !delivered}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !delivered
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -1127,7 +1229,11 @@ export function FclImportWorkspace({
                                     "offload_location",
                                   ])}
                                   defaultValue={row.offload_location ?? ""}
-                                  disabled={!canEdit || !delivered}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !delivered
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   placeholder="Warehouse or yard"
                                 />
@@ -1160,7 +1266,7 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEdit}
+                                  disabled={!canEditStep(deliveryStep) || trackingLocked}
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Empty container returned to port
@@ -1186,7 +1292,11 @@ export function FclImportWorkspace({
                                     "empty_returned_date",
                                   ])}
                                   defaultValue={row.empty_returned_date ?? ""}
-                                  disabled={!canEdit || !returned}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !returned
+                                  }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -1211,6 +1321,75 @@ export function FclImportWorkspace({
                 </span>
               </div>
 
+              {creationStep ? (
+                <form action={updateAction} className="space-y-3">
+                  <input type="hidden" name="stepId" value={creationStep.id} />
+                  {renderReturnTo()}
+                  <StepCard
+                    id="shipment-creation"
+                    title="Shipment creation"
+                    status={creationStep.status}
+                    description="Add container numbers even after the shipment is created."
+                    footer={
+                      <div className="flex items-center justify-between">
+                        <SubmitButton
+                          label="Save containers"
+                          disabled={!canEditStep(creationStep)}
+                          className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                        />
+                        {renderAdminEdit(creationStep)}
+                      </div>
+                    }
+                  >
+                    <div className="space-y-3">
+                      {creationContainers.map((value, index) => (
+                        <label
+                          key={`creation-container-${index}`}
+                          className="block"
+                        >
+                          <div className="mb-1 text-xs font-medium text-slate-600">
+                            Container #{index + 1}
+                          </div>
+                          <input
+                            type="text"
+                            name={fieldInputName([
+                              "containers",
+                              String(index),
+                              "container_number",
+                            ])}
+                            value={value}
+                            onChange={(event) => {
+                              const next = [...creationContainers];
+                              next[index] = event.target.value;
+                              setCreationContainers(next);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && index === creationContainers.length - 1) {
+                                event.preventDefault();
+                                addContainerRow();
+                              }
+                            }}
+                            disabled={!canEditStep(creationStep)}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                            placeholder="Enter container number"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={addContainerRow}
+                        disabled={!canEditStep(creationStep)}
+                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Add container
+                      </button>
+                    </div>
+                  </StepCard>
+                </form>
+              ) : null}
+
               {orderStep ? (
                 <form action={updateAction} encType="multipart/form-data" className="space-y-3">
                   <input type="hidden" name="stepId" value={orderStep.id} />
@@ -1219,14 +1398,15 @@ export function FclImportWorkspace({
                     id="order-received"
                     title="Order received"
                     status={orderStep.status}
-                    description="Confirm order receipt and attach the customer file if needed."
+                    description="Confirm order receipt and attach customer files."
                     footer={
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save order"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(orderStep)}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
+                        {renderAdminEdit(orderStep)}
                       </div>
                     }
                   >
@@ -1243,7 +1423,7 @@ export function FclImportWorkspace({
                           value="1"
                           defaultChecked={orderReceived}
                           onChange={(event) => setOrderReceived(event.target.checked)}
-                          disabled={!canEdit}
+                          disabled={!canEditStep(orderStep)}
                           className="h-4 w-4 rounded border-slate-300"
                         />
                         Order received by Zaxon
@@ -1261,7 +1441,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["order_received_date"])}
                           defaultValue={valueString(orderStep.values, "order_received_date")}
-                          disabled={!canEdit || !orderReceived}
+                          disabled={!canEditStep(orderStep) || !orderReceived}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -1269,15 +1449,54 @@ export function FclImportWorkspace({
                     <div className="mt-3">
                       <label className="block">
                         <div className="mb-1 text-xs font-medium text-slate-600">
-                          Upload order file (optional)
+                          Remarks
                         </div>
-                        <input
-                          type="file"
-                          name={fieldInputName(["order_received_file"])}
-                          disabled={!canEdit || !orderReceived}
+                        <textarea
+                          name={fieldInputName(["order_received_remarks"])}
+                          defaultValue={valueString(
+                            orderStep.values,
+                            "order_received_remarks",
+                          )}
+                          disabled={!canEditStep(orderStep)}
+                          rows={3}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
-                        {renderFileMeta(orderStep.id, ["order_received_file"])}
+                      </label>
+                    </div>
+                    <div className="mt-3">
+                      <label className="block">
+                        <div className="mb-1 flex items-center justify-between text-xs font-medium text-slate-600">
+                          <span>Order files</span>
+                          <button
+                            type="button"
+                            onClick={addOrderFile}
+                            disabled={!canEditStep(orderStep)}
+                            className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Add file
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {orderFileRows.map((_, index) => (
+                            <div key={`order-file-${index}`}>
+                              <input
+                                type="file"
+                                name={fieldInputName([
+                                  "order_received_files",
+                                  String(index),
+                                  "file",
+                                ])}
+                                disabled={!canEditStep(orderStep) || !orderReceived}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                              />
+                              {renderFileMeta(orderStep.id, [
+                                "order_received_files",
+                                String(index),
+                                "file",
+                              ])}
+                            </div>
+                          ))}
+                        </div>
                       </label>
                     </div>
                   </StepCard>
@@ -1296,12 +1515,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save B/L"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(blStep)}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          Done when Telex released, Original submitted, or Original surrendered.
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            Done when Telex released, Original submitted, or Original surrendered.
+                          </span>
+                          {renderAdminEdit(blStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -1313,7 +1535,7 @@ export function FclImportWorkspace({
                         <input
                           type="file"
                           name={fieldInputName(["draft_bl_file"])}
-                          disabled={!canEdit}
+                          disabled={!canEditStep(blStep)}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                         {renderFileMeta(blStep.id, ["draft_bl_file"])}
@@ -1336,7 +1558,7 @@ export function FclImportWorkspace({
                               checked={blType === option}
                               onChange={() => setBlType(option)}
                               className="h-4 w-4"
-                              disabled={!canEdit}
+                              disabled={!canEditStep(blStep)}
                             />
                             {option === "telex" ? "Telex" : "Original"}
                           </label>
@@ -1388,7 +1610,7 @@ export function FclImportWorkspace({
                                         [item.id]: event.target.checked,
                                       }))
                                     }
-                                    disabled={!canEdit}
+                                    disabled={!canEditStep(blStep)}
                                     className="h-4 w-4 rounded border-slate-300"
                                   />
                                   {item.label}
@@ -1401,7 +1623,8 @@ export function FclImportWorkspace({
                                       "telex",
                                       item.fileId,
                                     ])}
-                                    disabled={!canEdit || !checked}
+                                    required={checked && canEditStep(blStep)}
+                                    disabled={!canEditStep(blStep) || !checked}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
                                   {renderFileMeta(blStep.id, [
@@ -1453,13 +1676,16 @@ export function FclImportWorkspace({
                                     }
                                     if (field === "original_received") {
                                       setOriginalReceived(event.target.checked);
+                                      if (!event.target.checked) {
+                                        setOriginalSubmitted(false);
+                                      }
                                       if (event.target.checked) {
                                         setOriginalSurrendered(false);
                                       }
                                     }
                                   }}
                                   disabled={
-                                    !canEdit ||
+                                    !canEditStep(blStep) ||
                                     (field === "original_received" && originalSurrendered)
                                   }
                                   className="h-4 w-4 rounded border-slate-300"
@@ -1477,7 +1703,7 @@ export function FclImportWorkspace({
                                     `${field}_file`,
                                   ])}
                                   disabled={
-                                    !canEdit ||
+                                    !canEditStep(blStep) ||
                                     !(field === "bl_copy" ? blCopyChecked : originalReceived)
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
@@ -1510,8 +1736,18 @@ export function FclImportWorkspace({
                                   "original_submitted",
                                 ])}
                                 value="1"
-                                defaultChecked={isTruthy(originalValues.original_submitted)}
-                                disabled={!canEdit || originalSurrendered}
+                                checked={originalSubmitted}
+                                onChange={(event) => {
+                                  setOriginalSubmitted(event.target.checked);
+                                  if (event.target.checked) {
+                                    setOriginalSurrendered(false);
+                                  }
+                                }}
+                                disabled={
+                                  !canEditStep(blStep) ||
+                                  !originalReceived ||
+                                  originalSurrendered
+                                }
                                 className="h-4 w-4 rounded border-slate-300"
                               />
                               Original B/L submitted to shipping line office
@@ -1537,7 +1773,8 @@ export function FclImportWorkspace({
                                   originalValues,
                                   "original_submitted_date",
                                 )}
-                                disabled={!canEdit || !isTruthy(originalValues.original_submitted)}
+                                required={originalSubmitted && canEditStep(blStep)}
+                                disabled={!canEditStep(blStep) || !originalSubmitted}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
                             </div>
@@ -1567,9 +1804,14 @@ export function FclImportWorkspace({
                                   setOriginalSurrendered(event.target.checked);
                                   if (event.target.checked) {
                                     setOriginalReceived(false);
+                                    setOriginalSubmitted(false);
                                   }
                                 }}
-                                disabled={!canEdit || originalReceived}
+                                disabled={
+                                  !canEditStep(blStep) ||
+                                  originalReceived ||
+                                  originalSubmitted
+                                }
                                 className="h-4 w-4 rounded border-slate-300"
                               />
                               Original B/L surrendered
@@ -1582,7 +1824,8 @@ export function FclImportWorkspace({
                                   "original",
                                   "original_surrendered_file",
                                 ])}
-                                disabled={!canEdit || !originalSurrendered}
+                                required={originalSurrendered && canEditStep(blStep)}
+                                disabled={!canEditStep(blStep) || !originalSurrendered}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
                               {renderFileMeta(blStep.id, [
@@ -1622,9 +1865,10 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save documents"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(invoiceStep)}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
+                        {renderAdminEdit(invoiceStep)}
                       </div>
                     }
                   >
@@ -1642,7 +1886,7 @@ export function FclImportWorkspace({
                             value="1"
                             defaultChecked={copyInvoice}
                             onChange={(event) => setCopyInvoice(event.target.checked)}
-                            disabled={!canEdit}
+                            disabled={!canEditStep(invoiceStep)}
                             className="h-4 w-4 rounded border-slate-300"
                           />
                           Copy invoice received
@@ -1651,18 +1895,18 @@ export function FclImportWorkspace({
                           <input
                             type="file"
                             name={fieldInputName(["copy_invoice_file"])}
-                            disabled={!canEdit || !copyInvoice}
+                            disabled={!canEditStep(invoiceStep) || !copyInvoice}
                             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                           />
                           {renderFileMeta(invoiceStep.id, ["copy_invoice_file"])}
                         </div>
                       </div>
 
-                      {copyInvoice ? (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      {copyInvoice && invoiceOption === "COPY_20_DAYS" ? (
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
                           Please notify your exporter to courier the original invoice to
                           our office to avoid a fine of 1,000 AED upon passing the
-                          Bill of Entry. {" "}
+                          Bill of Entry.{" "}
                           {messageDaysLeft !== null ? (
                             <span>
                               Fine will be paid within {messageDaysLeft} days.
@@ -1673,23 +1917,58 @@ export function FclImportWorkspace({
                         </div>
                       ) : null}
 
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                          BOE invoice option (select one)
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                          {[
+                            {
+                              id: "COPY_20_DAYS",
+                              label:
+                                "Proceed with copy invoice (original within 20 days after BOE)",
+                            },
+                            {
+                              id: "COPY_FINE",
+                              label: "Proceed with copy invoice and pay 1,000 AED fine",
+                            },
+                            {
+                              id: "ORIGINAL",
+                              label: "Proceed with original invoice",
+                            },
+                          ].map((option) => {
+                            const disabledOption =
+                              !canEditStep(invoiceStep) ||
+                              (invoiceOption === "COPY_FINE" && option.id === "ORIGINAL") ||
+                              (invoiceOption === "ORIGINAL" &&
+                                option.id !== "ORIGINAL");
+                            return (
+                              <label
+                                key={option.id}
+                                className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
+                                  invoiceOption === option.id
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-white text-slate-700"
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={fieldInputName(["invoice_option"])}
+                                  value={option.id}
+                                  checked={invoiceOption === option.id}
+                                  onChange={() => setInvoiceOption(option.id)}
+                                  required={!invoiceOption && canEditStep(invoiceStep)}
+                                  disabled={disabledOption}
+                                  className="mt-0.5 h-4 w-4"
+                                />
+                                <span>{option.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                       <div className="grid gap-3 md:grid-cols-2">
-                        <label className="flex items-center gap-2 text-sm text-slate-700">
-                          <input
-                            type="hidden"
-                            name={fieldInputName(["proceed_with_copy"])}
-                            value=""
-                          />
-                          <input
-                            type="checkbox"
-                            name={fieldInputName(["proceed_with_copy"])}
-                            value="1"
-                            defaultChecked={isTruthy(invoiceValues.proceed_with_copy)}
-                            disabled={!canEdit}
-                            className="h-4 w-4 rounded border-slate-300"
-                          />
-                          Proceed with copy documents
-                        </label>
                         <label className="flex items-center gap-2 text-sm text-slate-700">
                           <input
                             type="hidden"
@@ -1704,7 +1983,7 @@ export function FclImportWorkspace({
                             onChange={(event) =>
                               setOriginalInvoice(event.target.checked)
                             }
-                            disabled={!canEdit}
+                            disabled={!canEditStep(invoiceStep)}
                             className="h-4 w-4 rounded border-slate-300"
                           />
                           Original invoice received
@@ -1719,7 +1998,7 @@ export function FclImportWorkspace({
                           <input
                             type="file"
                             name={fieldInputName(["original_invoice_file"])}
-                            disabled={!canEdit || !originalInvoice}
+                            disabled={!canEditStep(invoiceStep) || !originalInvoice}
                             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                           />
                           {renderFileMeta(invoiceStep.id, ["original_invoice_file"])}
@@ -1734,7 +2013,7 @@ export function FclImportWorkspace({
                           <button
                             type="button"
                             onClick={addOtherDoc}
-                            disabled={!canEdit}
+                            disabled={!canEditStep(invoiceStep)}
                             className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             Add document
@@ -1759,7 +2038,7 @@ export function FclImportWorkspace({
                                       "document_name",
                                     ])}
                                     defaultValue={doc.document_name}
-                                    disabled={!canEdit}
+                                    disabled={!canEditStep(invoiceStep)}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
                                 </label>
@@ -1774,7 +2053,7 @@ export function FclImportWorkspace({
                                       String(index),
                                       "document_file",
                                     ])}
-                                    disabled={!canEdit}
+                                    disabled={!canEditStep(invoiceStep)}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
                                   {renderFileMeta(invoiceStep.id, [
@@ -1809,12 +2088,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save delivery order"
-                          disabled={!canEdit || !blDone}
+                          disabled={!canEditStep(deliveryOrderStep) || !blDone}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          {blDone ? "B/L done" : "Waiting for B/L"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            {blDone ? "B/L done" : "Waiting for B/L"}
+                          </span>
+                          {renderAdminEdit(deliveryOrderStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -1837,7 +2119,7 @@ export function FclImportWorkspace({
                           value="1"
                           defaultChecked={deliveryObtained}
                           onChange={(event) => setDeliveryObtained(event.target.checked)}
-                          disabled={!canEdit || !blDone}
+                          disabled={!canEditStep(deliveryOrderStep) || !blDone}
                           className="h-4 w-4 rounded border-slate-300"
                         />
                         Delivery order obtained
@@ -1855,9 +2137,32 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["delivery_order_date"])}
                           defaultValue={valueString(deliveryValues, "delivery_order_date")}
-                          disabled={!canEdit || !blDone || !deliveryObtained}
+                          disabled={
+                            !canEditStep(deliveryOrderStep) ||
+                            !blDone ||
+                            !deliveryObtained
+                          }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
+                      </label>
+                    </div>
+                    <div className="mt-3">
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">
+                          Delivery order file
+                        </div>
+                        <input
+                          type="file"
+                          name={fieldInputName(["delivery_order_file"])}
+                          required={deliveryObtained && canEditStep(deliveryOrderStep)}
+                          disabled={
+                            !canEditStep(deliveryOrderStep) ||
+                            !blDone ||
+                            !deliveryObtained
+                          }
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                        />
+                        {renderFileMeta(deliveryOrderStep.id, ["delivery_order_file"])}
                       </label>
                     </div>
                     <div className="mt-3">
@@ -1877,7 +2182,11 @@ export function FclImportWorkspace({
                             deliveryValues,
                             "delivery_order_validity",
                           )}
-                          disabled={!canEdit || !blDone || !deliveryObtained}
+                          disabled={
+                            !canEditStep(deliveryOrderStep) ||
+                            !blDone ||
+                            !deliveryObtained
+                          }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -1905,14 +2214,22 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save BOE"
-                          disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
+                          disabled={
+                            !canEditStep(boeStep) ||
+                            !deliveryOrderDone ||
+                            (!invoiceDone && invoiceOption !== "COPY_20_DAYS")
+                          }
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          {deliveryOrderDone && invoiceDone
-                            ? "Ready to submit"
-                            : "Waiting for delivery order + invoice"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            {deliveryOrderDone &&
+                            (invoiceDone || invoiceOption === "COPY_20_DAYS")
+                              ? "Ready to submit"
+                              : "Waiting for delivery order + invoice"}
+                          </span>
+                          {renderAdminEdit(boeStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -1925,7 +2242,11 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["boe_date"])}
                           defaultValue={boeDate}
-                          disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
+                          disabled={
+                            !canEditStep(boeStep) ||
+                            !deliveryOrderDone ||
+                            (!invoiceDone && invoiceOption !== "COPY_20_DAYS")
+                          }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -1937,7 +2258,11 @@ export function FclImportWorkspace({
                           type="text"
                           name={fieldInputName(["boe_number"])}
                           defaultValue={valueString(boeValues, "boe_number")}
-                          disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
+                          disabled={
+                            !canEditStep(boeStep) ||
+                            !deliveryOrderDone ||
+                            (!invoiceDone && invoiceOption !== "COPY_20_DAYS")
+                          }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                       </label>
@@ -1950,7 +2275,16 @@ export function FclImportWorkspace({
                         <input
                           type="file"
                           name={fieldInputName(["boe_file"])}
-                          disabled={!canEdit || !deliveryOrderDone || !invoiceDone}
+                          required={
+                            canEditStep(boeStep) &&
+                            deliveryOrderDone &&
+                            (invoiceDone || invoiceOption === "COPY_20_DAYS")
+                          }
+                          disabled={
+                            !canEditStep(boeStep) ||
+                            !deliveryOrderDone ||
+                            (!invoiceDone && invoiceOption !== "COPY_20_DAYS")
+                          }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
                         {renderFileMeta(boeStep.id, ["boe_file"])}
@@ -1985,12 +2319,15 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save tokens"
-                          disabled={!canEdit || !boeDone}
+                          disabled={!canEditStep(tokenStep) || !boeDone}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
-                        <span className="text-xs text-slate-500">
-                          {boeDone ? "BOE done" : "Waiting for BOE"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500">
+                            {boeDone ? "BOE done" : "Waiting for BOE"}
+                          </span>
+                          {renderAdminEdit(tokenStep)}
+                        </div>
                       </div>
                     }
                   >
@@ -2027,7 +2364,7 @@ export function FclImportWorkspace({
                                     "token_date",
                                   ])}
                                   defaultValue={row.token_date ?? ""}
-                                  disabled={!canEdit || !eligible}
+                                  disabled={!canEditStep(tokenStep) || !eligible}
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
@@ -2042,7 +2379,7 @@ export function FclImportWorkspace({
                                     String(index),
                                     "token_file",
                                   ])}
-                                  disabled={!canEdit || !eligible}
+                                  disabled={!canEditStep(tokenStep) || !eligible}
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                                 {renderFileMeta(tokenStep.id, [
@@ -2078,9 +2415,10 @@ export function FclImportWorkspace({
                       <div className="flex items-center justify-between">
                         <SubmitButton
                           label="Save return tokens"
-                          disabled={!canEdit}
+                          disabled={!canEditStep(returnTokenStep)}
                           className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                         />
+                        {renderAdminEdit(returnTokenStep)}
                       </div>
                     }
                   >
@@ -2115,7 +2453,7 @@ export function FclImportWorkspace({
                                   "return_token_date",
                                 ])}
                                 defaultValue={row.return_token_date ?? ""}
-                                disabled={!canEdit}
+                                disabled={!canEditStep(returnTokenStep)}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
                             </label>
@@ -2130,7 +2468,7 @@ export function FclImportWorkspace({
                                   String(index),
                                   "return_token_file",
                                 ])}
-                                disabled={!canEdit}
+                                disabled={!canEditStep(returnTokenStep)}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
                               {renderFileMeta(returnTokenStep.id, [

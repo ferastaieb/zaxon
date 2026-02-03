@@ -154,6 +154,7 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
         latestDocsByType={buildLatestDocMap(docs)}
         trackingToken={trackingToken}
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        canAdminEdit={user.role === "ADMIN"}
         updateAction={updateFclStepAction.bind(null, shipment.id)}
         requestDocumentAction={requestFclDocumentAction.bind(null, shipment.id)}
       />
