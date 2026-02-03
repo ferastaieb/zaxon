@@ -375,7 +375,6 @@ export function FclImportWorkspace({
     : vesselEta
       ? "Vessel sailing"
       : "ETA pending";
-  const trackingLocked = !orderReceived;
 
   const actions = [
     { id: "overview", label: "Overview", target: "overview" },
@@ -399,6 +398,7 @@ export function FclImportWorkspace({
   const [orderReceived, setOrderReceived] = useState(
     isTruthy(orderStep?.values?.order_received),
   );
+  const trackingLocked = !orderReceived;
   const [creationContainers, setCreationContainers] = useState(() => {
     const existing = creationStep
       ? extractContainerNumbers(creationStep.values)
