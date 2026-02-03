@@ -246,9 +246,8 @@ export default async function FclTrackingPage({
 
             {invoiceOption === "COPY_20_DAYS" ? (
               <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                Please notify your exporter to courier the original invoice to
-                our office to avoid a fine of 1,000 AED upon passing the Bill of
-                Entry.{" "}
+                Please courier your original invoice to our office to avoid a
+                fine of 1,000 AED upon passing the Bill of Entry.{" "}
                 {messageDaysLeft !== null ? (
                   <span>Fine will be paid within {messageDaysLeft} days.</span>
                 ) : (

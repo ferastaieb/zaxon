@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 
 import { Badge } from "@/components/ui/Badge";
@@ -213,6 +213,8 @@ export function FclImportWorkspace({
   const showOperations = mode === "full" || mode === "operations";
   const showContainerOps = mode === "full" || mode === "container-ops";
   const isFull = mode === "full";
+  const [isRequestPending, startRequestTransition] = useTransition();
+  const [requestingDocType, setRequestingDocType] = useState<string | null>(null);
   const [editUnlocked, setEditUnlocked] = useState<Record<number, boolean>>({});
   const isStepLocked = (step?: StepData | null) =>
     !!step && step.status === "DONE" && !(canAdminEdit && editUnlocked[step.id]);
@@ -266,19 +268,26 @@ export function FclImportWorkspace({
           <span>No file uploaded yet.</span>
         )}
         {requestDocumentAction ? (
-          <form action={requestDocumentAction} className="inline">
-            <input type="hidden" name="documentType" value={docType} />
-            {requestReturnTo ? (
-              <input type="hidden" name="returnTo" value={requestReturnTo} />
-            ) : null}
-            <button
-              type="submit"
-              disabled={!canEdit}
-              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
-            >
-              Request from customer
-            </button>
-          </form>
+          <button
+            type="button"
+            disabled={!canEdit || (isRequestPending && requestingDocType === docType)}
+            onClick={() => {
+              startRequestTransition(() => {
+                setRequestingDocType(docType);
+                const formData = new FormData();
+                formData.set("documentType", docType);
+                if (requestReturnTo) {
+                  formData.set("returnTo", requestReturnTo);
+                }
+                requestDocumentAction(formData);
+              });
+            }}
+            className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+          >
+            {isRequestPending && requestingDocType === docType
+              ? "Requesting..."
+              : "Request from customer"}
+          </button>
         ) : null}
       </div>
     );
