@@ -291,14 +291,14 @@ export function FclImportWorkspace({
               (isRequestPending && requestingDocType === docType)
             }
             onClick={() => {
-              startRequestTransition(() => {
-                setRequestingDocType(docType);
+              setRequestingDocType(docType);
+              startRequestTransition(async () => {
                 const formData = new FormData();
                 formData.set("documentType", docType);
                 if (requestReturnTo) {
                   formData.set("returnTo", requestReturnTo);
                 }
-                requestDocumentAction(formData);
+                await requestDocumentAction(formData);
               });
             }}
             className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
