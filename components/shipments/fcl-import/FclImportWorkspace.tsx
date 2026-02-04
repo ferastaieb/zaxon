@@ -2241,6 +2241,11 @@ export function FclImportWorkspace({
                             },
                           ].map((item) => {
                             const checked = telexChecks[item.id] ?? false;
+                            const telexFileExists = !!getLatestDoc(blStep.id, [
+                              "bl_type",
+                              "telex",
+                              item.fileId,
+                            ]);
                             return (
                               <div
                                 key={item.id}
@@ -2284,7 +2289,9 @@ export function FclImportWorkspace({
                                       "telex",
                                       item.fileId,
                                     ])}
-                                    required={checked && canEditStep(blStep)}
+                                    required={
+                                      checked && canEditStep(blStep) && !telexFileExists
+                                    }
                                     disabled={!canEditStep(blStep) || !checked}
                                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                   />
@@ -2442,6 +2449,14 @@ export function FclImportWorkspace({
                           </div>
 
                           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            {(() => {
+                              const hasSurrenderedFile = !!getLatestDoc(blStep.id, [
+                                "bl_type",
+                                "original",
+                                "original_surrendered_file",
+                              ]);
+                              return (
+                                <>
                             <label className="flex items-center gap-2 text-sm text-slate-700">
                               <input
                                 type="hidden"
@@ -2485,7 +2500,11 @@ export function FclImportWorkspace({
                                   "original",
                                   "original_surrendered_file",
                                 ])}
-                                required={originalSurrendered && canEditStep(blStep)}
+                                required={
+                                  originalSurrendered &&
+                                  canEditStep(blStep) &&
+                                  !hasSurrenderedFile
+                                }
                                 disabled={!canEditStep(blStep) || !originalSurrendered}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
@@ -2495,6 +2514,9 @@ export function FclImportWorkspace({
                                 "original_surrendered_file",
                               ])}
                             </div>
+                                </>
+                              );
+                            })()}
                           </div>
 
                           {["telex_copy_not_released", "telex_copy_released"].map(

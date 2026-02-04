@@ -64,8 +64,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       serviceType !== SERVICE_TYPE_FCL ||
       customerPartyIds.length === 0 ||
       !origin ||
-      !destination ||
-      containerNumbers.length === 0
+      !destination
     ) {
       redirect("/shipments/new?error=invalid");
     }
@@ -92,7 +91,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
     );
 
-    if (creationStep) {
+    if (creationStep && containerNumbers.length > 0) {
       await updateShipmentStep({
         stepId: creationStep.id,
         status: "DONE",

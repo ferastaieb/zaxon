@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
@@ -50,6 +51,16 @@ function statusTone(status: StepStatus) {
   return "zinc";
 }
 
+function summaryStyle(status: "DONE" | "IN_PROGRESS" | "PENDING") {
+  if (status === "DONE") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  }
+  if (status === "IN_PROGRESS") {
+    return "border-amber-200 bg-amber-50 text-amber-900";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "N/A";
   const parsed = new Date(value);
@@ -77,6 +88,7 @@ export default async function FclTrackingPage({
     ? await Promise.resolve(searchParams)
     : ({} as SearchParams);
   const uploaded = readParam(resolved, "uploaded") === "1";
+  const view = readParam(resolved, "view") ?? "tracking";
 
   const steps = await listShipmentSteps(shipment.id);
   const stepByName = new Map(steps.map((step) => [step.name, step]));
@@ -129,6 +141,28 @@ export default async function FclTrackingPage({
       : "ETA pending";
   const blNumber =
     typeof blValues.bl_number === "string" ? blValues.bl_number : "";
+  const blChoice =
+    typeof blValues.bl_type === "object" && blValues.bl_type
+      ? (blValues.bl_type as Record<string, unknown>)
+      : {};
+  const blTelex =
+    typeof blChoice.telex === "object" && blChoice.telex
+      ? (blChoice.telex as Record<string, unknown>)
+      : {};
+  const blOriginal =
+    typeof blChoice.original === "object" && blChoice.original
+      ? (blChoice.original as Record<string, unknown>)
+      : {};
+  const blTypeLabel = Object.keys(blTelex).length
+    ? "Telex"
+    : Object.keys(blOriginal).length
+      ? "Original"
+      : "Not set";
+  const telexReleased = isTruthy(blTelex.telex_copy_released);
+  const originalReceived = isTruthy(blOriginal.original_received);
+  const originalSubmitted = isTruthy(blOriginal.original_submitted);
+  const originalSurrendered = isTruthy(blOriginal.original_surrendered);
+  const blDone = telexReleased || originalSubmitted || originalSurrendered;
 
   const invoiceValues = parseStepFieldValues(invoiceStep?.field_values_json);
   const boeValues = parseStepFieldValues(boeStep?.field_values_json);
@@ -149,7 +183,135 @@ export default async function FclTrackingPage({
     return daysUntil(deadline.toISOString());
   })();
 
+  const blDocTypes = blStep
+    ? [
+        stepFieldDocType(blStep.id, encodeFieldPath(["draft_bl_file"])),
+        stepFieldDocType(blStep.id, encodeFieldPath(["bl_copy_file"])),
+        stepFieldDocType(blStep.id, encodeFieldPath(["original_received_file"])),
+        stepFieldDocType(blStep.id, encodeFieldPath(["original_surrendered_file"])),
+        stepFieldDocType(blStep.id, encodeFieldPath(["telex_copy_not_released_file"])),
+        stepFieldDocType(blStep.id, encodeFieldPath(["telex_copy_released_file"])),
+      ]
+    : [];
+  const invoiceDocTypes = invoiceStep
+    ? [
+        stepFieldDocType(invoiceStep.id, encodeFieldPath(["copy_invoice_file"])),
+        stepFieldDocType(invoiceStep.id, encodeFieldPath(["original_invoice_file"])),
+      ]
+    : [];
+  const boeDocType = boeStep
+    ? stepFieldDocType(boeStep.id, encodeFieldPath(["boe_file"]))
+    : "";
+  const deliveryOrderDocType = deliveryOrderStep
+    ? stepFieldDocType(deliveryOrderStep.id, encodeFieldPath(["delivery_order_file"]))
+    : "";
+  const pullOutTokenCount = countDocsBySuffix(
+    pullOutStep?.id,
+    "pull_out_token_file",
+  );
+  const returnTokenCount = countDocsBySuffix(
+    deliveryStep?.id,
+    "empty_returned_token_file",
+  );
+  const otherDocCount = countDocsBySuffix(
+    invoiceStep?.id,
+    "document_file",
+  );
+
+  const orderStep = stepByName.get(FCL_IMPORT_STEP_NAMES.orderReceived);
+  const deliveryOrderStep = stepByName.get(FCL_IMPORT_STEP_NAMES.deliveryOrder);
+  const orderValues = parseStepFieldValues(orderStep?.field_values_json);
+  const orderReceivedDate =
+    typeof orderValues.order_received_date === "string"
+      ? orderValues.order_received_date
+      : "";
+  const orderRemarks =
+    typeof orderValues.order_received_remarks === "string"
+      ? orderValues.order_received_remarks
+      : "";
+  const deliveryOrderValues = parseStepFieldValues(
+    deliveryOrderStep?.field_values_json,
+  );
+  const deliveryOrderDate =
+    typeof deliveryOrderValues.delivery_order_date === "string"
+      ? deliveryOrderValues.delivery_order_date
+      : "";
+
+  const totalContainers = containerNumbers.length;
+  const dischargedCount = dischargeRows.filter(
+    (row) =>
+      isTruthy(row.container_discharged) || !!row.container_discharged_date?.trim(),
+  ).length;
+  const pulledOutCount = pullOutRows.filter(
+    (row) =>
+      !!row.pull_out_token_date?.trim() ||
+      !!row.pull_out_date?.trim(),
+  ).length;
+  const deliveredCount = deliveryRows.filter(
+    (row) =>
+      isTruthy(row.delivered_offloaded) || !!row.delivered_offloaded_date?.trim(),
+  ).length;
+
+  const vesselState = vesselAta ? "DONE" : vesselEta ? "IN_PROGRESS" : "PENDING";
+  const dischargeState =
+    totalContainers === 0
+      ? "PENDING"
+      : dischargedCount === 0
+        ? "PENDING"
+        : dischargedCount < totalContainers
+          ? "IN_PROGRESS"
+          : "DONE";
+  const pullOutState =
+    boeStep?.status !== "DONE"
+      ? "PENDING"
+      : totalContainers === 0
+        ? "PENDING"
+        : pulledOutCount === 0
+          ? "PENDING"
+          : pulledOutCount < totalContainers
+            ? "IN_PROGRESS"
+            : "DONE";
+  const deliveryState =
+    totalContainers === 0
+      ? "PENDING"
+      : deliveredCount === 0
+        ? "PENDING"
+        : deliveredCount < totalContainers
+          ? "IN_PROGRESS"
+          : "DONE";
+
   const requests = await listCustomerDocumentRequests(shipment.id);
+  const sharedDocs = docs.filter((doc) => doc.share_with_customer);
+  const openRequestTypes = new Set(
+    requests.filter((r) => r.status === "OPEN").map((r) => String(r.document_type)),
+  );
+
+  const findDoc = (types: string[]) =>
+    sharedDocs.find((doc) => types.includes(String(doc.document_type))) ?? null;
+
+  const countDocsBySuffix = (stepId: number | undefined, suffix: string) => {
+    if (!stepId) return 0;
+    const match = `${stepId}:`;
+    return sharedDocs.filter(
+      (doc) =>
+        String(doc.document_type).includes(match) &&
+        String(doc.document_type).includes(suffix),
+    ).length;
+  };
+
+  const countContainerDocs = (
+    stepId: number | undefined,
+    index: number,
+    suffix: string,
+  ) => {
+    if (!stepId) return 0;
+    const prefix = `${stepId}:containers.${index}.`;
+    return sharedDocs.filter(
+      (doc) =>
+        String(doc.document_type).includes(prefix) &&
+        String(doc.document_type).includes(suffix),
+    ).length;
+  };
 
   async function uploadRequestedDocAction(
     tokenValue: string,
@@ -244,7 +406,143 @@ export default async function FclTrackingPage({
           </div>
         ) : null}
 
-        {invoiceStep ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={`/track/fcl/${token}?view=tracking`}
+            className={`rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${view === "tracking"
+              ? "bg-slate-900 text-white"
+              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+          >
+            Shipment tracking
+          </Link>
+          <Link
+            href={`/track/fcl/${token}?view=customs`}
+            className={`rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${view === "customs"
+              ? "bg-slate-900 text-white"
+              : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+          >
+            Customs clearance
+          </Link>
+        </div>
+
+        {view === "customs" ? (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className={`${headingFont.className} text-2xl font-semibold text-slate-900`}>
+                Customs clearance tracking
+              </h2>
+              <span className="text-sm text-slate-500">Internal process view</span>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Order received
+                  </div>
+                  <div className="mt-2 text-lg font-semibold text-slate-900">
+                    Order received by Zaxon
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    {orderReceivedDate ? `Received on ${formatDate(orderReceivedDate)}` : "Waiting for order"}
+                  </div>
+                </div>
+                {orderStep ? (
+                  <Badge tone={statusTone(orderStep.status)}>{stepStatusLabel(orderStep.status)}</Badge>
+                ) : null}
+              </div>
+              {orderRemarks ? (
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {orderRemarks}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Bill of lading
+                  </div>
+                  <div className="mt-2 text-lg font-semibold text-slate-900">
+                    B/L status
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    {blNumber ? `B/L number: ${blNumber}` : "B/L number not provided"}
+                  </div>
+                </div>
+                {blStep ? (
+                  <Badge tone={blDone ? "green" : "blue"}>{blDone ? "Done" : "In progress"}</Badge>
+                ) : null}
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  B/L type: {blTypeLabel}
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  Status: {blDone ? "Completed" : originalReceived ? "B/L received" : "Pending"}
+                </div>
+              </div>
+              {!blDone ? (
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {blTypeLabel === "Telex"
+                    ? telexReleased
+                      ? "Telex B/L released."
+                      : "Please share the released copy of your B/L."
+                    : blTypeLabel === "Original"
+                      ? originalReceived
+                        ? "Original B/L received by Zaxon."
+                        : "Please courier the original B/L to our office."
+                      : "B/L type not selected yet."}
+                </div>
+              ) : null}
+            </div>
+
+            {deliveryOrderStep ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Delivery order
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-slate-900">
+                      Delivery order status
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {deliveryOrderDate
+                        ? `Received on ${formatDate(deliveryOrderDate)}`
+                        : "Pending delivery order"}
+                    </div>
+                  </div>
+                  <Badge tone={statusTone(deliveryOrderStep.status)}>{stepStatusLabel(deliveryOrderStep.status)}</Badge>
+                </div>
+              </div>
+            ) : null}
+
+            {boeStep ? (
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Bill of entry
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-slate-900">
+                      BOE status
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {boeDate ? `BOE date: ${formatDate(boeDate)}` : "BOE not submitted yet"}
+                    </div>
+                  </div>
+                  <Badge tone={statusTone(boeStep.status)}>{stepStatusLabel(boeStep.status)}</Badge>
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        {view === "customs" && invoiceStep ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
@@ -289,22 +587,97 @@ export default async function FclTrackingPage({
           </section>
         ) : null}
 
+        {view === "tracking" ? (
+          <>
         <section className="space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  General shipment info
+                </div>
+                <div className="mt-2 text-lg font-semibold text-slate-900">
+                  Current shipment status
+                </div>
+              </div>
+              <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
+            </div>
+            <div className="mt-4 grid gap-2">
+              {[
+                {
+                  id: "vessel-tracking",
+                  title: "Vessel tracking",
+                  status: vesselState,
+                  label: vesselAta ? "Vessel Arrived" : vesselEta ? "Vessel Sailing" : "ETA Pending",
+                },
+                {
+                  id: "container-discharge",
+                  title: "Container discharge to port",
+                  status: dischargeState,
+                  label:
+                    dischargedCount === 0
+                      ? "Container on vessel"
+                      : dischargedCount < totalContainers
+                        ? "Container discharged to port"
+                        : "All containers discharged",
+                },
+                {
+                  id: "container-pullout",
+                  title: "Container pulled out",
+                  status: pullOutState,
+                  label:
+                    boeStep?.status !== "DONE"
+                      ? "BOE pending"
+                      : pulledOutCount === 0
+                        ? "Ready for collection"
+                        : pulledOutCount < totalContainers
+                          ? "Pulled out (partial)"
+                          : "Pulled out",
+                },
+                {
+                  id: "container-delivery",
+                  title: "Container delivered / offloaded",
+                  status: deliveryState,
+                  label:
+                    deliveredCount === 0
+                      ? "Offloading pending"
+                      : deliveredCount < totalContainers
+                        ? "Offloading in progress"
+                        : "Container was offloaded",
+                },
+              ].map((item) => (
+                <a
+                  key={item.title}
+                  href={`#${item.id}`}
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm transition hover:-translate-y-0.5 hover:shadow-md ${summaryStyle(item.status)}`}
+                >
+                  <div>
+                    <div className="font-medium text-slate-900">{item.title}</div>
+                    <div className="text-xs text-slate-600">{item.label}</div>
+                  </div>
+                  <span className="text-xs font-semibold uppercase tracking-[0.2em]">
+                    {item.status === "DONE"
+                      ? "Done"
+                      : item.status === "IN_PROGRESS"
+                        ? "In progress"
+                        : "Pending"}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             <h2 className={`${headingFont.className} text-2xl font-semibold text-slate-900`}>
-              Tracking milestones
+              Shipment tracking
             </h2>
-            <span className="text-sm text-slate-500">Client view</span>
+            <span className="text-sm text-slate-500">Tap to expand details</span>
           </div>
 
           <div className="grid gap-4">
             {vesselStep ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div id="vessel-tracking" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                      Step 1
-                    </div>
                     <div className="mt-2 text-lg font-semibold text-slate-900">
                       Vessel tracking
                     </div>
@@ -326,17 +699,18 @@ export default async function FclTrackingPage({
             ) : null}
 
             {dischargeStep ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div id="container-discharge" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                      Step 2
-                    </div>
                     <div className="mt-2 text-lg font-semibold text-slate-900">
                       Containers discharge
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Summary of discharged containers and port free days.
+                      {dischargedCount === 0
+                        ? "Container on vessel"
+                        : dischargedCount < totalContainers
+                          ? "Container discharged to port"
+                          : "All containers discharged"}
                     </div>
                   </div>
                   <Badge tone={statusTone(dischargeStep.status)}>
@@ -350,6 +724,7 @@ export default async function FclTrackingPage({
                         <th className="px-3 py-2">Container</th>
                         <th className="px-3 py-2">Discharge date</th>
                         <th className="px-3 py-2">Last port free day</th>
+                        <th className="px-3 py-2">Total free days</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -364,6 +739,16 @@ export default async function FclTrackingPage({
                           <td className="px-3 py-2">
                             {formatDate(row.last_port_free_day)}
                           </td>
+                          <td className="px-3 py-2">
+                            {(() => {
+                              if (!row.container_discharged_date || !row.last_port_free_day) return "N/A";
+                              const start = new Date(row.container_discharged_date);
+                              const end = new Date(row.last_port_free_day);
+                              if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "N/A";
+                              const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                              return diff >= 0 ? diff : 0;
+                            })()}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -373,17 +758,20 @@ export default async function FclTrackingPage({
             ) : null}
 
             {pullOutStep ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div id="container-pullout" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                      Step 3
-                    </div>
                     <div className="mt-2 text-lg font-semibold text-slate-900">
                       Container pull-out from port
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Pull-out updates appear once BOE is confirmed.
+                      {boeStep?.status !== "DONE"
+                        ? "BOE pending"
+                        : pulledOutCount === 0
+                          ? "Ready for collection"
+                          : pulledOutCount < totalContainers
+                            ? "Pull-out in progress"
+                            : "Pulled out"}
                     </div>
                   </div>
                   <Badge tone={statusTone(pullOutStep.status)}>
@@ -439,17 +827,18 @@ export default async function FclTrackingPage({
             ) : null}
 
             {deliveryStep ? (
-              <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div id="container-delivery" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                      Step 4
-                    </div>
                     <div className="mt-2 text-lg font-semibold text-slate-900">
                       Container delivered or offloaded
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Track delivery, offload, and empty returns.
+                      {deliveredCount === 0
+                        ? "Offloading pending"
+                        : deliveredCount < totalContainers
+                          ? "Offloading in progress"
+                          : "Container was offloaded"}
                     </div>
                   </div>
                   <Badge tone={statusTone(deliveryStep.status)}>
@@ -462,6 +851,23 @@ export default async function FclTrackingPage({
                       key={`delivery-row-${index}`}
                       className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
                     >
+                      {(() => {
+                        const stockEnabled = isTruthy(
+                          pullOutRows[index]?.stock_tracking_enabled,
+                        );
+                        const damage = isTruthy(row.cargo_damage);
+                        const offloadPicturesCount = countContainerDocs(
+                          deliveryStep.id,
+                          index,
+                          "offload_pictures",
+                        );
+                        const damagePicturesCount = countContainerDocs(
+                          deliveryStep.id,
+                          index,
+                          "cargo_damage_pictures",
+                        );
+                        return (
+                          <>
                       <div className="font-medium text-slate-900">
                         {row.container_number || `#${index + 1}`}
                       </div>
@@ -498,11 +904,133 @@ export default async function FclTrackingPage({
                           "N/A"
                         )}
                       </div>
+                      {stockEnabled ? (
+                        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                          <div className="font-semibold uppercase tracking-[0.2em]">
+                            Stock tracking
+                          </div>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            <div>
+                              Total weight: {row.total_weight_kg || "N/A"} kg
+                            </div>
+                            <div>
+                              Packages: {row.total_packages || "N/A"}{" "}
+                              {row.package_type || ""}
+                            </div>
+                            <div className="md:col-span-2">
+                              Cargo description: {row.cargo_description || "N/A"}
+                            </div>
+                          </div>
+                          <div className="mt-2">
+                            Offload pictures:{" "}
+                            {offloadPicturesCount
+                              ? `${offloadPicturesCount} uploaded`
+                              : "None"}
+                          </div>
+                          {damage ? (
+                            <div className="mt-2">
+                              Damage reported. Pictures:{" "}
+                              {damagePicturesCount
+                                ? `${damagePicturesCount} uploaded`
+                                : "None"}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                        </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
               </div>
             ) : null}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Documents
+              </div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">
+                Shipment documents
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {[
+              {
+                label: "Bill of lading",
+                doc: findDoc(blDocTypes),
+                requested: blDocTypes.some((t) => openRequestTypes.has(t)),
+              },
+              {
+                label: "Commercial invoice",
+                doc: findDoc(invoiceDocTypes),
+                requested: invoiceDocTypes.some((t) => openRequestTypes.has(t)),
+              },
+              {
+                label: "Other documents",
+                doc: otherDocCount ? null : null,
+                requested: false,
+                count: otherDocCount,
+              },
+              {
+                label: "Delivery order",
+                doc: deliveryOrderDocType ? findDoc([deliveryOrderDocType]) : null,
+                requested: deliveryOrderDocType ? openRequestTypes.has(deliveryOrderDocType) : false,
+              },
+              {
+                label: "Bill of entry",
+                doc: boeDocType ? findDoc([boeDocType]) : null,
+                requested: boeDocType ? openRequestTypes.has(boeDocType) : false,
+              },
+              {
+                label: "Pull out token",
+                doc: null,
+                requested: false,
+                count: pullOutTokenCount,
+              },
+              {
+                label: "Return token",
+                doc: null,
+                requested: false,
+                count: returnTokenCount,
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm"
+              >
+                <div>
+                  <div className="font-medium text-slate-900">{item.label}</div>
+                  <div className="text-xs text-slate-500">
+                    {item.doc
+                      ? item.doc.file_name
+                      : item.count
+                        ? `${item.count} file${item.count === 1 ? "" : "s"}`
+                        : "Not uploaded"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  {item.requested ? (
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800">
+                      Requested
+                    </span>
+                  ) : null}
+                  {item.doc ? (
+                    <a
+                      href={`/api/track/${token}/documents/${item.doc.id}`}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    >
+                      Download
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -606,6 +1134,9 @@ export default async function FclTrackingPage({
             ) : null}
           </div>
         </section>
+          </>
+        ) : null}
+
       </div>
     </div>
   );
