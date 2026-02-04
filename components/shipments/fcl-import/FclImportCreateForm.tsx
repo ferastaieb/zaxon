@@ -274,7 +274,7 @@ export function FclImportCreateForm({
                     }}
                     placeholder="Container number"
                     className="min-w-[200px] flex-1 bg-transparent text-sm text-slate-800 focus:outline-none"
-                    required={index === 0}
+                    required={false}
                     disabled={!canWrite}
                   />
                   <button

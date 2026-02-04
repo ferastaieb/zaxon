@@ -186,7 +186,11 @@ export function computeFclStatuses(input: StatusInput): Record<string, StepStatu
     pullOutStep?.values ?? {},
   );
   const pulledOutCount = pullOutRows.filter((row) => {
-    return isTruthy(row.pulled_out) || !!row.pull_out_date?.trim();
+    return (
+      isTruthy(row.pulled_out) ||
+      !!row.pull_out_token_date?.trim() ||
+      !!row.pull_out_date?.trim()
+    );
   }).length;
   statuses[FCL_IMPORT_STEP_NAMES.containerPullOut] =
     !containerTotal || !trackingEnabled || !boeDone || dischargedCount === 0

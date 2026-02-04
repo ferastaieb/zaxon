@@ -10,26 +10,32 @@ import {
 } from "@/lib/data/workflows";
 import { FCL_IMPORT_STEP_NAMES, FCL_IMPORT_TEMPLATE_NAME } from "./constants";
 
-const containerGroup = (fields: StepFieldDefinition[]): StepFieldDefinition => ({
+const containerGroup = (
+  fields: StepFieldDefinition[],
+  required = true,
+): StepFieldDefinition => ({
   id: "containers",
   label: "Containers",
   type: "group",
   repeatable: true,
-  required: true,
+  required,
   fields,
 });
 
 const shipmentCreationSchema: StepFieldSchema = {
   version: 1,
   fields: [
-    containerGroup([
+    containerGroup(
+      [
       {
         id: "container_number",
         label: "Container number",
         type: "text",
-        required: true,
+        required: false,
       },
-    ]),
+      ],
+      false,
+    ),
   ],
 };
 
@@ -87,19 +93,29 @@ const containerPullOutSchema: StepFieldSchema = {
         type: "text",
       },
       {
-        id: "pulled_out",
-        label: "Container pulled out from port",
-        type: "boolean",
+        id: "pull_out_token_date",
+        label: "Pull-out token date",
+        type: "date",
       },
       {
-        id: "pull_out_date",
-        label: "Pull-out date",
-        type: "date",
+        id: "pull_out_token_slot",
+        label: "Pull-out token time slot",
+        type: "text",
+      },
+      {
+        id: "pull_out_token_file",
+        label: "Pull-out token file",
+        type: "file",
       },
       {
         id: "pull_out_destination",
         label: "Destination",
         type: "text",
+      },
+      {
+        id: "stock_tracking_enabled",
+        label: "Enable stock tracking",
+        type: "boolean",
       },
     ]),
   ],
@@ -123,6 +139,72 @@ const containerDeliverySchema: StepFieldSchema = {
         id: "delivered_offloaded_date",
         label: "Offload / delivery date",
         type: "date",
+      },
+      {
+        id: "empty_returned_token_slot",
+        label: "Empty return token time slot",
+        type: "text",
+      },
+      {
+        id: "total_weight_kg",
+        label: "Total weight (kg)",
+        type: "text",
+      },
+      {
+        id: "total_packages",
+        label: "Total packages",
+        type: "text",
+      },
+      {
+        id: "package_type",
+        label: "Package type",
+        type: "text",
+      },
+      {
+        id: "cargo_description",
+        label: "Cargo description",
+        type: "text",
+      },
+      {
+        id: "offload_pictures",
+        label: "General offloading pictures",
+        type: "group",
+        repeatable: true,
+        fields: [
+          {
+            id: "file",
+            label: "Picture",
+            type: "file",
+          },
+        ],
+      },
+      {
+        id: "cargo_damage",
+        label: "Cargo damage or missing",
+        type: "boolean",
+      },
+      {
+        id: "cargo_damage_remarks",
+        label: "Damage remarks",
+        type: "text",
+      },
+      {
+        id: "cargo_damage_pictures",
+        label: "Damage pictures",
+        type: "group",
+        repeatable: true,
+        fields: [
+          {
+            id: "file",
+            label: "Damage picture",
+            type: "file",
+          },
+        ],
+      },
+      {
+        id: "empty_returned_token_file",
+        label: "Empty return token file",
+        type: "file",
       },
       {
         id: "offload_location",
@@ -157,9 +239,27 @@ const orderReceivedSchema: StepFieldSchema = {
       type: "date",
     },
     {
+      id: "order_received_remarks",
+      label: "Order received remarks",
+      type: "text",
+    },
+    {
       id: "order_received_file",
       label: "Order received file",
       type: "file",
+    },
+    {
+      id: "order_received_files",
+      label: "Order received files",
+      type: "group",
+      repeatable: true,
+      fields: [
+        {
+          id: "file",
+          label: "Order received file",
+          type: "file",
+        },
+      ],
     },
   ],
 };
@@ -167,6 +267,12 @@ const orderReceivedSchema: StepFieldSchema = {
 const billOfLadingSchema: StepFieldSchema = {
   version: 1,
   fields: [
+    {
+      id: "bl_number",
+      label: "B/L number",
+      type: "text",
+      required: true,
+    },
     {
       id: "draft_bl_file",
       label: "Draft bill of lading",
@@ -258,6 +364,11 @@ const billOfLadingSchema: StepFieldSchema = {
 const commercialInvoiceSchema: StepFieldSchema = {
   version: 1,
   fields: [
+    {
+      id: "invoice_option",
+      label: "BOE invoice option",
+      type: "text",
+    },
     {
       id: "copy_invoice_received",
       label: "Copy invoice received",

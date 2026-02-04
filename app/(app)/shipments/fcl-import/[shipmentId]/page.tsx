@@ -41,7 +41,13 @@ type ShipmentPageProps = {
 function buildLatestDocMap(docs: DocumentRow[]) {
   const latest: Record<
     string,
-    { id: number; file_name: string; uploaded_at: string; source: "STAFF" | "CUSTOMER" }
+    {
+      id: number;
+      file_name: string;
+      uploaded_at: string;
+      source: "STAFF" | "CUSTOMER";
+      is_received: boolean;
+    }
   > = {};
   for (const doc of docs) {
     const key = String(doc.document_type);
@@ -51,6 +57,7 @@ function buildLatestDocMap(docs: DocumentRow[]) {
         file_name: doc.file_name,
         uploaded_at: doc.uploaded_at,
         source: doc.source,
+        is_received: doc.is_received === 1,
       };
     }
   }

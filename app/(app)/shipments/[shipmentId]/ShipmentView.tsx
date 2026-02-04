@@ -85,6 +85,7 @@ import {
     updateWorkflowGlobalsAction,
     updateStepAction,
     updateTaskStatusAction,
+    updateDocumentFlagsAction,
     uploadDocumentAction,
 } from "./actions";
 
@@ -399,7 +400,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const containerStepsView = isFclWorkflow
         ? steps.filter((step) => fclContainerNames.has(step.name))
         : [];
-    const showContainerTab = containerStepsView.length > 0;
+    const showContainerTab = !isFclWorkflow && containerStepsView.length > 0;
 
     const trackingStepIds = new Set(trackingStepsView.map((step) => step.id));
     const containerStepIds = new Set(containerStepsView.map((step) => step.id));
@@ -474,7 +475,13 @@ export default function ShipmentView(props: ShipmentViewProps) {
         if (!isFclWorkflow) return {};
         const latest: Record<
             string,
-            { id: number; file_name: string; uploaded_at: string; source: "STAFF" | "CUSTOMER" }
+            {
+                id: number;
+                file_name: string;
+                uploaded_at: string;
+                source: "STAFF" | "CUSTOMER";
+                is_received: boolean;
+            }
         > = {};
         for (const doc of docs) {
             const key = String(doc.document_type);
@@ -484,6 +491,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     file_name: doc.file_name,
                     uploaded_at: doc.uploaded_at,
                     source: doc.source,
+                    is_received: doc.is_received === 1,
                 };
             }
         }
@@ -1963,9 +1971,26 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             <div className="mt-2 flex gap-2">
                                                 {d.share_with_customer && <Badge tone="blue">Customer Visible</Badge>}
                                                 {d.is_required && <Badge tone="yellow">Required</Badge>}
+                                                {d.source === "CUSTOMER" && <Badge tone="blue">Customer Upload</Badge>}
+                                                {d.source === "CUSTOMER" && !d.is_received && (
+                                                    <Badge tone="yellow">Pending Verification</Badge>
+                                                )}
                                             </div>
                                         </div>
-                                        <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
+                                        <div className="flex items-center gap-2">
+                                            <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
+                                            {d.source === "CUSTOMER" && !d.is_received && canEdit ? (
+                                                <form action={updateDocumentFlagsAction.bind(null, shipment.id)}>
+                                                    <input type="hidden" name="documentId" value={d.id} />
+                                                    <input type="hidden" name="isRequired" value={d.is_required ? "1" : "0"} />
+                                                    <input type="hidden" name="shareWithCustomer" value={d.share_with_customer ? "1" : "0"} />
+                                                    <input type="hidden" name="isReceived" value="1" />
+                                                    <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
+                                                        Verify
+                                                    </button>
+                                                </form>
+                                            ) : null}
+                                        </div>
                                     </div>
                                 ))}
                                 {docs.length === 0 && <div className="text-zinc-500">No documents uploaded.</div>}

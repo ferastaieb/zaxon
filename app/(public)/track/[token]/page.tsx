@@ -588,7 +588,7 @@ export default async function TrackShipmentPage({
       mimeType: upload.mimeType,
       sizeBytes: upload.sizeBytes,
       isRequired: true,
-      isReceived: true,
+      isReceived: false,
       shareWithCustomer: true,
       source: "CUSTOMER",
       documentRequestId: req.id,

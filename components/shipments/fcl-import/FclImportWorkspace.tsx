@@ -48,6 +48,7 @@ type DocumentMeta = {
   file_name: string;
   uploaded_at: string;
   source?: "STAFF" | "CUSTOMER";
+  is_received?: boolean;
 };
 
 type ShipmentMeta = {
@@ -81,6 +82,16 @@ type WorkspaceProps = {
 
 type ToggleMap = Record<number, boolean>;
 
+const TOKEN_TIME_SLOTS = [
+  "6:00 - 8:00 AM",
+  "8:00 - 10:00 AM",
+  "10:00 AM - 12:00 PM",
+  "12:00 - 2:00 PM",
+  "2:00 - 4:00 PM",
+  "4:00 - 6:00 PM",
+  "6:00 - 8:00 PM",
+];
+
 function statusTone(status: StepStatus) {
   if (status === "DONE") return "green";
   if (status === "IN_PROGRESS") return "blue";
@@ -95,6 +106,24 @@ function daysUntil(dateRaw: string | undefined) {
   const now = new Date();
   const diff = date.getTime() - now.getTime();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+function maxDate(...dates: Array<string | undefined | null>) {
+  const parsed = dates
+    .map((value) => (value ? new Date(value) : null))
+    .filter((value): value is Date => !!value && !Number.isNaN(value.getTime()));
+  if (!parsed.length) return undefined;
+  const latest = parsed.reduce((acc, value) => (value > acc ? value : acc));
+  return latest.toISOString().slice(0, 10);
+}
+
+function minDate(...dates: Array<string | undefined | null>) {
+  const parsed = dates
+    .map((value) => (value ? new Date(value) : null))
+    .filter((value): value is Date => !!value && !Number.isNaN(value.getTime()));
+  if (!parsed.length) return undefined;
+  const earliest = parsed.reduce((acc, value) => (value < acc ? value : acc));
+  return earliest.toISOString().slice(0, 10);
 }
 
 function valueString(values: Record<string, unknown>, key: string) {
@@ -214,12 +243,17 @@ export function FclImportWorkspace({
   const showOverview = mode === "full";
   const showTracking = mode === "full" || mode === "tracking";
   const showOperations = mode === "full" || mode === "operations";
-  const showContainerOps = mode === "full" || mode === "container-ops";
+  const showContainerOps = mode === "container-ops";
   const isFull = mode === "full";
   const openRequestSet = useMemo(
     () => new Set(openDocRequestTypes.map((type) => String(type))),
     [openDocRequestTypes],
   );
+  const [dirtyStep, setDirtyStep] = useState<{
+    id: number;
+    anchor: string;
+    label: string;
+  } | null>(null);
   const [isRequestPending, startRequestTransition] = useTransition();
   const [requestingDocType, setRequestingDocType] = useState<string | null>(null);
   const [editUnlocked, setEditUnlocked] = useState<Record<number, boolean>>({});
@@ -243,6 +277,16 @@ export function FclImportWorkspace({
       </button>
     );
   };
+  const bindDirtyHandlers = (step: StepData | undefined, anchor: string, label: string) => ({
+    onChange: () => {
+      if (!step) return;
+      setDirtyStep({ id: step.id, anchor, label });
+    },
+    onSubmit: () => {
+      if (!step) return;
+      setDirtyStep((current) => (current?.id === step.id ? null : current));
+    },
+  });
   const renderReturnTo = () =>
     returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
   const renderFileMeta = (stepId: number, path: string[]) => {
@@ -267,6 +311,11 @@ export function FclImportWorkspace({
             {doc.source === "CUSTOMER" ? (
               <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
                 Uploaded by customer
+              </span>
+            ) : null}
+            {doc.source === "CUSTOMER" && doc.is_received === false ? (
+              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                Pending verification
               </span>
             ) : null}
             <span>
@@ -384,6 +433,15 @@ export function FclImportWorkspace({
     () => normalizeContainerRows(containerNumbers, deliveryStep?.values ?? {}),
     [containerNumbers, deliveryStep],
   );
+  const deliveryContainerMap = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    const containers = asArray(deliveryStep?.values?.containers);
+    for (const entry of containers) {
+      const number = typeof entry.container_number === "string" ? entry.container_number : "";
+      if (number) map.set(number, entry);
+    }
+    return map;
+  }, [deliveryStep]);
   const tokenRows = useMemo(
     () => normalizeContainerRows(containerNumbers, tokenStep?.values ?? {}),
     [containerNumbers, tokenStep],
@@ -397,7 +455,10 @@ export function FclImportWorkspace({
     (row) => isTruthy(row.container_discharged) || !!row.container_discharged_date?.trim(),
   );
   const pulledOutFlags = pullOutRows.map(
-    (row) => isTruthy(row.pulled_out) || !!row.pull_out_date?.trim(),
+    (row) =>
+      isTruthy(row.pulled_out) ||
+      !!row.pull_out_token_date?.trim() ||
+      !!row.pull_out_date?.trim(),
   );
   const deliveredFlags = deliveryRows.map(
     (row) =>
@@ -406,6 +467,10 @@ export function FclImportWorkspace({
   const returnedFlags = deliveryRows.map(
     (row) => isTruthy(row.empty_returned) || !!row.empty_returned_date?.trim(),
   );
+  const cargoDamageFlags = deliveryRows.map((row) => {
+    const entry = deliveryContainerMap.get(row.container_number);
+    return isTruthy(entry?.cargo_damage);
+  });
 
   const totalContainers = containerNumbers.length;
   const dischargedCount = dischargedFlags.filter(Boolean).length;
@@ -431,14 +496,10 @@ export function FclImportWorkspace({
     { id: "overview", label: "Overview", target: "overview" },
     { id: "tracking", label: "Tracking", target: "tracking" },
     { id: "operations", label: "Operations", target: "operations" },
-    { id: "container-ops", label: "Containers", target: "container-ops" },
   ];
 
   const [dischargeToggles, setDischargeToggles] = useState<ToggleMap>(() =>
     Object.fromEntries(dischargedFlags.map((value, index) => [index, value])),
-  );
-  const [pullOutToggles, setPullOutToggles] = useState<ToggleMap>(() =>
-    Object.fromEntries(pulledOutFlags.map((value, index) => [index, value])),
   );
   const [deliveryToggles, setDeliveryToggles] = useState<ToggleMap>(() =>
     Object.fromEntries(deliveredFlags.map((value, index) => [index, value])),
@@ -446,8 +507,21 @@ export function FclImportWorkspace({
   const [returnToggles, setReturnToggles] = useState<ToggleMap>(() =>
     Object.fromEntries(returnedFlags.map((value, index) => [index, value])),
   );
+  const [damageToggles, setDamageToggles] = useState<ToggleMap>(() =>
+    Object.fromEntries(cargoDamageFlags.map((value, index) => [index, value])),
+  );
+  const [offloadPictureCounts, setOffloadPictureCounts] = useState<Record<number, number>>(
+    {},
+  );
+  const [damagePictureCounts, setDamagePictureCounts] = useState<Record<number, number>>(
+    {},
+  );
   const [orderReceived, setOrderReceived] = useState(
     isTruthy(orderStep?.values?.order_received),
+  );
+  const orderReceivedDate = valueString(orderStep?.values ?? {}, "order_received_date");
+  const latestDischargeDate = maxDate(
+    ...dischargeRows.map((row) => row.container_discharged_date),
   );
   const trackingLocked = !orderReceived;
   const [creationContainers, setCreationContainers] = useState(() => {
@@ -461,6 +535,40 @@ export function FclImportWorkspace({
   const [orderFileRows, setOrderFileRows] = useState(
     orderFiles.length ? orderFiles : [{}],
   );
+  const [pullOutDestinations, setPullOutDestinations] = useState<string[]>(() =>
+    pullOutRows.map((row) => row.pull_out_destination ?? ""),
+  );
+
+  useEffect(() => {
+    setPullOutDestinations((prev) =>
+      pullOutRows.map(
+        (row, index) => prev[index] ?? row.pull_out_destination ?? "",
+      ),
+    );
+  }, [pullOutRows]);
+
+  useEffect(() => {
+    setOffloadPictureCounts((prev) => {
+      const next = { ...prev };
+      deliveryRows.forEach((row, index) => {
+        const entry = deliveryContainerMap.get(row.container_number);
+        const existing = asArray(entry?.offload_pictures).length;
+        const current = next[index] ?? 1;
+        next[index] = Math.max(current, existing || 1);
+      });
+      return next;
+    });
+    setDamagePictureCounts((prev) => {
+      const next = { ...prev };
+      deliveryRows.forEach((row, index) => {
+        const entry = deliveryContainerMap.get(row.container_number);
+        const existing = asArray(entry?.cargo_damage_pictures).length;
+        const current = next[index] ?? 1;
+        next[index] = Math.max(current, existing || 1);
+      });
+      return next;
+    });
+  }, [deliveryRows, deliveryContainerMap]);
 
   const blValues = (blStep?.values ?? {}) as Record<string, unknown>;
   const blChoice = (blValues.bl_type ?? {}) as Record<string, unknown>;
@@ -490,6 +598,10 @@ export function FclImportWorkspace({
   );
 
   const invoiceValues = (invoiceStep?.values ?? {}) as Record<string, unknown>;
+  const savedInvoiceOption =
+    valueString(invoiceValues, "invoice_option") ||
+    (isTruthy(invoiceValues.proceed_with_copy) ? "COPY_FINE" : "") ||
+    (isTruthy(invoiceValues.original_invoice_received) ? "ORIGINAL" : "");
   const [copyInvoice, setCopyInvoice] = useState(
     isTruthy(invoiceValues.copy_invoice_received),
   );
@@ -499,8 +611,7 @@ export function FclImportWorkspace({
   const [invoiceOption, setInvoiceOption] = useState(() => {
     const raw = valueString(invoiceValues, "invoice_option");
     if (raw) return raw;
-    if (isTruthy(invoiceValues.proceed_with_copy)) return "COPY_FINE";
-    if (isTruthy(invoiceValues.original_invoice_received)) return "ORIGINAL";
+    if (savedInvoiceOption) return savedInvoiceOption;
     return "";
   });
   const initialOtherDocs = (() => {
@@ -520,6 +631,11 @@ export function FclImportWorkspace({
   const deliveryValues = (deliveryOrderStep?.values ?? {}) as Record<string, unknown>;
   const [deliveryObtained, setDeliveryObtained] = useState(
     isTruthy(deliveryValues.delivery_order_obtained),
+  );
+  const deliveryOrderDate = valueString(deliveryValues, "delivery_order_date");
+  const deliveryOrderValidity = valueString(
+    deliveryValues,
+    "delivery_order_validity",
   );
 
   const isDeliveryValidSoon = (() => {
@@ -761,7 +877,12 @@ export function FclImportWorkspace({
               ) : null}
 
               {vesselStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(vesselStep, "vessel-tracking", "Vessel tracking")}
+                >
                   <input type="hidden" name="stepId" value={vesselStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -794,6 +915,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["eta"])}
                           defaultValue={vesselEta}
+                          min={orderReceivedDate || undefined}
                           disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
@@ -806,6 +928,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["ata"])}
                           defaultValue={vesselAta}
+                          min={orderReceivedDate || undefined}
                           disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                         />
@@ -815,7 +938,16 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
               {dischargeStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    dischargeStep,
+                    "containers-discharge",
+                    "Containers discharge",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={dischargeStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -924,6 +1056,7 @@ export function FclImportWorkspace({
                                     "container_discharged_date",
                                   ])}
                                   defaultValue={row.container_discharged_date ?? ""}
+                                  min={maxDate(orderReceivedDate, vesselAta)}
                                   disabled={
                                     !canEditStep(dischargeStep) || trackingLocked || !toggle
                                   }
@@ -951,6 +1084,7 @@ export function FclImportWorkspace({
                                     "last_port_free_day",
                                   ])}
                                   defaultValue={row.last_port_free_day ?? ""}
+                                  min={maxDate(orderReceivedDate, vesselAta)}
                                   disabled={
                                     !canEditStep(dischargeStep) || trackingLocked || !toggle
                                   }
@@ -977,7 +1111,16 @@ export function FclImportWorkspace({
               ) : null}
 
               {pullOutStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    pullOutStep,
+                    "container-pull-out",
+                    "Container pull-out",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={pullOutStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1005,7 +1148,10 @@ export function FclImportWorkspace({
                       {pullOutRows.map((row, index) => {
                         const discharged = dischargedFlags[index];
                         const eligible = boeDone && discharged;
-                        const toggle = pullOutToggles[index] ?? false;
+                        const tokenDate = row.pull_out_token_date ?? row.pull_out_date ?? "";
+                        const destValue = pullOutDestinations[index] ?? row.pull_out_destination ?? "";
+                        const stockEnabled =
+                          destValue === "Zaxon Warehouse (DWC Freezone)";
 
                         return (
                           <div
@@ -1021,40 +1167,6 @@ export function FclImportWorkspace({
                                   {row.container_number || `#${index + 1}`}
                                 </div>
                               </div>
-                              <label className="flex items-center gap-2 text-sm text-slate-700">
-                                <input
-                                  type="hidden"
-                                  name={fieldInputName([
-                                    "containers",
-                                    String(index),
-                                    "pulled_out",
-                                  ])}
-                                  value=""
-                                />
-                                <input
-                                  type="checkbox"
-                                  name={fieldInputName([
-                                    "containers",
-                                    String(index),
-                                    "pulled_out",
-                                  ])}
-                                  value="1"
-                                  defaultChecked={toggle}
-                                  onChange={(event) =>
-                                    setPullOutToggles((prev) => ({
-                                      ...prev,
-                                      [index]: event.target.checked,
-                                    }))
-                                  }
-                                  disabled={
-                                    !canEditStep(pullOutStep) ||
-                                    trackingLocked ||
-                                    !eligible
-                                  }
-                                  className="h-4 w-4 rounded border-slate-300"
-                                />
-                                Pulled out
-                              </label>
                             </div>
 
                             <input
@@ -1070,14 +1182,14 @@ export function FclImportWorkspace({
                             <div className="mt-3 grid gap-3 md:grid-cols-2">
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
-                                  Pull-out date
+                                  Token date (pull-out)
                                 </div>
                                 <input
                                   type="hidden"
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
-                                    "pull_out_date",
+                                    "pull_out_token_date",
                                   ])}
                                   value=""
                                 />
@@ -1086,49 +1198,158 @@ export function FclImportWorkspace({
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
-                                    "pull_out_date",
+                                    "pull_out_token_date",
                                   ])}
-                                  defaultValue={row.pull_out_date ?? ""}
+                                  defaultValue={tokenDate}
+                                  min={maxDate(
+                                    orderReceivedDate,
+                                    vesselAta,
+                                    row.container_discharged_date,
+                                  )}
                                   disabled={
                                     !canEditStep(pullOutStep) ||
                                     trackingLocked ||
-                                    !eligible ||
-                                    !toggle
+                                    !eligible
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
+                                  Token time slot
+                                </div>
+                                <select
+                                  name={fieldInputName([
+                                    "containers",
+                                    String(index),
+                                    "pull_out_token_slot",
+                                  ])}
+                                  defaultValue={row.pull_out_token_slot ?? ""}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible
+                                  }
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                >
+                                  <option value="">Select slot</option>
+                                  {TOKEN_TIME_SLOTS.map((slot) => (
+                                    <option key={slot} value={slot}>
+                                      {slot}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <label className="block">
+                                <div className="mb-1 text-xs font-medium text-slate-600">
+                                  Token file (optional)
+                                </div>
+                                <input
+                                  type="file"
+                                  name={fieldInputName([
+                                    "containers",
+                                    String(index),
+                                    "pull_out_token_file",
+                                  ])}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible
+                                  }
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                />
+                                {renderFileMeta(pullOutStep.id, [
+                                  "containers",
+                                  String(index),
+                                  "pull_out_token_file",
+                                ])}
+                              </label>
+                              <label className="block">
+                                <div className="mb-1 text-xs font-medium text-slate-600">
                                   Destination
                                 </div>
+                                <select
+                                  name={fieldInputName([
+                                    "containers",
+                                    String(index),
+                                    "pull_out_destination",
+                                  ])}
+                                  value={destValue}
+                                  onChange={(event) => {
+                                    const next = [...pullOutDestinations];
+                                    next[index] = event.target.value;
+                                    setPullOutDestinations(next);
+                                  }}
+                                  disabled={
+                                    !canEditStep(pullOutStep) ||
+                                    trackingLocked ||
+                                    !eligible
+                                  }
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                >
+                                  <option value="">Select destination</option>
+                                  <option value="Zaxon Warehouse (DWC Freezone)">
+                                    Zaxon Warehouse (DWC Freezone)
+                                  </option>
+                                  <option value="Other">Other</option>
+                                </select>
+                                {destValue === "Other" ? (
+                                  <input
+                                    type="text"
+                                    name={fieldInputName([
+                                      "containers",
+                                      String(index),
+                                      "pull_out_destination_other",
+                                    ])}
+                                    defaultValue={row.pull_out_destination_other ?? ""}
+                                    disabled={
+                                      !canEditStep(pullOutStep) ||
+                                      trackingLocked ||
+                                      !eligible
+                                    }
+                                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                    placeholder="Destination details"
+                                  />
+                                ) : null}
+                              </label>
+                            </div>
+                            <div className="mt-3">
+                              <label className="flex items-center gap-2 text-sm text-slate-700">
                                 <input
                                   type="hidden"
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
-                                    "pull_out_destination",
+                                    "stock_tracking_enabled",
                                   ])}
                                   value=""
                                 />
                                 <input
-                                  type="text"
+                                  type="checkbox"
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
-                                    "pull_out_destination",
+                                    "stock_tracking_enabled",
                                   ])}
-                                  defaultValue={row.pull_out_destination ?? ""}
+                                  value="1"
+                                  defaultChecked={isTruthy(row.stock_tracking_enabled)}
                                   disabled={
                                     !canEditStep(pullOutStep) ||
                                     trackingLocked ||
                                     !eligible ||
-                                    !toggle
+                                    !stockEnabled
                                   }
-                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                  placeholder="Warehouse or yard"
+                                  className="h-4 w-4 rounded border-slate-300"
                                 />
+                                Enable stock tracking
                               </label>
+                              {!stockEnabled ? (
+                                <div className="mt-1 text-xs text-slate-500">
+                                  Enable by selecting Zaxon Warehouse destination.
+                                </div>
+                              ) : null}
                             </div>
                             {!eligible ? (
                               <div className="mt-2 text-xs text-slate-500">
@@ -1144,7 +1365,16 @@ export function FclImportWorkspace({
               ) : null}
 
               {deliveryStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    deliveryStep,
+                    "container-delivery",
+                    "Container delivery",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={deliveryStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1172,6 +1402,26 @@ export function FclImportWorkspace({
                       {deliveryRows.map((row, index) => {
                         const delivered = deliveryToggles[index] ?? false;
                         const returned = returnToggles[index] ?? false;
+                        const entry = deliveryContainerMap.get(row.container_number);
+                        const stockEnabled = isTruthy(pullOutRows[index]?.stock_tracking_enabled);
+                        const damageActive =
+                          damageToggles[index] ?? isTruthy(entry?.cargo_damage);
+                        const offloadPictures = asArray(entry?.offload_pictures);
+                        const damagePictures = asArray(entry?.cargo_damage_pictures);
+                        const offloadCount = Math.max(
+                          offloadPictureCounts[index] ?? 1,
+                          offloadPictures.length || 0,
+                          1,
+                        );
+                        const damageCount = Math.max(
+                          damagePictureCounts[index] ?? 1,
+                          damagePictures.length || 0,
+                          1,
+                        );
+                        const pullOutTokenDate =
+                          pullOutRows[index]?.pull_out_token_date ??
+                          pullOutRows[index]?.pull_out_date ??
+                          "";
 
                         return (
                           <div
@@ -1251,6 +1501,7 @@ export function FclImportWorkspace({
                                     "delivered_offloaded_date",
                                   ])}
                                   defaultValue={row.delivered_offloaded_date ?? ""}
+                                  min={maxDate(orderReceivedDate, pullOutTokenDate)}
                                   disabled={
                                     !canEditStep(deliveryStep) ||
                                     trackingLocked ||
@@ -1343,6 +1594,7 @@ export function FclImportWorkspace({
                                     "empty_returned_date",
                                   ])}
                                   defaultValue={row.empty_returned_date ?? ""}
+                                  min={maxDate(orderReceivedDate, pullOutTokenDate)}
                                   disabled={
                                     !canEditStep(deliveryStep) ||
                                     trackingLocked ||
@@ -1351,7 +1603,333 @@ export function FclImportWorkspace({
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                 />
                               </label>
+                              <label className="block">
+                                <div className="mb-1 text-xs font-medium text-slate-600">
+                                  Empty return token time slot
+                                </div>
+                                <select
+                                  name={fieldInputName([
+                                    "containers",
+                                    String(index),
+                                    "empty_returned_token_slot",
+                                  ])}
+                                  defaultValue={row.empty_returned_token_slot ?? ""}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !returned
+                                  }
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                >
+                                  <option value="">Select slot</option>
+                                  {TOKEN_TIME_SLOTS.map((slot) => (
+                                    <option key={slot} value={slot}>
+                                      {slot}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
                             </div>
+                            <div className="mt-3">
+                              <label className="block">
+                                <div className="mb-1 text-xs font-medium text-slate-600">
+                                  Empty return token file (optional)
+                                </div>
+                                <input
+                                  type="file"
+                                  name={fieldInputName([
+                                    "containers",
+                                    String(index),
+                                    "empty_returned_token_file",
+                                  ])}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !returned
+                                  }
+                                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                />
+                                {renderFileMeta(deliveryStep.id, [
+                                  "containers",
+                                  String(index),
+                                  "empty_returned_token_file",
+                                ])}
+                              </label>
+                            </div>
+
+                            {stockEnabled ? (
+                              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
+                                  Stock tracking
+                                </div>
+                                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                                  <label className="block">
+                                    <div className="mb-1 text-xs font-medium text-slate-600">
+                                      Total weight (kg)
+                                    </div>
+                                    <input
+                                      type="text"
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "total_weight_kg",
+                                      ])}
+                                      defaultValue={
+                                        typeof entry?.total_weight_kg === "string"
+                                          ? entry.total_weight_kg
+                                          : ""
+                                      }
+                                      disabled={
+                                        !canEditStep(deliveryStep) ||
+                                        trackingLocked ||
+                                        !delivered
+                                      }
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <div className="mb-1 text-xs font-medium text-slate-600">
+                                      Total packages
+                                    </div>
+                                    <input
+                                      type="text"
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "total_packages",
+                                      ])}
+                                      defaultValue={
+                                        typeof entry?.total_packages === "string"
+                                          ? entry.total_packages
+                                          : ""
+                                      }
+                                      disabled={
+                                        !canEditStep(deliveryStep) ||
+                                        trackingLocked ||
+                                        !delivered
+                                      }
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                    />
+                                  </label>
+                                  <label className="block">
+                                    <div className="mb-1 text-xs font-medium text-slate-600">
+                                      Package type
+                                    </div>
+                                    <input
+                                      type="text"
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "package_type",
+                                      ])}
+                                      defaultValue={
+                                        typeof entry?.package_type === "string"
+                                          ? entry.package_type
+                                          : ""
+                                      }
+                                      disabled={
+                                        !canEditStep(deliveryStep) ||
+                                        trackingLocked ||
+                                        !delivered
+                                      }
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                    />
+                                  </label>
+                                  <label className="block md:col-span-2">
+                                    <div className="mb-1 text-xs font-medium text-slate-600">
+                                      Cargo description
+                                    </div>
+                                    <textarea
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "cargo_description",
+                                      ])}
+                                      defaultValue={
+                                        typeof entry?.cargo_description === "string"
+                                          ? entry.cargo_description
+                                          : ""
+                                      }
+                                      disabled={
+                                        !canEditStep(deliveryStep) ||
+                                        trackingLocked ||
+                                        !delivered
+                                      }
+                                      rows={3}
+                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                    />
+                                  </label>
+                                </div>
+
+                                <div className="mt-4">
+                                  <div className="mb-2 text-xs font-medium text-slate-600">
+                                    Offload pictures
+                                  </div>
+                                  <div className="space-y-3">
+                                    {Array.from({ length: offloadCount }).map((_, pictureIndex) => (
+                                      <label key={`offload-${index}-${pictureIndex}`} className="block">
+                                        <input
+                                          type="file"
+                                          name={fieldInputName([
+                                            "containers",
+                                            String(index),
+                                            "offload_pictures",
+                                            String(pictureIndex),
+                                            "file",
+                                          ])}
+                                          disabled={
+                                            !canEditStep(deliveryStep) ||
+                                            trackingLocked ||
+                                            !delivered
+                                          }
+                                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                        />
+                                        {renderFileMeta(deliveryStep.id, [
+                                          "containers",
+                                          String(index),
+                                          "offload_pictures",
+                                          String(pictureIndex),
+                                          "file",
+                                        ])}
+                                      </label>
+                                    ))}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setOffloadPictureCounts((prev) => ({
+                                        ...prev,
+                                        [index]: (prev[index] ?? offloadCount) + 1,
+                                      }))
+                                    }
+                                    disabled={
+                                      !canEditStep(deliveryStep) ||
+                                      trackingLocked ||
+                                      !delivered
+                                    }
+                                    className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                  >
+                                    Add picture
+                                  </button>
+                                </div>
+
+                                <div className="mt-4">
+                                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                                    <input
+                                      type="hidden"
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "cargo_damage",
+                                      ])}
+                                      value=""
+                                    />
+                                    <input
+                                      type="checkbox"
+                                      name={fieldInputName([
+                                        "containers",
+                                        String(index),
+                                        "cargo_damage",
+                                      ])}
+                                      value="1"
+                                      defaultChecked={damageActive}
+                                      onChange={(event) =>
+                                        setDamageToggles((prev) => ({
+                                          ...prev,
+                                          [index]: event.target.checked,
+                                        }))
+                                      }
+                                      disabled={
+                                        !canEditStep(deliveryStep) ||
+                                        trackingLocked ||
+                                        !delivered
+                                      }
+                                      className="h-4 w-4 rounded border-slate-300"
+                                    />
+                                    Cargo damage or missing items
+                                  </label>
+                                  {damageActive ? (
+                                    <div className="mt-3 space-y-3">
+                                      <label className="block">
+                                        <div className="mb-1 text-xs font-medium text-slate-600">
+                                          Damage remarks
+                                        </div>
+                                        <textarea
+                                          name={fieldInputName([
+                                            "containers",
+                                            String(index),
+                                            "cargo_damage_remarks",
+                                          ])}
+                                          defaultValue={
+                                            typeof entry?.cargo_damage_remarks === "string"
+                                              ? entry.cargo_damage_remarks
+                                              : ""
+                                          }
+                                          disabled={
+                                            !canEditStep(deliveryStep) ||
+                                            trackingLocked ||
+                                            !delivered
+                                          }
+                                          rows={2}
+                                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                        />
+                                      </label>
+                                      <div>
+                                        <div className="mb-2 text-xs font-medium text-slate-600">
+                                          Damage pictures
+                                        </div>
+                                        <div className="space-y-3">
+                                          {Array.from({ length: damageCount }).map((_, pictureIndex) => (
+                                            <label key={`damage-${index}-${pictureIndex}`} className="block">
+                                              <input
+                                                type="file"
+                                                name={fieldInputName([
+                                                  "containers",
+                                                  String(index),
+                                                  "cargo_damage_pictures",
+                                                  String(pictureIndex),
+                                                  "file",
+                                                ])}
+                                                disabled={
+                                                  !canEditStep(deliveryStep) ||
+                                                  trackingLocked ||
+                                                  !delivered
+                                                }
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                                              />
+                                              {renderFileMeta(deliveryStep.id, [
+                                                "containers",
+                                                String(index),
+                                                "cargo_damage_pictures",
+                                                String(pictureIndex),
+                                                "file",
+                                              ])}
+                                            </label>
+                                          ))}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setDamagePictureCounts((prev) => ({
+                                              ...prev,
+                                              [index]: (prev[index] ?? damageCount) + 1,
+                                            }))
+                                          }
+                                          disabled={
+                                            !canEditStep(deliveryStep) ||
+                                            trackingLocked ||
+                                            !delivered
+                                          }
+                                          className="mt-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                        >
+                                          Add damage picture
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1373,7 +1951,15 @@ export function FclImportWorkspace({
               </div>
 
               {creationStep ? (
-                <form action={updateAction} className="space-y-3">
+                <form
+                  action={updateAction}
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    creationStep,
+                    "shipment-creation",
+                    "Shipment creation",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={creationStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1442,7 +2028,12 @@ export function FclImportWorkspace({
               ) : null}
 
               {orderStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(orderStep, "order-received", "Order received")}
+                >
                   <input type="hidden" name="stepId" value={orderStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1554,7 +2145,12 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
               {blStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(blStep, "bill-of-lading", "Bill of lading")}
+                >
                   <input type="hidden" name="stepId" value={blStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1579,6 +2175,20 @@ export function FclImportWorkspace({
                     }
                   >
                     <div className="space-y-4">
+                      <label className="block">
+                        <div className="mb-1 text-xs font-medium text-slate-600">
+                          B/L number
+                        </div>
+                        <input
+                          type="text"
+                          name={fieldInputName(["bl_number"])}
+                          defaultValue={valueString(blValues, "bl_number")}
+                          required={canEditStep(blStep)}
+                          disabled={!canEditStep(blStep)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
+                          placeholder="Enter B/L number"
+                        />
+                      </label>
                       <label className="block">
                         <div className="mb-1 text-xs font-medium text-slate-600">
                           Draft bill of lading (optional)
@@ -1904,7 +2514,16 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
               {invoiceStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    invoiceStep,
+                    "commercial-invoice",
+                    "Commercial invoice",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={invoiceStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -1990,8 +2609,9 @@ export function FclImportWorkspace({
                           ].map((option) => {
                             const disabledOption =
                               !canEditStep(invoiceStep) ||
-                              (invoiceOption === "COPY_FINE" && option.id === "ORIGINAL") ||
-                              (invoiceOption === "ORIGINAL" &&
+                              (savedInvoiceOption === "COPY_FINE" &&
+                                option.id === "ORIGINAL") ||
+                              (savedInvoiceOption === "ORIGINAL" &&
                                 option.id !== "ORIGINAL");
                             return (
                               <label
@@ -2127,7 +2747,16 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
               {deliveryOrderStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    deliveryOrderStep,
+                    "delivery-order",
+                    "Delivery order",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={deliveryOrderStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -2188,6 +2817,8 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["delivery_order_date"])}
                           defaultValue={valueString(deliveryValues, "delivery_order_date")}
+                          min={orderReceivedDate || undefined}
+                          max={deliveryOrderValidity || undefined}
                           disabled={
                             !canEditStep(deliveryOrderStep) ||
                             !blDone ||
@@ -2233,6 +2864,7 @@ export function FclImportWorkspace({
                             deliveryValues,
                             "delivery_order_validity",
                           )}
+                          min={maxDate(orderReceivedDate, latestDischargeDate)}
                           disabled={
                             !canEditStep(deliveryOrderStep) ||
                             !blDone ||
@@ -2253,7 +2885,12 @@ export function FclImportWorkspace({
               ) : null}
 
               {boeStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(boeStep, "bill-of-entry", "Bill of entry")}
+                >
                   <input type="hidden" name="stepId" value={boeStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -2293,6 +2930,7 @@ export function FclImportWorkspace({
                           type="date"
                           name={fieldInputName(["boe_date"])}
                           defaultValue={boeDate}
+                          min={maxDate(orderReceivedDate, deliveryOrderDate)}
                           disabled={
                             !canEditStep(boeStep) ||
                             !deliveryOrderDone ||
@@ -2358,7 +2996,12 @@ export function FclImportWorkspace({
               </div>
 
               {tokenStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(tokenStep, "token-booking", "Token booking")}
+                >
                   <input type="hidden" name="stepId" value={tokenStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -2454,7 +3097,16 @@ export function FclImportWorkspace({
               ) : null}
 
               {returnTokenStep ? (
-                <form action={updateAction} encType="multipart/form-data" className="space-y-3">
+                <form
+                  action={updateAction}
+                  encType="multipart/form-data"
+                  className="space-y-3"
+                  {...bindDirtyHandlers(
+                    returnTokenStep,
+                    "return-token",
+                    "Return token booking",
+                  )}
+                >
                   <input type="hidden" name="stepId" value={returnTokenStep.id} />
                   {renderReturnTo()}
                   <StepCard
@@ -2570,6 +3222,28 @@ export function FclImportWorkspace({
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {dirtyStep ? (
+        <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,680px)] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-lg backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs font-medium text-slate-600">
+              Unsaved changes in {dirtyStep.label}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const target = document.getElementById(dirtyStep.anchor);
+                if (target) {
+                  target.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+              }}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              Go to save
+            </button>
           </div>
         </div>
       ) : null}

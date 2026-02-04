@@ -17,7 +17,7 @@ import {
 } from "@/lib/data/tracking";
 import { listShipmentSteps } from "@/lib/data/shipments";
 import { overallStatusLabel, stepStatusLabel, type StepStatus } from "@/lib/domain";
-import { parseStepFieldValues } from "@/lib/stepFields";
+import { encodeFieldPath, parseStepFieldValues, stepFieldDocType } from "@/lib/stepFields";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import {
   extractContainerNumbers,
@@ -85,6 +85,11 @@ export default async function FclTrackingPage({
     .filter((doc) => doc.source === "CUSTOMER" && doc.share_with_customer)
     .sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at))
     .slice(0, 50);
+  const docByType = new Map(
+    docs
+      .filter((doc) => doc.share_with_customer)
+      .map((doc) => [String(doc.document_type), doc]),
+  );
 
   const creationStep = stepByName.get(FCL_IMPORT_STEP_NAMES.shipmentCreation);
   let containerNumbers = extractContainerNumbers(
@@ -98,8 +103,10 @@ export default async function FclTrackingPage({
   const deliveryStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containerDelivery);
   const invoiceStep = stepByName.get(FCL_IMPORT_STEP_NAMES.commercialInvoice);
   const boeStep = stepByName.get(FCL_IMPORT_STEP_NAMES.billOfEntry);
+  const blStep = stepByName.get(FCL_IMPORT_STEP_NAMES.billOfLading);
 
   const vesselValues = parseStepFieldValues(vesselStep?.field_values_json);
+  const blValues = parseStepFieldValues(blStep?.field_values_json);
   const dischargeRows = normalizeContainerRows(
     containerNumbers,
     parseStepFieldValues(dischargeStep?.field_values_json),
@@ -120,6 +127,8 @@ export default async function FclTrackingPage({
     : vesselEta
       ? "Vessel sailing"
       : "ETA pending";
+  const blNumber =
+    typeof blValues.bl_number === "string" ? blValues.bl_number : "";
 
   const invoiceValues = parseStepFieldValues(invoiceStep?.field_values_json);
   const boeValues = parseStepFieldValues(boeStep?.field_values_json);
@@ -177,7 +186,7 @@ export default async function FclTrackingPage({
       mimeType: upload.mimeType,
       sizeBytes: upload.sizeBytes,
       isRequired: true,
-      isReceived: true,
+      isReceived: false,
       shareWithCustomer: true,
       source: "CUSTOMER",
       documentRequestId: req.id,
@@ -222,6 +231,9 @@ export default async function FclTrackingPage({
             <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
             <span className="text-xs text-slate-400">
               Updated {new Date(shipment.last_update_at).toLocaleString()}
+            </span>
+            <span className="text-xs text-slate-400">
+              B/L: {blNumber || "N/A"}
             </span>
           </div>
         </header>
@@ -388,9 +400,38 @@ export default async function FclTrackingPage({
                         {row.container_number || `#${index + 1}`}
                       </div>
                       <div className="mt-1">
-                        Pull-out date: {formatDate(row.pull_out_date)}
+                        Token date: {formatDate(row.pull_out_token_date ?? row.pull_out_date)}
                       </div>
+                      <div>Token slot: {row.pull_out_token_slot || "N/A"}</div>
                       <div>Destination: {row.pull_out_destination || "N/A"}</div>
+                      <div className="mt-1">
+                        Token file:{" "}
+                        {pullOutStep ? (
+                          (() => {
+                            const docType = stepFieldDocType(
+                              pullOutStep.id,
+                              encodeFieldPath([
+                                "containers",
+                                String(index),
+                                "pull_out_token_file",
+                              ]),
+                            );
+                            const doc = docByType.get(docType);
+                            return doc ? (
+                              <a
+                                href={`/api/track/${token}/documents/${doc.id}`}
+                                className="font-medium text-slate-700 hover:underline"
+                              >
+                                Download
+                              </a>
+                            ) : (
+                              "N/A"
+                            );
+                          })()
+                        ) : (
+                          "N/A"
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -428,6 +469,35 @@ export default async function FclTrackingPage({
                         Offload or delivery date: {formatDate(row.delivered_offloaded_date)}
                       </div>
                       <div>Empty return date: {formatDate(row.empty_returned_date)}</div>
+                      <div>Empty return slot: {row.empty_returned_token_slot || "N/A"}</div>
+                      <div className="mt-1">
+                        Empty return token:{" "}
+                        {deliveryStep ? (
+                          (() => {
+                            const docType = stepFieldDocType(
+                              deliveryStep.id,
+                              encodeFieldPath([
+                                "containers",
+                                String(index),
+                                "empty_returned_token_file",
+                              ]),
+                            );
+                            const doc = docByType.get(docType);
+                            return doc ? (
+                              <a
+                                href={`/api/track/${token}/documents/${doc.id}`}
+                                className="font-medium text-slate-700 hover:underline"
+                              >
+                                Download
+                              </a>
+                            ) : (
+                              "N/A"
+                            );
+                          })()
+                        ) : (
+                          "N/A"
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -508,6 +578,17 @@ export default async function FclTrackingPage({
                   <div className="mt-1 text-xs text-slate-500">
                     {doc.file_name} ·{" "}
                     {new Date(doc.uploaded_at).toLocaleString()}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    {doc.is_received ? (
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
+                        Verified by Zaxon
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800">
+                        Awaiting verification
+                      </span>
+                    )}
                   </div>
                 </div>
                 <a
