@@ -114,6 +114,7 @@ export default async function FclTrackingPage({
   const pullOutStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containerPullOut);
   const deliveryStep = stepByName.get(FCL_IMPORT_STEP_NAMES.containerDelivery);
   const invoiceStep = stepByName.get(FCL_IMPORT_STEP_NAMES.commercialInvoice);
+  const deliveryOrderStep = stepByName.get(FCL_IMPORT_STEP_NAMES.deliveryOrder);
   const boeStep = stepByName.get(FCL_IMPORT_STEP_NAMES.billOfEntry);
   const blStep = stepByName.get(FCL_IMPORT_STEP_NAMES.billOfLading);
 
