@@ -403,7 +403,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const containerStepsView = isFclWorkflow
         ? steps.filter((step) => fclContainerNames.has(step.name))
         : [];
-    const showContainerTab = !isFclWorkflow && containerStepsView.length > 0;
+    const showContainerTab = containerStepsView.length > 0;
 
     const trackingStepIds = new Set(trackingStepsView.map((step) => step.id));
     const containerStepIds = new Set(containerStepsView.map((step) => step.id));
@@ -2104,10 +2104,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 </div>
                                             ) : null}
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                            <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
-                                            {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
-                                                <div className="flex flex-wrap items-center gap-2">
+                                        <div className="flex flex-col items-end gap-2">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
+                                                {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
                                                     <form action={reviewDocumentAction.bind(null, shipment.id)}>
                                                         <input type="hidden" name="documentId" value={d.id} />
                                                         <input type="hidden" name="status" value="VERIFIED" />
@@ -2115,19 +2115,21 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                             Verify
                                                         </button>
                                                     </form>
-                                                    <form action={reviewDocumentAction.bind(null, shipment.id)} className="flex items-center gap-2">
-                                                        <input type="hidden" name="documentId" value={d.id} />
-                                                        <input type="hidden" name="status" value="REJECTED" />
-                                                        <input
-                                                            name="note"
-                                                            placeholder="Reject reason (optional)"
-                                                            className="w-56 rounded-lg border border-zinc-300 px-2 py-1 text-xs"
-                                                        />
-                                                        <button type="submit" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
-                                                            Reject
-                                                        </button>
-                                                    </form>
-                                                </div>
+                                                ) : null}
+                                            </div>
+                                            {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
+                                                <form action={reviewDocumentAction.bind(null, shipment.id)} className="flex w-full max-w-md items-center gap-2">
+                                                    <input type="hidden" name="documentId" value={d.id} />
+                                                    <input type="hidden" name="status" value="REJECTED" />
+                                                    <input
+                                                        name="note"
+                                                        placeholder="Reject reason (optional)"
+                                                        className="w-full rounded-lg border border-zinc-300 px-2 py-1 text-xs"
+                                                    />
+                                                    <button type="submit" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+                                                        Reject
+                                                    </button>
+                                                </form>
                                             ) : null}
                                         </div>
                                     </div>
