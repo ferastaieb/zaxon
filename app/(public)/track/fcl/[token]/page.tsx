@@ -907,11 +907,11 @@ export default async function FclTrackingPage({
                         )}
                       </div>
                       {stockEnabled ? (
-                        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                          <div className="font-semibold uppercase tracking-[0.2em]">
-                            Stock tracking
-                          </div>
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        <details className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                          <summary className="cursor-pointer font-semibold uppercase tracking-[0.2em]">
+                            View stock details
+                          </summary>
+                          <div className="mt-3 grid gap-2 md:grid-cols-2">
                             <div>
                               Total weight: {row.total_weight_kg || "N/A"} kg
                             </div>
@@ -937,7 +937,16 @@ export default async function FclTrackingPage({
                                 : "None"}
                             </div>
                           ) : null}
-                        </div>
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              disabled
+                              className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                            >
+                              Track items (coming soon)
+                            </button>
+                          </div>
+                        </details>
                       ) : null}
                         </>
                         );

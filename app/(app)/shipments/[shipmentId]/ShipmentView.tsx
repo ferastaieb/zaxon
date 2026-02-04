@@ -221,6 +221,7 @@ type ShipmentTabId =
     | "tracking-steps"
     | "operations-steps"
     | "container-steps"
+    | "stock-tracking"
     | "goods"
     | "tasks"
     | "documents"
@@ -232,6 +233,7 @@ const SHIPMENT_TABS: ShipmentTabId[] = [
     "tracking-steps",
     "operations-steps",
     "container-steps",
+    "stock-tracking",
     "goods",
     "tasks",
     "documents",
@@ -443,6 +445,21 @@ export default function ShipmentView(props: ShipmentViewProps) {
         containerNumbers,
         deliveryStep ? getStepFieldValues(deliveryStep) : {},
     );
+    const stockRows = deliveryRows
+        .map((row, index) => ({
+            index,
+            row,
+            pullOut: pullOutRows[index],
+            enabled: isTruthy(pullOutRows[index]?.stock_tracking_enabled),
+        }))
+        .filter(({ row, enabled }) =>
+            enabled ||
+            !!row.total_weight_kg?.trim() ||
+            !!row.total_packages?.trim() ||
+            !!row.package_type?.trim() ||
+            !!row.cargo_description?.trim() ||
+            isTruthy(row.cargo_damage),
+        );
 
     const dischargedCount = dischargeRows.filter(
         (row) =>
@@ -462,6 +479,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
     ).length;
     const totalContainers = containerNumbers.length;
     const showContainerStats = isFclWorkflow && totalContainers > 0;
+    const showStockTab = isFclWorkflow && stockRows.length > 0;
     const fclStepData = useMemo(() => {
         if (!isFclWorkflow) return [];
         return steps.map((step) => ({
@@ -514,6 +532,15 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const fclOperationsReturnTo = `/shipments/${shipment.id}?tab=operations-steps&saved=1`;
     const fclContainerReturnTo = `/shipments/${shipment.id}?tab=container-steps&saved=1`;
     const canUseFclTabs = isFclWorkflow && !!fclUpdateAction;
+    const countStockDocs = (stepId: number | undefined, index: number, suffix: string) => {
+        if (!stepId) return 0;
+        const prefix = `${stepId}:containers.${index}.`;
+        return docs.filter(
+            (doc) =>
+                String(doc.document_type).includes(prefix) &&
+                String(doc.document_type).includes(suffix),
+        ).length;
+    };
 
     const defaultOpenOperationsStepId = (() => {
         const doable = operationsStepsView.find(
@@ -746,6 +773,9 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 { id: "operations-steps", label: "Operations", count: operationsStepsView.length },
                                 ...(showContainerTab
                                     ? [{ id: "container-steps", label: "Containers", count: containerStepsView.length }]
+                                    : []),
+                                ...(showStockTab
+                                    ? [{ id: "stock-tracking", label: "Stock", count: stockRows.length }]
                                     : []),
                                 { id: "goods", label: "Goods", count: shipmentGoods.length },
                                 { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
@@ -1630,6 +1660,87 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         )
                     )}
 
+                    {activeTab === "stock-tracking" && (
+                        <div className="space-y-6">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-lg font-semibold text-zinc-900">Stock tracking</h3>
+                                <span className="text-sm text-zinc-500">
+                                    Containers delivered to Zaxon Warehouse
+                                </span>
+                            </div>
+                            {stockRows.length ? (
+                                <div className="grid gap-4 lg:grid-cols-2">
+                                    {stockRows.map(({ index, row }) => {
+                                        const offloadPics = countStockDocs(deliveryStep?.id, index, "offload_pictures");
+                                        const damagePics = countStockDocs(deliveryStep?.id, index, "cargo_damage_pictures");
+                                        const hasDamage = isTruthy(row.cargo_damage);
+                                        return (
+                                            <div key={`stock-${row.container_number}-${index}`} className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div>
+                                                        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Container</div>
+                                                        <div className="mt-1 text-lg font-semibold text-zinc-900">
+                                                            {row.container_number || `#${index + 1}`}
+                                                        </div>
+                                                        <div className="mt-1 text-sm text-zinc-600">
+                                                            Offload date: {row.delivered_offloaded_date || "Not set"}
+                                                        </div>
+                                                    </div>
+                                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                                        Stock enabled
+                                                    </span>
+                                                </div>
+                                                <div className="mt-4 grid gap-3 text-sm text-zinc-700 md:grid-cols-2">
+                                                    <div>
+                                                        <div className="text-xs text-zinc-500">Total weight (kg)</div>
+                                                        <div className="font-medium text-zinc-900">{row.total_weight_kg || "—"}</div>
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-xs text-zinc-500">Total packages</div>
+                                                        <div className="font-medium text-zinc-900">
+                                                            {row.total_packages || "—"} {row.package_type || ""}
+                                                        </div>
+                                                    </div>
+                                                    <div className="md:col-span-2">
+                                                        <div className="text-xs text-zinc-500">Cargo description</div>
+                                                        <div className="font-medium text-zinc-900">{row.cargo_description || "—"}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+                                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-zinc-700">
+                                                        Offload pictures: {offloadPics || 0}
+                                                    </span>
+                                                    {hasDamage ? (
+                                                        <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
+                                                            Damage reported • Pictures: {damagePics || 0}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
+                                                            No damage reported
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="mt-4 flex flex-wrap items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        disabled
+                                                        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-500"
+                                                    >
+                                                        Track items (coming soon)
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                    No stock tracking containers yet.
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {activeTab === "goods" && (
                         <div className="grid gap-6 lg:grid-cols-3">
                             <div className="lg:col-span-2 space-y-6">
@@ -1977,7 +2088,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 {d.share_with_customer && <Badge tone="blue">Customer Visible</Badge>}
                                                 {d.is_required && <Badge tone="yellow">Required</Badge>}
                                                 {d.source === "CUSTOMER" && <Badge tone="blue">Customer Upload</Badge>}
-                                                {d.source === "CUSTOMER" && !d.is_received && (
+                                                {d.source === "CUSTOMER" && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" && (
                                                     <Badge tone="yellow">Pending Verification</Badge>
                                                 )}
                                                 {d.review_status === "REJECTED" && (
@@ -1995,7 +2106,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
-                                            {d.source === "CUSTOMER" && canEdit ? (
+                                            {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <form action={reviewDocumentAction.bind(null, shipment.id)}>
                                                         <input type="hidden" name="documentId" value={d.id} />
