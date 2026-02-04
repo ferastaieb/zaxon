@@ -286,8 +286,8 @@ export default async function FclTrackingPage({
       isTruthy(row.delivered_offloaded) || !!row.delivered_offloaded_date?.trim(),
   ).length;
 
-  const vesselState = vesselAta ? "DONE" : vesselEta ? "IN_PROGRESS" : "PENDING";
-  const dischargeState =
+  const vesselState: "DONE" | "IN_PROGRESS" | "PENDING" = vesselAta ? "DONE" : vesselEta ? "IN_PROGRESS" : "PENDING";
+  const dischargeState: "DONE" | "IN_PROGRESS" | "PENDING" =
     totalContainers === 0
       ? "PENDING"
       : dischargedCount === 0
@@ -295,7 +295,7 @@ export default async function FclTrackingPage({
         : dischargedCount < totalContainers
           ? "IN_PROGRESS"
           : "DONE";
-  const pullOutState =
+  const pullOutState: "DONE" | "IN_PROGRESS" | "PENDING" =
     boeStep?.status !== "DONE"
       ? "PENDING"
       : totalContainers === 0
@@ -305,7 +305,7 @@ export default async function FclTrackingPage({
           : pulledOutCount < totalContainers
             ? "IN_PROGRESS"
             : "DONE";
-  const deliveryState =
+  const deliveryState: "DONE" | "IN_PROGRESS" | "PENDING" =
     totalContainers === 0
       ? "PENDING"
       : deliveredCount === 0
