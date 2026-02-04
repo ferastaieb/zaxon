@@ -184,6 +184,40 @@ export default async function FclTrackingPage({
     return daysUntil(deadline.toISOString());
   })();
 
+  const requests = await listCustomerDocumentRequests(shipment.id);
+  const sharedDocs = docs.filter((doc) => doc.share_with_customer);
+  const openRequestTypes = new Set(
+    requests.filter((r) => r.status === "OPEN").map((r) => String(r.document_type)),
+  );
+  const countDocsBySuffix = (stepId: number | undefined, suffix: string) => {
+    if (!stepId) return 0;
+    const match = `${stepId}:`;
+    return sharedDocs.filter(
+      (doc) =>
+        String(doc.document_type).includes(match) &&
+        String(doc.document_type).includes(suffix),
+    ).length;
+  };
+
+
+  const findDoc = (types: string[]) =>
+    sharedDocs.find((doc) => types.includes(String(doc.document_type))) ?? null;
+
+  const countContainerDocs = (
+    stepId: number | undefined,
+    index: number,
+    suffix: string,
+  ) => {
+    if (!stepId) return 0;
+    const prefix = `${stepId}:containers.${index}.`;
+    return sharedDocs.filter(
+      (doc) =>
+        String(doc.document_type).includes(prefix) &&
+        String(doc.document_type).includes(suffix),
+    ).length;
+  };
+
+
   const blDocTypes = blStep
     ? [
         stepFieldDocType(blStep.id, encodeFieldPath(["draft_bl_file"])),
@@ -279,39 +313,6 @@ export default async function FclTrackingPage({
         : deliveredCount < totalContainers
           ? "IN_PROGRESS"
           : "DONE";
-
-  const requests = await listCustomerDocumentRequests(shipment.id);
-  const sharedDocs = docs.filter((doc) => doc.share_with_customer);
-  const openRequestTypes = new Set(
-    requests.filter((r) => r.status === "OPEN").map((r) => String(r.document_type)),
-  );
-
-  const findDoc = (types: string[]) =>
-    sharedDocs.find((doc) => types.includes(String(doc.document_type))) ?? null;
-
-  const countDocsBySuffix = (stepId: number | undefined, suffix: string) => {
-    if (!stepId) return 0;
-    const match = `${stepId}:`;
-    return sharedDocs.filter(
-      (doc) =>
-        String(doc.document_type).includes(match) &&
-        String(doc.document_type).includes(suffix),
-    ).length;
-  };
-
-  const countContainerDocs = (
-    stepId: number | undefined,
-    index: number,
-    suffix: string,
-  ) => {
-    if (!stepId) return 0;
-    const prefix = `${stepId}:containers.${index}.`;
-    return sharedDocs.filter(
-      (doc) =>
-        String(doc.document_type).includes(prefix) &&
-        String(doc.document_type).includes(suffix),
-    ).length;
-  };
 
   async function uploadRequestedDocAction(
     tokenValue: string,
