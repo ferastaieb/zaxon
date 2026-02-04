@@ -219,7 +219,6 @@ export default async function FclTrackingPage({
   );
 
   const orderStep = stepByName.get(FCL_IMPORT_STEP_NAMES.orderReceived);
-  const deliveryOrderStep = stepByName.get(FCL_IMPORT_STEP_NAMES.deliveryOrder);
   const orderValues = parseStepFieldValues(orderStep?.field_values_json);
   const orderReceivedDate =
     typeof orderValues.order_received_date === "string"
@@ -349,6 +348,7 @@ export default async function FclTrackingPage({
       sizeBytes: upload.sizeBytes,
       isRequired: true,
       isReceived: false,
+      reviewStatus: "PENDING",
       shareWithCustomer: true,
       source: "CUSTOMER",
       documentRequestId: req.id,
@@ -1112,12 +1112,21 @@ export default async function FclTrackingPage({
                       <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">
                         Verified by Zaxon
                       </span>
+                    ) : doc.review_status === "REJECTED" ? (
+                      <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-800">
+                        Rejected - please reupload
+                      </span>
                     ) : (
                       <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800">
                         Awaiting verification
                       </span>
                     )}
                   </div>
+                  {doc.review_status === "REJECTED" && doc.review_note ? (
+                    <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                      {doc.review_note}
+                    </div>
+                  ) : null}
                 </div>
                 <a
                   href={`/api/track/${token}/documents/${doc.id}`}

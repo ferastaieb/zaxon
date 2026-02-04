@@ -589,6 +589,7 @@ export default async function TrackShipmentPage({
       sizeBytes: upload.sizeBytes,
       isRequired: true,
       isReceived: false,
+      reviewStatus: "PENDING",
       shareWithCustomer: true,
       source: "CUSTOMER",
       documentRequestId: req.id,

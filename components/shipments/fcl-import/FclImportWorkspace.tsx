@@ -49,6 +49,8 @@ type DocumentMeta = {
   uploaded_at: string;
   source?: "STAFF" | "CUSTOMER";
   is_received?: boolean;
+  review_status?: "PENDING" | "VERIFIED" | "REJECTED";
+  review_note?: string | null;
 };
 
 type ShipmentMeta = {
@@ -318,6 +320,11 @@ export function FclImportWorkspace({
                 Pending verification
               </span>
             ) : null}
+            {doc.review_status === "REJECTED" ? (
+              <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700">
+                Rejected
+              </span>
+            ) : null}
             <span>
               {new Date(doc.uploaded_at).toLocaleDateString()}
             </span>
@@ -327,6 +334,11 @@ export function FclImportWorkspace({
             >
               Download latest
             </a>
+            {doc.review_status === "REJECTED" && doc.review_note ? (
+              <span className="w-full text-xs text-rose-700">
+                Rejection note: {doc.review_note}
+              </span>
+            ) : null}
           </>
         ) : (
           <span>No file uploaded yet.</span>

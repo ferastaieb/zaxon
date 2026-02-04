@@ -86,6 +86,7 @@ import {
     updateStepAction,
     updateTaskStatusAction,
     updateDocumentFlagsAction,
+    reviewDocumentAction,
     uploadDocumentAction,
 } from "./actions";
 
@@ -481,6 +482,8 @@ export default function ShipmentView(props: ShipmentViewProps) {
                 uploaded_at: string;
                 source: "STAFF" | "CUSTOMER";
                 is_received: boolean;
+                review_status?: "PENDING" | "VERIFIED" | "REJECTED";
+                review_note?: string | null;
             }
         > = {};
         for (const doc of docs) {
@@ -492,6 +495,8 @@ export default function ShipmentView(props: ShipmentViewProps) {
                     uploaded_at: doc.uploaded_at,
                     source: doc.source,
                     is_received: doc.is_received === 1,
+                    review_status: doc.review_status,
+                    review_note: doc.review_note,
                 };
             }
         }
@@ -1975,20 +1980,43 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 {d.source === "CUSTOMER" && !d.is_received && (
                                                     <Badge tone="yellow">Pending Verification</Badge>
                                                 )}
+                                                {d.review_status === "REJECTED" && (
+                                                    <Badge tone="red">Rejected</Badge>
+                                                )}
+                                                {d.review_status === "VERIFIED" && d.source === "CUSTOMER" && (
+                                                    <Badge tone="green">Verified</Badge>
+                                                )}
                                             </div>
+                                            {d.review_status === "REJECTED" && d.review_note ? (
+                                                <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                                                    {d.review_note}
+                                                </div>
+                                            ) : null}
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
-                                            {d.source === "CUSTOMER" && !d.is_received && canEdit ? (
-                                                <form action={updateDocumentFlagsAction.bind(null, shipment.id)}>
-                                                    <input type="hidden" name="documentId" value={d.id} />
-                                                    <input type="hidden" name="isRequired" value={d.is_required ? "1" : "0"} />
-                                                    <input type="hidden" name="shareWithCustomer" value={d.share_with_customer ? "1" : "0"} />
-                                                    <input type="hidden" name="isReceived" value="1" />
-                                                    <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
-                                                        Verify
-                                                    </button>
-                                                </form>
+                                            {d.source === "CUSTOMER" && canEdit ? (
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <form action={reviewDocumentAction.bind(null, shipment.id)}>
+                                                        <input type="hidden" name="documentId" value={d.id} />
+                                                        <input type="hidden" name="status" value="VERIFIED" />
+                                                        <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
+                                                            Verify
+                                                        </button>
+                                                    </form>
+                                                    <form action={reviewDocumentAction.bind(null, shipment.id)} className="flex items-center gap-2">
+                                                        <input type="hidden" name="documentId" value={d.id} />
+                                                        <input type="hidden" name="status" value="REJECTED" />
+                                                        <input
+                                                            name="note"
+                                                            placeholder="Reject reason (optional)"
+                                                            className="w-56 rounded-lg border border-zinc-300 px-2 py-1 text-xs"
+                                                        />
+                                                        <button type="submit" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
+                                                            Reject
+                                                        </button>
+                                                    </form>
+                                                </div>
                                             ) : null}
                                         </div>
                                     </div>

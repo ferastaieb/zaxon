@@ -18,6 +18,10 @@ export type DocumentRow = {
   document_request_id: number | null;
   uploaded_by_user_id: number | null;
   uploaded_at: string;
+  review_status?: "PENDING" | "VERIFIED" | "REJECTED";
+  review_note?: string | null;
+  reviewed_at?: string | null;
+  reviewed_by_user_id?: number | null;
 };
 
 export type DocumentRequestRow = {
@@ -78,6 +82,29 @@ export async function updateDocumentFlags(input: {
   );
 }
 
+export async function updateDocumentReview(input: {
+  documentId: number;
+  status: "PENDING" | "VERIFIED" | "REJECTED";
+  note?: string | null;
+  reviewedByUserId?: number | null;
+}) {
+  const reviewedAt =
+    input.status === "VERIFIED" || input.status === "REJECTED" ? nowIso() : null;
+  const isReceived = input.status === "VERIFIED";
+  await updateItem<DocumentRow>(
+    DOCUMENTS_TABLE,
+    { id: input.documentId },
+    "SET review_status = :status, review_note = :note, reviewed_at = :reviewed_at, reviewed_by_user_id = :reviewed_by, is_received = :is_received",
+    {
+      ":status": input.status,
+      ":note": input.note ?? null,
+      ":reviewed_at": reviewedAt,
+      ":reviewed_by": input.reviewedByUserId ?? null,
+      ":is_received": isReceived ? 1 : 0,
+    },
+  );
+}
+
 export async function createDocumentRequest(input: {
   shipmentId: number;
   documentType: DocumentType | string;
@@ -133,8 +160,17 @@ export async function addDocument(input: {
   source: "STAFF" | "CUSTOMER";
   documentRequestId?: number | null;
   uploadedByUserId?: number | null;
+  reviewStatus?: "PENDING" | "VERIFIED" | "REJECTED";
+  reviewNote?: string | null;
 }) {
   const id = await nextId("documents");
+  const resolvedReviewStatus =
+    input.reviewStatus ??
+    (input.isReceived === false ? "PENDING" : "VERIFIED");
+  const reviewedAt =
+    resolvedReviewStatus === "VERIFIED" || resolvedReviewStatus === "REJECTED"
+      ? nowIso()
+      : null;
   await putItem(DOCUMENTS_TABLE, {
     id,
     shipment_id: input.shipmentId,
@@ -150,6 +186,10 @@ export async function addDocument(input: {
     document_request_id: input.documentRequestId ?? null,
     uploaded_by_user_id: input.uploadedByUserId ?? null,
     uploaded_at: nowIso(),
+    review_status: resolvedReviewStatus,
+    review_note: input.reviewNote ?? null,
+    reviewed_at: reviewedAt,
+    reviewed_by_user_id: null,
   });
   return id;
 }

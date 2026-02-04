@@ -47,6 +47,8 @@ function buildLatestDocMap(docs: DocumentRow[]) {
       uploaded_at: string;
       source: "STAFF" | "CUSTOMER";
       is_received: boolean;
+      review_status?: "PENDING" | "VERIFIED" | "REJECTED";
+      review_note?: string | null;
     }
   > = {};
   for (const doc of docs) {
@@ -58,6 +60,8 @@ function buildLatestDocMap(docs: DocumentRow[]) {
         uploaded_at: doc.uploaded_at,
         source: doc.source,
         is_received: doc.is_received === 1,
+        review_status: doc.review_status,
+        review_note: doc.review_note,
       };
     }
   }

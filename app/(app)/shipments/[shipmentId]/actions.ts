@@ -14,9 +14,12 @@ import { logActivity } from "@/lib/data/activities";
 import {
   addDocument,
   createDocumentRequest,
+  getDocument,
+  listDocumentRequests,
   listDocuments,
   markDocumentRequestFulfilled,
   updateDocumentFlags,
+  updateDocumentReview,
 } from "@/lib/data/documents";
 import {
   createShipmentException,
@@ -1410,6 +1413,70 @@ export async function updateDocumentFlagsAction(
     message: "Document flags updated",
     actorUserId: user.id,
     data: { documentId },
+  });
+
+  await refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: true,
+  });
+
+  redirect(`/shipments/${shipmentId}`);
+}
+
+export async function reviewDocumentAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  await requireShipmentAccess(user, shipmentId);
+
+  const documentId = Number(formData.get("documentId") ?? 0);
+  const status = String(formData.get("status") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim() || null;
+  if (!documentId || (status !== "VERIFIED" && status !== "REJECTED")) {
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  const doc = await getDocument(documentId);
+  if (!doc) redirect(`/shipments/${shipmentId}?error=invalid`);
+
+  await updateDocumentReview({
+    documentId,
+    status: status as "VERIFIED" | "REJECTED",
+    note,
+    reviewedByUserId: user.id,
+  });
+
+  let requestId: number | null = null;
+  if (status === "REJECTED") {
+    const existing = await listDocumentRequests(shipmentId);
+    const hasOpen = existing.some(
+      (req) => req.status === "OPEN" && String(req.document_type) === String(doc.document_type),
+    );
+    if (!hasOpen) {
+      const message = note
+        ? `Document rejected: ${note}. Please re-upload.`
+        : "Document rejected. Please re-upload.";
+      requestId = await createDocumentRequest({
+        shipmentId,
+        documentType: String(doc.document_type),
+        message,
+        requestedByUserId: user.id,
+      });
+    }
+  }
+
+  await logActivity({
+    shipmentId,
+    type: status === "VERIFIED" ? "DOCUMENT_VERIFIED" : "DOCUMENT_REJECTED",
+    message:
+      status === "VERIFIED"
+        ? `Document verified: ${doc.document_type}`
+        : `Document rejected: ${doc.document_type}`,
+    actorUserId: user.id,
+    data: { documentId, requestId, note },
   });
 
   await refreshShipmentDerivedState({
