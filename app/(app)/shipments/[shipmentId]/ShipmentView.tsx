@@ -220,7 +220,6 @@ type ShipmentTabId =
     | "connections"
     | "tracking-steps"
     | "operations-steps"
-    | "container-steps"
     | "stock-tracking"
     | "goods"
     | "tasks"
@@ -232,7 +231,6 @@ const SHIPMENT_TABS: ShipmentTabId[] = [
     "connections",
     "tracking-steps",
     "operations-steps",
-    "container-steps",
     "stock-tracking",
     "goods",
     "tasks",
@@ -301,7 +299,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         null,
     );
     const [timelinePreviewTab, setTimelinePreviewTab] = useState<
-        "operations" | "tracking" | "containers"
+        "operations" | "tracking"
     >("operations");
 
     const setTab = (tab: ShipmentTabId) => {
@@ -403,14 +401,13 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const containerStepsView = isFclWorkflow
         ? steps.filter((step) => fclContainerNames.has(step.name))
         : [];
-    const showContainerTab = containerStepsView.length > 0;
+    const showContainerTab = false;
 
     const trackingStepIds = new Set(trackingStepsView.map((step) => step.id));
-    const containerStepIds = new Set(containerStepsView.map((step) => step.id));
+    const containerStepIds = new Set<number>();
 
     const getStepTabId = (step: ShipmentStepRow): ShipmentTabId => {
         if (trackingStepIds.has(step.id)) return "tracking-steps";
-        if (containerStepIds.has(step.id)) return "container-steps";
         return "operations-steps";
     };
 
@@ -530,7 +527,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
     };
     const fclTrackingReturnTo = `/shipments/${shipment.id}?tab=tracking-steps&saved=1`;
     const fclOperationsReturnTo = `/shipments/${shipment.id}?tab=operations-steps&saved=1`;
-    const fclContainerReturnTo = `/shipments/${shipment.id}?tab=container-steps&saved=1`;
+    const fclContainerReturnTo = "";
     const canUseFclTabs = isFclWorkflow && !!fclUpdateAction;
     const countStockDocs = (stepId: number | undefined, index: number, suffix: string) => {
         if (!stepId) return 0;
@@ -566,18 +563,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
         return next?.id ?? trackingStepsView[0]?.id ?? null;
     })();
 
-    const defaultOpenContainerStepId = (() => {
-        const doable = containerStepsView.find(
-            (s) =>
-                s.status !== "DONE" &&
-                !workflowBlocked &&
-                !isStepBlockedByDependencies(s),
-        );
-        if (doable) return doable.id;
-        const next = containerStepsView.find((s) => s.status !== "DONE");
-        return next?.id ?? containerStepsView[0]?.id ?? null;
-    })();
-
     const errorStep = errorStepId ? stepById.get(errorStepId) ?? null : null;
     const errorStepTab = errorStep ? getStepTabId(errorStep) : null;
 
@@ -593,15 +578,8 @@ export default function ShipmentView(props: ShipmentViewProps) {
                 ? errorStep.id
                 : defaultOpenTrackingStepId ?? null,
     );
-    const [openContainerStepId, setOpenContainerStepId] = useState<number | null>(
-        () =>
-            errorStep && errorStepTab === "container-steps"
-                ? errorStep.id
-                : defaultOpenContainerStepId ?? null,
-    );
     const [hasTouchedOperations, setHasTouchedOperations] = useState(false);
     const [hasTouchedTracking, setHasTouchedTracking] = useState(false);
-    const [hasTouchedContainers, setHasTouchedContainers] = useState(false);
     const [dirtyFormIds, setDirtyFormIds] = useState<string[]>([]);
     const dirtyCount = dirtyFormIds.length;
     const [isGlobalSaving, setIsGlobalSaving] = useState(false);
@@ -612,9 +590,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const effectiveOpenTrackingStepId = hasTouchedTracking
         ? openTrackingStepId
         : openTrackingStepId ?? defaultOpenTrackingStepId ?? null;
-    const effectiveOpenContainerStepId = hasTouchedContainers
-        ? openContainerStepId
-        : openContainerStepId ?? defaultOpenContainerStepId ?? null;
 
     const markFormDirty = (formId: string) => {
         setDirtyFormIds((prev) => (prev.includes(formId) ? prev : [...prev, formId]));
@@ -640,10 +615,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
             setHasTouchedTracking(true);
             setTab(nextTab);
             setOpenTrackingStepId(stepId);
-        } else if (nextTab === "container-steps") {
-            setHasTouchedContainers(true);
-            setTab(nextTab);
-            setOpenContainerStepId(stepId);
         } else {
             setHasTouchedOperations(true);
             setTab(nextTab);
@@ -771,9 +742,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 { id: "connections", label: "Connections", count: connectedShipments.length },
                                 { id: "tracking-steps", label: "Tracking", count: trackingStepsView.length },
                                 { id: "operations-steps", label: "Operations", count: operationsStepsView.length },
-                                ...(showContainerTab
-                                    ? [{ id: "container-steps", label: "Containers", count: containerStepsView.length }]
-                                    : []),
                                 ...(showStockTab
                                     ? [{ id: "stock-tracking", label: "Stock", count: stockRows.length }]
                                     : []),
@@ -998,15 +966,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 Tracking
                                             </button>
                                             {containerStepsView.length ? (
-                                                <button
-                                                    onClick={() => setTimelinePreviewTab("containers")}
-                                                    className={`rounded-md px-3 py-1 font-medium ${timelinePreviewTab === "containers"
-                                                        ? "bg-white text-zinc-900 shadow"
-                                                        : "text-zinc-500 hover:text-zinc-800"
-                                                        }`}
-                                                >
-                                                    Containers
-                                                </button>
                                             ) : null}
                                         </div>
                                     </div>
@@ -1093,9 +1052,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 setTab(
                                                     timelinePreviewTab === "operations"
                                                         ? "operations-steps"
-                                                        : timelinePreviewTab === "tracking"
-                                                            ? "tracking-steps"
-                                                            : "container-steps",
+                                                        : "tracking-steps",
                                                 )
                                             }
                                             className="text-sm font-medium text-zinc-900 hover:underline"
@@ -1103,9 +1060,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             View{" "}
                                             {timelinePreviewTab === "operations"
                                                 ? "operations"
-                                                : timelinePreviewTab === "tracking"
-                                                    ? "tracking"
-                                                    : "container"}{" "}
+                                                : "tracking"}{" "}
                                             steps
                                         </button>
                                     </div>
@@ -1588,650 +1543,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             </div>
                         )
                     )}
-
-                    {activeTab === "container-steps" && (
-                        canUseFclTabs ? (
-                            <div className="space-y-6">
-                                <FclImportWorkspace
-                                    headingClassName=""
-                                    shipment={fclShipmentMeta}
-                                    customers={shipmentCustomers}
-                                    steps={fclStepData}
-                                    jobIds={jobIds}
-                                    containerNumbers={containerNumbers}
-                                    latestDocsByType={fclLatestDocsByType}
-                                    openDocRequestTypes={openDocRequestTypes}
-                                    trackingToken={trackingToken}
-                                    canEdit={canEdit}
-                                    canAdminEdit={user.role === "ADMIN"}
-                                    updateAction={fclUpdateAction!}
-                                    requestDocumentAction={fclRequestAction}
-                                    mode="container-ops"
-                                    returnTo={fclContainerReturnTo}
-                                />
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <h3 className="text-lg font-semibold text-zinc-900">Container steps</h3>
-                                <div className="sticky top-28 z-10 bg-zinc-50/90 pb-3 backdrop-blur">
-                                    {renderStepper(containerStepsView, effectiveOpenContainerStepId)}
-                                </div>
-                                {containerStepsView.map((s) => (
-                                    <StepCard
-                                        key={s.id}
-                                        step={s}
-                                        user={user}
-                                        shipment={shipment}
-                                        canEdit={canEdit}
-                                        workflowBlocked={workflowBlocked}
-                                        receivedDocTypes={receivedDocTypes}
-                                        openDocRequestTypes={openDocRequestTypes}
-                                        latestReceivedDocByType={latestReceivedDocByType}
-                                        workflowGlobalValues={workflowGlobalValues}
-                                        highlightRequirements={error === "missing_requirements" && errorStepId === s.id}
-                                        highlightDependencies={error === "blocked_by_dependencies" && errorStepId === s.id}
-                                        partiesById={new Map([...customers, ...suppliers, ...brokers].map(p => [p.id, p]))}
-                                        customers={customers}
-                                        suppliers={suppliers}
-                                        brokers={brokers}
-                                        allocationGoods={allocationGoods}
-                                        setTab={setTab}
-                                        tabId="container-steps"
-                                        stepsById={stepById}
-                                        workflowGlobals={workflowGlobals}
-                                        isOpen={effectiveOpenContainerStepId === s.id}
-                                        onToggle={() => {
-                                            setHasTouchedContainers(true);
-                                            setOpenContainerStepId((prev) =>
-                                                prev === s.id ? null : s.id,
-                                            );
-                                        }}
-                                        onDirty={markFormDirty}
-                                        onClean={clearFormDirty}
-                                        isDirty={dirtyFormIds.includes(`step-form-${s.id}`)}
-                                    />
-                                ))}
-                                {containerStepsView.length === 0 ? (
-                                    <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
-                                        No container steps configured.
-                                    </div>
-                                ) : null}
-                            </div>
-                        )
-                    )}
-
-                    {activeTab === "stock-tracking" && (
-                        <div className="space-y-6">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-lg font-semibold text-zinc-900">Stock tracking</h3>
-                                <span className="text-sm text-zinc-500">
-                                    Containers delivered to Zaxon Warehouse
-                                </span>
-                            </div>
-                            {stockRows.length ? (
-                                <div className="grid gap-4 lg:grid-cols-2">
-                                    {stockRows.map(({ index, row }) => {
-                                        const offloadPics = countStockDocs(deliveryStep?.id, index, "offload_pictures");
-                                        const damagePics = countStockDocs(deliveryStep?.id, index, "cargo_damage_pictures");
-                                        const hasDamage = isTruthy(row.cargo_damage);
-                                        return (
-                                            <div key={`stock-${row.container_number}-${index}`} className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div>
-                                                        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Container</div>
-                                                        <div className="mt-1 text-lg font-semibold text-zinc-900">
-                                                            {row.container_number || `#${index + 1}`}
-                                                        </div>
-                                                        <div className="mt-1 text-sm text-zinc-600">
-                                                            Offload date: {row.delivered_offloaded_date || "Not set"}
-                                                        </div>
-                                                    </div>
-                                                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                                                        Stock enabled
-                                                    </span>
-                                                </div>
-                                                <div className="mt-4 grid gap-3 text-sm text-zinc-700 md:grid-cols-2">
-                                                    <div>
-                                                        <div className="text-xs text-zinc-500">Total weight (kg)</div>
-                                                        <div className="font-medium text-zinc-900">{row.total_weight_kg || "—"}</div>
-                                                    </div>
-                                                    <div>
-                                                        <div className="text-xs text-zinc-500">Total packages</div>
-                                                        <div className="font-medium text-zinc-900">
-                                                            {row.total_packages || "—"} {row.package_type || ""}
-                                                        </div>
-                                                    </div>
-                                                    <div className="md:col-span-2">
-                                                        <div className="text-xs text-zinc-500">Cargo description</div>
-                                                        <div className="font-medium text-zinc-900">{row.cargo_description || "—"}</div>
-                                                    </div>
-                                                </div>
-                                                <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
-                                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-zinc-700">
-                                                        Offload pictures: {offloadPics || 0}
-                                                    </span>
-                                                    {hasDamage ? (
-                                                        <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-rose-700">
-                                                            Damage reported • Pictures: {damagePics || 0}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-emerald-700">
-                                                            No damage reported
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="mt-4 flex flex-wrap items-center gap-2">
-                                                    <button
-                                                        type="button"
-                                                        disabled
-                                                        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-500"
-                                                    >
-                                                        Track items (coming soon)
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ) : (
-                                <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
-                                    No stock tracking containers yet.
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {activeTab === "goods" && (
-                        <div className="grid gap-6 lg:grid-cols-3">
-                            <div className="lg:col-span-2 space-y-6">
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <h3 className="text-lg font-semibold text-zinc-900">Shipment goods</h3>
-                                        <div className="text-xs text-zinc-500">Quantities are integers.</div>
-                                    </div>
-                                    {shipmentGoods.length ? (
-                                        <div className="mt-4 overflow-x-auto">
-                                            <table className="min-w-full text-left text-sm">
-                                                <thead className="text-xs text-zinc-500">
-                                                    <tr>
-                                                        <th className="py-2 pr-4">Good</th>
-                                                        <th className="py-2 pr-4">Origin</th>
-                                                        <th className="py-2 pr-4">Quantity</th>
-                                                        <th className="py-2 pr-4">Customer</th>
-                                                        <th className="py-2 pr-4">Allocation</th>
-                                                        <th className="py-2 pr-4"></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-zinc-100">
-                                                    {shipmentGoods.map((sg) => {
-                                                        const allocated =
-                                                            !!sg.allocated_at ||
-                                                            sg.allocated_quantity > 0 ||
-                                                            sg.inventory_quantity > 0;
-                                                        return (
-                                                            <tr key={sg.id}>
-                                                                <td className="py-2 pr-4 font-medium text-zinc-900">
-                                                                    {sg.good_name}
-                                                                </td>
-                                                                <td className="py-2 pr-4 text-zinc-700">
-                                                                    {sg.good_origin}
-                                                                </td>
-                                                                <td className="py-2 pr-4 text-zinc-700">
-                                                                    {sg.quantity} {sg.unit_type}
-                                                                </td>
-                                                                <td className="py-2 pr-4 text-zinc-700">
-                                                                    {sg.applies_to_all_customers
-                                                                        ? "All customers"
-                                                                        : sg.customer_name ?? "-"}
-                                                                </td>
-                                                                <td className="py-2 pr-4 text-zinc-700">
-                                                                    {allocated
-                                                                        ? `Taken ${sg.allocated_quantity}, Inventory ${sg.inventory_quantity}`
-                                                                        : "Pending"}
-                                                                </td>
-                                                                <td className="py-2 pr-4 text-right">
-                                                                    <form
-                                                                        action={deleteShipmentGoodAction.bind(
-                                                                            null,
-                                                                            shipment.id,
-                                                                        )}
-                                                                    >
-                                                                        <input
-                                                                            type="hidden"
-                                                                            name="shipmentGoodId"
-                                                                            value={sg.id}
-                                                                        />
-                                                                        <button
-                                                                            type="submit"
-                                                                            disabled={!canEdit || allocated}
-                                                                            className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                        >
-                                                                            Delete
-                                                                        </button>
-                                                                    </form>
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ) : (
-                                        <div className="mt-4 text-sm text-zinc-500">
-                                            No goods added to this shipment yet.
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="text-lg font-semibold text-zinc-900">Inventory balances</h3>
-                                    {inventoryBalances.length ? (
-                                        <div className="mt-4 space-y-2">
-                                            {inventoryBalances.map((b) => (
-                                                <div
-                                                    key={b.good_id}
-                                                    className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
-                                                >
-                                                    <div>
-                                                        <div className="font-medium text-zinc-900">{b.good_name}</div>
-                                                        <div className="text-xs text-zinc-500">{b.good_origin}</div>
-                                                    </div>
-                                                    <div className="font-medium text-zinc-900">
-                                                        {b.quantity} {b.unit_type}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="mt-4 text-sm text-zinc-500">
-                                            No inventory balances yet.
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="text-lg font-semibold text-zinc-900">
-                                        Inventory transactions
-                                    </h3>
-                                    {inventoryTransactions.length ? (
-                                        <div className="mt-4 overflow-x-auto">
-                                            <table className="min-w-full text-left text-sm">
-                                                <thead className="text-xs text-zinc-500">
-                                                    <tr>
-                                                        <th className="py-2 pr-4">Date</th>
-                                                        <th className="py-2 pr-4">Good</th>
-                                                        <th className="py-2 pr-4">Customer</th>
-                                                        <th className="py-2 pr-4">Direction</th>
-                                                        <th className="py-2 pr-4">Quantity</th>
-                                                        <th className="py-2 pr-4">Shipment</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-zinc-100">
-                                                    {inventoryTransactions.map((tx) => (
-                                                        <tr key={tx.id}>
-                                                            <td className="py-2 pr-4 text-zinc-700">
-                                                                {new Date(tx.created_at).toLocaleString()}
-                                                            </td>
-                                                            <td className="py-2 pr-4 text-zinc-700">
-                                                                {tx.good_name} ({tx.good_origin})
-                                                            </td>
-                                                            <td className="py-2 pr-4 text-zinc-700">
-                                                                {tx.customer_party_id
-                                                                    ? tx.customer_name ?? "-"
-                                                                    : "All customers"}
-                                                            </td>
-                                                            <td className="py-2 pr-4">
-                                                                <Badge tone={tx.direction === "IN" ? "green" : "red"}>
-                                                                    {tx.direction}
-                                                                </Badge>
-                                                            </td>
-                                                            <td className="py-2 pr-4 text-zinc-700">
-                                                                {tx.quantity} {tx.unit_type}
-                                                            </td>
-                                                            <td className="py-2 pr-4 text-zinc-700">
-                                                                {tx.shipment_code ?? "-"}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    ) : (
-                                        <div className="mt-4 text-sm text-zinc-500">
-                                            No inventory transactions yet.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="space-y-6">
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Add goods to shipment</h3>
-                                    <form
-                                        action={addShipmentGoodAction.bind(null, shipment.id)}
-                                        className="mt-4 space-y-3"
-                                    >
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Good</div>
-                                            <select
-                                                name="goodId"
-                                                disabled={!canEdit || goods.length === 0}
-                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                required
-                                            >
-                                                <option value="">Select good...</option>
-                                                {goods.map((g) => (
-                                                    <option key={g.id} value={g.id}>
-                                                        {g.name} - {g.origin} ({g.unit_type})
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </label>
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Quantity</div>
-                                            <input
-                                                name="quantity"
-                                                type="number"
-                                                min={1}
-                                                step={1}
-                                                disabled={!canEdit}
-                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                placeholder="0"
-                                                required
-                                            />
-                                        </label>
-                                        <label className="flex items-center gap-2 text-sm text-zinc-700">
-                                            <input type="checkbox" name="appliesToAllCustomers" value="1" />
-                                            Shared for all customers
-                                        </label>
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Customer</div>
-                                            <select
-                                                name="customerPartyId"
-                                                disabled={!canEdit}
-                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                                            >
-                                                <option value="">Select customer...</option>
-                                                {shipmentCustomers.map((c) => (
-                                                    <option key={c.id} value={c.id}>
-                                                        {c.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <div className="mt-1 text-xs text-zinc-500">
-                                                Leave blank if the line is shared for all customers.
-                                            </div>
-                                        </label>
-                                        <button
-                                            type="submit"
-                                            disabled={!canEdit || goods.length === 0}
-                                            className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                                        >
-                                            Add goods
-                                        </button>
-                                    </form>
-                                </div>
-
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Create good</h3>
-                                    <form
-                                        action={createGoodAction.bind(null, shipment.id)}
-                                        className="mt-4 space-y-3"
-                                    >
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Name</div>
-                                            <input
-                                                name="name"
-                                                disabled={!canEdit}
-                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                required
-                                            />
-                                        </label>
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Origin</div>
-                                            <input
-                                                name="origin"
-                                                disabled={!canEdit}
-                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                required
-                                            />
-                                        </label>
-                                        <label className="block">
-                                            <div className="mb-1 text-xs font-medium text-zinc-600">Unit type</div>
-                                            <input
-                                                name="unitType"
-                                                disabled={!canEdit}
-                                                className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100"
-                                                placeholder="pallet, kg, box..."
-                                                required
-                                            />
-                                        </label>
-                                        <button
-                                            type="submit"
-                                            disabled={!canEdit}
-                                            className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                                        >
-                                            Create good
-                                        </button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {activeTab === "tasks" && (
-                        <div className="grid gap-6 lg:grid-cols-3">
-                            <div className="lg:col-span-2 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-lg font-semibold text-zinc-900">All Tasks</h3>
-                                </div>
-                                {tasks.map((t) => (
-                                    <div key={t.id} id={`task-${t.id}`} className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div>
-                                                <div className="font-medium text-zinc-900">{t.title}</div>
-                                                <div className="mt-1 text-sm text-zinc-500">
-                                                    {t.assignee_name ? `Assignee: ${t.assignee_name}` : t.assignee_role ? `Team: ${t.assignee_role}` : "Unassigned"}
-                                                    {t.due_at && ` • Due: ${new Date(t.due_at).toLocaleDateString()}`}
-                                                </div>
-                                            </div>
-                                            <Badge tone={taskTone(t.status)}>{taskStatusLabel(t.status)}</Badge>
-                                        </div>
-                                        <form action={updateTaskStatusAction.bind(null, shipment.id)} className="mt-4 flex gap-2">
-                                            <input type="hidden" name="taskId" value={t.id} />
-                                            <select name="status" defaultValue={t.status} disabled={!canEdit} className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm">
-                                                {["OPEN", "IN_PROGRESS", "DONE", "BLOCKED"].map(st => (
-                                                    <option key={st} value={st}>{taskStatusLabel(st as TaskStatus)}</option>
-                                                ))}
-                                            </select>
-                                            <button type="submit" disabled={!canEdit} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200">Update</button>
-                                        </form>
-                                    </div>
-                                ))}
-                                {tasks.length === 0 && <div className="text-zinc-500">No tasks found.</div>}
-                            </div>
-                            <div>
-                                <div className="sticky top-24 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Create Task</h3>
-                                    <form action={createTaskAction.bind(null, shipment.id)} className="mt-4 space-y-3">
-                                        <input name="title" placeholder="Task title" required className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                                        <select name="assignee" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
-                                            <option value="">Unassigned</option>
-                                            <optgroup label="Users">
-                                                {activeUsers.map(u => <option key={u.id} value={`user:${u.id}`}>{u.name}</option>)}
-                                            </optgroup>
-                                            <optgroup label="Teams">
-                                                <option value="role:OPERATIONS">Operations</option>
-                                                <option value="role:CLEARANCE">Clearance</option>
-                                            </optgroup>
-                                        </select>
-                                        <input type="date" name="dueAt" className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                                        <button type="submit" className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">Create Task</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {activeTab === "documents" && (
-                        <div id="documents" className="grid gap-6 lg:grid-cols-3">
-                            <div className="lg:col-span-2 space-y-4">
-                                <h3 className="text-lg font-semibold text-zinc-900">Uploaded Documents</h3>
-                                {docs.map((d) => (
-                                    <div key={d.id} className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-                                        <div>
-                                            <div className="font-medium text-zinc-900">
-                                                {formatDocumentType(String(d.document_type))}
-                                            </div>
-                                            <div className="text-xs text-zinc-500">{d.file_name} • {new Date(d.uploaded_at).toLocaleDateString()}</div>
-                                            <div className="mt-2 flex gap-2">
-                                                {d.share_with_customer && <Badge tone="blue">Customer Visible</Badge>}
-                                                {d.is_required && <Badge tone="yellow">Required</Badge>}
-                                                {d.source === "CUSTOMER" && <Badge tone="blue">Customer Upload</Badge>}
-                                                {d.source === "CUSTOMER" && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" && (
-                                                    <Badge tone="yellow">Pending Verification</Badge>
-                                                )}
-                                                {d.review_status === "REJECTED" && (
-                                                    <Badge tone="red">Rejected</Badge>
-                                                )}
-                                                {d.review_status === "VERIFIED" && d.source === "CUSTOMER" && (
-                                                    <Badge tone="green">Verified</Badge>
-                                                )}
-                                            </div>
-                                            {d.review_status === "REJECTED" && d.review_note ? (
-                                                <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-                                                    {d.review_note}
-                                                </div>
-                                            ) : null}
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <a href={`/api/documents/${d.id}`} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Download</a>
-                                                {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
-                                                    <form action={reviewDocumentAction.bind(null, shipment.id)}>
-                                                        <input type="hidden" name="documentId" value={d.id} />
-                                                        <input type="hidden" name="status" value="VERIFIED" />
-                                                        <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
-                                                            Verify
-                                                        </button>
-                                                    </form>
-                                                ) : null}
-                                            </div>
-                                            {d.source === "CUSTOMER" && canEdit && d.review_status !== "REJECTED" && d.review_status !== "VERIFIED" ? (
-                                                <form action={reviewDocumentAction.bind(null, shipment.id)} className="flex w-full max-w-md items-center gap-2">
-                                                    <input type="hidden" name="documentId" value={d.id} />
-                                                    <input type="hidden" name="status" value="REJECTED" />
-                                                    <input
-                                                        name="note"
-                                                        placeholder="Reject reason (optional)"
-                                                        className="w-full rounded-lg border border-zinc-300 px-2 py-1 text-xs"
-                                                    />
-                                                    <button type="submit" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100">
-                                                        Reject
-                                                    </button>
-                                                </form>
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                ))}
-                                {docs.length === 0 && <div className="text-zinc-500">No documents uploaded.</div>}
-                            </div>
-                            <div className="space-y-6">
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Upload Document</h3>
-                                    <form action={uploadDocumentAction.bind(null, shipment.id)} className="mt-4 space-y-3">
-                                        <input type="hidden" name="tab" value="documents" />
-                                        <input type="file" name="file" required className="w-full text-sm text-zinc-500 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-zinc-700 hover:file:bg-zinc-200" />
-                                        <select name="documentType" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
-                                            {["INVOICE", "BILL_OF_LADING", "PACKING_LIST", "CERTIFICATE", "CUSTOMS_ENTRY", "OTHER"].map(t => (
-                                                <option key={t} value={t}>{t}</option>
-                                            ))}
-                                        </select>
-                                        <label className="flex items-center gap-2 text-sm">
-                                            <input type="checkbox" name="shareWithCustomer" value="1" /> Share with customer
-                                        </label>
-                                        <button type="submit" className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">Upload</button>
-                                    </form>
-                                </div>
-
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Request Document</h3>
-                                    <form action={requestDocumentAction.bind(null, shipment.id)} className="mt-4 space-y-3">
-                                        <input type="hidden" name="tab" value="documents" />
-                                        <select name="documentType" className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm">
-                                            {["INVOICE", "BILL_OF_LADING", "PACKING_LIST", "CERTIFICATE", "CUSTOMS_ENTRY", "OTHER"].map(t => (
-                                                <option key={t} value={t}>{t}</option>
-                                            ))}
-                                        </select>
-                                        <input name="message" placeholder="Message to customer..." className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" />
-                                        <button type="submit" className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50">Send Request</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-
-                    {activeTab === "activity" && (
-                        <div className="grid gap-6 lg:grid-cols-3">
-                            <div className="lg:col-span-2 space-y-4">
-                                <h3 className="text-lg font-semibold text-zinc-900">Activity Log</h3>
-                                {activities.map((a) => (
-                                    <div key={a.id} className="flex gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-                                        <div className="flex-1">
-                                            <div className="text-sm text-zinc-900">{a.message}</div>
-                                            <div className="mt-1 text-xs text-zinc-500">
-                                                {new Date(a.created_at).toLocaleString()} • {a.actor_name || "System"}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            <div>
-                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-                                    <h3 className="font-semibold text-zinc-900">Add Comment</h3>
-                                    <form action={addCommentAction.bind(null, shipment.id)} className="mt-4 space-y-3">
-                                        <textarea name="message" required placeholder="Write a comment..." className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" rows={3} />
-                                        <button type="submit" className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800">Post Comment</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-            {toast ? (
-                <div className="fixed top-20 right-6 z-30">
-                    <div
-                        className={`rounded-xl border px-4 py-3 text-sm shadow-lg ${toast.tone === "success"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                            : "border-blue-200 bg-blue-50 text-blue-900"
-                            }`}
-                    >
-                        {toast.message}
-                    </div>
-                </div>
-            ) : null}
-            <div className="fixed bottom-4 left-1/2 z-30 w-[min(92vw,680px)] -translate-x-1/2 rounded-2xl border border-zinc-200 bg-white/90 p-3 shadow-lg backdrop-blur">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="text-xs font-medium text-zinc-600">
-                        {dirtyCount
-                            ? `${dirtyCount} unsaved change${dirtyCount === 1 ? "" : "s"}`
-                            : "All changes saved"}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={handleGlobalSave}
-                        disabled={!canEdit || dirtyCount === 0 || isGlobalSaving}
-                        className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                    >
-                        {isGlobalSaving ? "Saving..." : "Save updates"}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
 
 
 
