@@ -965,8 +965,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             >
                                                 Tracking
                                             </button>
-                                            {containerStepsView.length ? (
-                                            ) : null}
                                         </div>
                                     </div>
 
