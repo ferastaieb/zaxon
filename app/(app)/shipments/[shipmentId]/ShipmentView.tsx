@@ -398,13 +398,8 @@ export default function ShipmentView(props: ShipmentViewProps) {
     const operationsStepsView = isFclWorkflow
         ? steps.filter((step) => fclOperationsNames.has(step.name))
         : internalSteps;
-    const containerStepsView = isFclWorkflow
-        ? steps.filter((step) => fclContainerNames.has(step.name))
-        : [];
-    const showContainerTab = false;
 
     const trackingStepIds = new Set(trackingStepsView.map((step) => step.id));
-    const containerStepIds = new Set<number>();
 
     const getStepTabId = (step: ShipmentStepRow): ShipmentTabId => {
         if (trackingStepIds.has(step.id)) return "tracking-steps";
@@ -992,7 +987,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 </div>
                                             ) : null}
                                         </>
-                                    ) : timelinePreviewTab === "tracking" ? (
+                                    ) : (
                                         <>
                                             {trackingStepsView.length ? (
                                                 <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
@@ -1014,31 +1009,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             ) : (
                                                 <div className="mt-3 text-sm text-zinc-500 italic">
                                                     No tracking steps yet.
-                                                </div>
-                                            )}
-                                        </>
-                                    ) : (
-                                        <>
-                                            {containerStepsView.length ? (
-                                                <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
-                                                    {containerStepsView.map((s) => (
-                                                        <div
-                                                            key={s.id}
-                                                            className={`flex h-2 flex-1 rounded-full ${s.status === "DONE"
-                                                                ? "bg-green-500"
-                                                                : s.status === "IN_PROGRESS"
-                                                                    ? "bg-blue-500"
-                                                                    : s.status === "BLOCKED"
-                                                                        ? "bg-red-500"
-                                                                        : "bg-zinc-200"
-                                                                }`}
-                                                            title={`${s.name}: ${stepStatusLabel(s.status)}`}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <div className="mt-3 text-sm text-zinc-500 italic">
-                                                    No container steps yet.
                                                 </div>
                                             )}
                                         </>
@@ -1544,6 +1514,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
 
 
+                </div>
             </div>
         </div>
     );
