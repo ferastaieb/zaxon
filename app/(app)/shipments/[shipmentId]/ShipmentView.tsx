@@ -1544,6 +1544,11 @@ export default function ShipmentView(props: ShipmentViewProps) {
 
 
 
+            </div>
+        </div>
+    );
+}
+
 function StepFieldInputs({
     shipmentId,
     stepId,
