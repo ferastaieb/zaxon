@@ -621,6 +621,130 @@ export function LoadingDetailsStepForm({
                 </div>
               )}
 
+              {tab === "details" ? (
+                <>
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "supplier_name"])}
+                    value={row.supplier_name}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "external_loading_date"])}
+                    value={row.external_loading_date}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "external_loading_location"])}
+                    value={row.external_loading_location}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "zaxon_actual_loading_date"])}
+                    value={row.zaxon_actual_loading_date}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "zaxon_warehouse_remarks"])}
+                    value={row.zaxon_warehouse_remarks}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_supplier_loading_date"])}
+                    value={row.mixed_supplier_loading_date}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_supplier_remarks"])}
+                    value={row.mixed_supplier_remarks}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_loading_date"])}
+                    value={row.mixed_zaxon_loading_date}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_remarks"])}
+                    value={row.mixed_zaxon_remarks}
+                  />
+                </>
+              ) : null}
+
+              {tab === "origin" ? (
+                <>
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "cargo_weight"])}
+                    value={row.cargo_weight}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "cargo_unit_type"])}
+                    value={row.cargo_unit_type}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "cargo_unit_type_other"])}
+                    value={row.cargo_unit_type_other}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "cargo_quantity"])}
+                    value={row.cargo_quantity}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_supplier_cargo_weight"])}
+                    value={row.mixed_supplier_cargo_weight}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_supplier_cargo_unit_type"])}
+                    value={row.mixed_supplier_cargo_unit_type}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName([
+                      "trucks",
+                      String(index),
+                      "mixed_supplier_cargo_unit_type_other",
+                    ])}
+                    value={row.mixed_supplier_cargo_unit_type_other}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_supplier_cargo_quantity"])}
+                    value={row.mixed_supplier_cargo_quantity}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_weight"])}
+                    value={row.mixed_zaxon_cargo_weight}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_unit_type"])}
+                    value={row.mixed_zaxon_cargo_unit_type}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_unit_type_other"])}
+                    value={row.mixed_zaxon_cargo_unit_type_other}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_quantity"])}
+                    value={row.mixed_zaxon_cargo_quantity}
+                  />
+                  <input
+                    type="hidden"
+                    name={fieldName(["trucks", String(index), "remarks"])}
+                    value={row.remarks}
+                  />
+                </>
+              ) : null}
+
               <input
                 type="hidden"
                 name={fieldName(["trucks", String(index), "truck_reference"])}
