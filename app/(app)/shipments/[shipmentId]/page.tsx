@@ -33,6 +33,7 @@ import { listShipmentLinksForShipment } from "@/lib/data/shipmentLinks";
 import { listTasks } from "@/lib/data/tasks";
 import { listActiveUsers } from "@/lib/data/users";
 import { getWorkflowTemplate } from "@/lib/data/workflows";
+import { FTL_EXPORT_TEMPLATE_NAME } from "@/lib/ftlExport/constants";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { parseWorkflowGlobalValues, parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
@@ -63,6 +64,15 @@ export default async function ShipmentDetailsPage({
 
   const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
+  const template = shipment.workflow_template_id
+    ? await getWorkflowTemplate(shipment.workflow_template_id)
+    : null;
+  if (
+    template?.name &&
+    template.name.toLowerCase() === FTL_EXPORT_TEMPLATE_NAME.toLowerCase()
+  ) {
+    redirect(`/shipments/ftl-export/${id}`);
+  }
   const shipmentCustomers = await listShipmentCustomers(id);
   const shipmentCustomerIds = shipmentCustomers.map((c) => c.id);
   const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
@@ -119,9 +129,6 @@ export default async function ShipmentDetailsPage({
     }),
   );
 
-  const template = shipment.workflow_template_id
-    ? await getWorkflowTemplate(shipment.workflow_template_id)
-    : null;
   const workflowGlobals = template
     ? parseWorkflowGlobalVariables(template.global_variables_json)
     : [];

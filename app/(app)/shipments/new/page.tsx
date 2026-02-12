@@ -11,6 +11,11 @@ import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { ensureFclImportTemplate } from "@/lib/fclImport/template";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import { normalizeContainerNumbers } from "@/lib/fclImport/helpers";
+import {
+  FTL_EXPORT_SERVICE_TYPE,
+  FTL_EXPORT_STEP_NAMES,
+} from "@/lib/ftlExport/constants";
+import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -48,6 +53,9 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
     const containerNumbers = normalizeContainerNumbers(
       formData.getAll("containerNumbers").map((value) => String(value)),
     );
+    const plannedTruckCountRaw = String(formData.get("plannedTruckCount") ?? "").trim();
+    const plannedTruckType = String(formData.get("plannedTruckType") ?? "").trim();
+    const plannedTruckCount = plannedTruckCountRaw ? Number(plannedTruckCountRaw) : null;
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
       ? Array.from(
@@ -60,47 +68,96 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
         ).slice(0, 20)
       : [];
 
-    if (
-      serviceType !== SERVICE_TYPE_FCL ||
-      customerPartyIds.length === 0 ||
-      !origin ||
-      !destination
-    ) {
+    const validServiceType =
+      serviceType === SERVICE_TYPE_FCL || serviceType === FTL_EXPORT_SERVICE_TYPE;
+    if (!validServiceType || customerPartyIds.length === 0 || !origin || !destination) {
       redirect("/shipments/new?error=invalid");
     }
 
-    const workflowTemplateId = await ensureFclImportTemplate({
+    if (serviceType === SERVICE_TYPE_FCL) {
+      const workflowTemplateId = await ensureFclImportTemplate({
+        createdByUserId: user.id,
+      });
+
+      const created = await createShipment({
+        customerPartyIds,
+        transportMode: "SEA",
+        origin,
+        destination,
+        shipmentType: "FCL",
+        cargoDescription: "FCL Import Clearance",
+        jobIds: jobIds.length ? jobIds : undefined,
+        containerNumber: containerNumbers[0] ?? null,
+        workflowTemplateId,
+        createdByUserId: user.id,
+      });
+
+      const steps = await listShipmentSteps(created.shipmentId);
+      const creationStep = steps.find(
+        (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
+      );
+
+      if (creationStep && containerNumbers.length > 0) {
+        await updateShipmentStep({
+          stepId: creationStep.id,
+          status: "DONE",
+          fieldValuesJson: JSON.stringify({
+            containers: containerNumbers.map((number) => ({
+              container_number: number,
+            })),
+          }),
+        });
+      }
+
+      await refreshShipmentDerivedState({
+        shipmentId: created.shipmentId,
+        actorUserId: user.id,
+        updateLastUpdate: true,
+      });
+
+      redirect(`/shipments/${created.shipmentId}`);
+    }
+
+    const workflowTemplateId = await ensureFtlExportTemplate({
       createdByUserId: user.id,
     });
 
     const created = await createShipment({
       customerPartyIds,
-      transportMode: "SEA",
+      transportMode: "LAND",
       origin,
       destination,
-      shipmentType: "FCL",
-      cargoDescription: "FCL Import Clearance",
+      shipmentType: "LAND",
+      cargoDescription: "FTL Export - Warehouse Operations",
       jobIds: jobIds.length ? jobIds : undefined,
-      containerNumber: containerNumbers[0] ?? null,
+      containerNumber: null,
       workflowTemplateId,
       createdByUserId: user.id,
     });
 
     const steps = await listShipmentSteps(created.shipmentId);
-    const creationStep = steps.find(
-      (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
+    const planStep = steps.find(
+      (step) => step.name === FTL_EXPORT_STEP_NAMES.exportPlanOverview,
     );
-
-    if (creationStep && containerNumbers.length > 0) {
-      await updateShipmentStep({
-        stepId: creationStep.id,
-        status: "DONE",
-        fieldValuesJson: JSON.stringify({
-          containers: containerNumbers.map((number) => ({
-            container_number: number,
-          })),
-        }),
-      });
+    if (planStep) {
+      const planValues: Record<string, unknown> = {};
+      if (plannedTruckCount !== null && Number.isFinite(plannedTruckCount) && plannedTruckCount > 0) {
+        planValues.total_trucks_planned = String(Math.trunc(plannedTruckCount));
+      }
+      if (plannedTruckType && plannedTruckCount && plannedTruckCount > 0) {
+        planValues.planned_truck_types = [
+          {
+            truck_type: plannedTruckType,
+            truck_count: String(Math.trunc(plannedTruckCount)),
+          },
+        ];
+      }
+      if (Object.keys(planValues).length) {
+        await updateShipmentStep({
+          stepId: planStep.id,
+          fieldValuesJson: JSON.stringify(planValues),
+        });
+      }
     }
 
     await refreshShipmentDerivedState({
@@ -109,7 +166,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       updateLastUpdate: true,
     });
 
-    redirect(`/shipments/${created.shipmentId}`);
+    redirect(`/shipments/ftl-export/${created.shipmentId}`);
   }
 
   return (
@@ -125,8 +182,8 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
             Create shipment
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            Service type defaults to FCL Import Clearance. You can change it
-            later as more services are added.
+            Choose the service type to create either an FCL Import Clearance
+            shipment or an FTL Export warehouse workflow.
           </p>
         </div>
         <Link

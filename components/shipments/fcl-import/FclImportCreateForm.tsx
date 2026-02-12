@@ -9,6 +9,11 @@ import {
   FCL_IMPORT_OPERATIONS_STEPS,
   FCL_IMPORT_TRACKING_STEPS,
 } from "@/lib/fclImport/constants";
+import {
+  FTL_EXPORT_OPERATIONS_STEPS,
+  FTL_EXPORT_SERVICE_TYPE,
+  FTL_EXPORT_TRACKING_STEPS,
+} from "@/lib/ftlExport/constants";
 import { CanvasBackdrop } from "./CanvasBackdrop";
 
 type CreateFormProps = {
@@ -20,6 +25,7 @@ type CreateFormProps = {
 
 const SERVICE_TYPES = [
   { id: "FCL_IMPORT_CLEARANCE", label: "FCL Import Clearance" },
+  { id: FTL_EXPORT_SERVICE_TYPE, label: "FTL Export - Warehouse Operations" },
 ];
 
 export function FclImportCreateForm({
@@ -35,7 +41,11 @@ export function FclImportCreateForm({
   const [serviceType, setServiceType] = useState(
     SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
   );
+  const [plannedTruckCount, setPlannedTruckCount] = useState("");
+  const [plannedTruckType, setPlannedTruckType] = useState("");
   const containerInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const isFclService = serviceType === "FCL_IMPORT_CLEARANCE";
+  const isFtlService = serviceType === FTL_EXPORT_SERVICE_TYPE;
   const serviceLabel =
     SERVICE_TYPES.find((option) => option.id === serviceType)?.label ??
     SERVICE_TYPES[0]?.label ??
@@ -229,69 +239,115 @@ export function FclImportCreateForm({
             )}
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                  Containers
+          {isFclService ? (
+            <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Containers
+                  </div>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">
+                    Container numbers
+                  </h2>
                 </div>
-                <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                  Container numbers
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={addContainer}
-                disabled={!canWrite}
-                className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                Add container
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {containers.map((value, index) => (
-                <div
-                  key={`container-${index}`}
-                  className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm"
+                <button
+                  type="button"
+                  onClick={addContainer}
+                  disabled={!canWrite}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
-                  <div className="text-xs font-semibold text-slate-500">
-                    #{String(index + 1).padStart(2, "0")}
+                  Add container
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {containers.map((value, index) => (
+                  <div
+                    key={`container-${index}`}
+                    className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm"
+                  >
+                    <div className="text-xs font-semibold text-slate-500">
+                      #{String(index + 1).padStart(2, "0")}
+                    </div>
+                    <input
+                      name="containerNumbers"
+                      ref={(el) => {
+                        containerInputRefs.current[index] = el;
+                      }}
+                      value={value}
+                      onChange={(event) => updateContainer(index, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        if (index === containers.length - 1) {
+                          addContainer();
+                        }
+                      }}
+                      placeholder="Container number"
+                      className="min-w-[200px] flex-1 bg-transparent text-sm text-slate-800 focus:outline-none"
+                      required={false}
+                      disabled={!canWrite}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeContainer(index)}
+                      disabled={containers.length === 1}
+                      className="rounded-full border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 text-xs text-slate-500">
+                Tip: press Enter to add another container quickly.
+              </div>
+            </div>
+          ) : null}
+
+          {isFtlService ? (
+            <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
+              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Truck planning
+              </div>
+              <h2 className="mt-2 text-lg font-semibold text-slate-900">
+                Optional planning seed
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                These values prefill the first Export Plan step and remain editable later.
+              </p>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <div className="mb-1 text-sm font-medium text-slate-700">
+                    Planned truck count
                   </div>
                   <input
-                    name="containerNumbers"
-                    ref={(el) => {
-                      containerInputRefs.current[index] = el;
-                    }}
-                    value={value}
-                    onChange={(event) => updateContainer(index, event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (index === containers.length - 1) {
-                        addContainer();
-                      }
-                    }}
-                    placeholder="Container number"
-                    className="min-w-[200px] flex-1 bg-transparent text-sm text-slate-800 focus:outline-none"
-                    required={false}
+                    name="plannedTruckCount"
+                    type="number"
+                    min={0}
+                    value={plannedTruckCount}
+                    onChange={(event) => setPlannedTruckCount(event.target.value)}
                     disabled={!canWrite}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                    placeholder="e.g. 6"
                   />
-                  <button
-                    type="button"
-                    onClick={() => removeContainer(index)}
-                    disabled={containers.length === 1}
-                    className="rounded-full border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-300"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-sm font-medium text-slate-700">
+                    Primary truck type
+                  </div>
+                  <input
+                    name="plannedTruckType"
+                    value={plannedTruckType}
+                    onChange={(event) => setPlannedTruckType(event.target.value)}
+                    disabled={!canWrite}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                    placeholder="e.g. Curtain side"
+                  />
+                </label>
+              </div>
             </div>
-            <div className="mt-3 text-xs text-slate-500">
-              Tip: press Enter to add another container quickly.
-            </div>
-          </div>
+          ) : null}
 
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
@@ -341,62 +397,103 @@ export function FclImportCreateForm({
             <div className="text-xs uppercase tracking-[0.2em] text-slate-300">
               Workflow preview
             </div>
-            <h3 className="mt-2 text-lg font-semibold">FCL Clearance Journey</h3>
+            <h3 className="mt-2 text-lg font-semibold">
+              {isFclService ? "FCL Clearance Journey" : "FTL Export Journey"}
+            </h3>
             <p className="mt-2 text-sm text-slate-300">
               A live preview of what will be generated once the shipment is created.
             </p>
-            <div className="mt-4 space-y-3 text-sm">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                  Tracking
+            {isFclService ? (
+              <div className="mt-4 space-y-3 text-sm">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Tracking
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {FCL_IMPORT_TRACKING_STEPS.map((step, index) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">
+                          {index + 1}. {step}
+                        </span>
+                        <span className="text-xs text-slate-400">Client</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="mt-2 space-y-2">
-                  {FCL_IMPORT_TRACKING_STEPS.map((step, index) => (
-                    <li
-                      key={step}
-                      className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
-                    >
-                      <span className="text-slate-100">
-                        {index + 1}. {step}
-                      </span>
-                      <span className="text-xs text-slate-400">Client</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                  Operations
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Operations
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {FCL_IMPORT_OPERATIONS_STEPS.map((step) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">{step}</span>
+                        <span className="text-xs text-slate-400">Internal</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="mt-2 space-y-2">
-                  {FCL_IMPORT_OPERATIONS_STEPS.map((step) => (
-                    <li
-                      key={step}
-                      className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
-                    >
-                      <span className="text-slate-100">{step}</span>
-                      <span className="text-xs text-slate-400">Internal</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                  Container ops
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Container ops
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {FCL_IMPORT_CONTAINER_STEPS.map((step) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">{step}</span>
+                        <span className="text-xs text-slate-400">Internal</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="mt-2 space-y-2">
-                  {FCL_IMPORT_CONTAINER_STEPS.map((step) => (
-                    <li
-                      key={step}
-                      className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
-                    >
-                      <span className="text-slate-100">{step}</span>
-                      <span className="text-xs text-slate-400">Internal</span>
-                    </li>
-                  ))}
-                </ul>
               </div>
-            </div>
+            ) : (
+              <div className="mt-4 space-y-3 text-sm">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Operations
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {FTL_EXPORT_OPERATIONS_STEPS.map((step) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">{step}</span>
+                        <span className="text-xs text-slate-400">Internal</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Tracking
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {FTL_EXPORT_TRACKING_STEPS.map((step, index) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">
+                          {index + 1}. {step}
+                        </span>
+                        <span className="text-xs text-slate-400">Client</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 shadow-sm backdrop-blur">
@@ -405,9 +502,9 @@ export function FclImportCreateForm({
             </div>
             <div className="mt-3 space-y-2 text-sm text-slate-600">
               <div className="flex items-center justify-between">
-                <span>Add another container</span>
+                <span>{isFclService ? "Add another container" : "Switch service type"}</span>
                 <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
-                  Enter
+                  {isFclService ? "Enter" : "Click"}
                 </span>
               </div>
               <div className="flex items-center justify-between">
