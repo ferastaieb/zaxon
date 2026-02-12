@@ -10,6 +10,7 @@ export type TruckBookingRow = {
   trailer_type: string;
   driver_name: string;
   driver_contact: string;
+  truck_booked: boolean;
   booking_status: string;
   booking_date: string;
   estimated_loading_date: string;
@@ -20,6 +21,7 @@ export type LoadingTruckRow = {
   index: number;
   truck_reference: string;
   truck_loaded: boolean;
+  raw_loading_origin: string;
   loading_origin: string;
   supplier_name: string;
   external_loading_date: string;
@@ -30,6 +32,14 @@ export type LoadingTruckRow = {
   mixed_supplier_remarks: string;
   mixed_zaxon_loading_date: string;
   mixed_zaxon_remarks: string;
+  mixed_supplier_cargo_weight: number;
+  mixed_supplier_cargo_unit_type: string;
+  mixed_supplier_cargo_unit_type_other: string;
+  mixed_supplier_cargo_quantity: number;
+  mixed_zaxon_cargo_weight: number;
+  mixed_zaxon_cargo_unit_type: string;
+  mixed_zaxon_cargo_unit_type_other: string;
+  mixed_zaxon_cargo_quantity: number;
   cargo_weight: number;
   cargo_unit_type: string;
   cargo_unit_type_other: string;
@@ -135,7 +145,7 @@ export function normalizeLoadingOrigin(value: string): string {
   const normalized = value.trim().toUpperCase();
   return (FTL_EXPORT_LOADING_ORIGINS as readonly string[]).includes(normalized)
     ? normalized
-    : "ZAXON_WAREHOUSE";
+    : "";
 }
 
 export function parseTruckBookingRows(values: AnyRecord): TruckBookingRow[] {
@@ -146,6 +156,7 @@ export function parseTruckBookingRows(values: AnyRecord): TruckBookingRow[] {
     trailer_type: getString(entry.trailer_type),
     driver_name: getString(entry.driver_name),
     driver_contact: getString(entry.driver_contact),
+    truck_booked: isTruthy(entry.truck_booked),
     booking_status: normalizeTruckBookingStatus(getString(entry.booking_status)),
     booking_date: getString(entry.booking_date),
     estimated_loading_date: getString(entry.estimated_loading_date),
@@ -158,6 +169,7 @@ export function parseLoadingRows(values: AnyRecord): LoadingTruckRow[] {
     index,
     truck_reference: getString(entry.truck_reference),
     truck_loaded: isTruthy(entry.truck_loaded),
+    raw_loading_origin: getString(entry.loading_origin),
     loading_origin: normalizeLoadingOrigin(getString(entry.loading_origin)),
     supplier_name: getString(entry.supplier_name),
     external_loading_date: getString(entry.external_loading_date),
@@ -168,6 +180,18 @@ export function parseLoadingRows(values: AnyRecord): LoadingTruckRow[] {
     mixed_supplier_remarks: getString(entry.mixed_supplier_remarks),
     mixed_zaxon_loading_date: getString(entry.mixed_zaxon_loading_date),
     mixed_zaxon_remarks: getString(entry.mixed_zaxon_remarks),
+    mixed_supplier_cargo_weight: getNumber(entry.mixed_supplier_cargo_weight),
+    mixed_supplier_cargo_unit_type: getString(entry.mixed_supplier_cargo_unit_type),
+    mixed_supplier_cargo_unit_type_other: getString(
+      entry.mixed_supplier_cargo_unit_type_other,
+    ),
+    mixed_supplier_cargo_quantity: getNumber(entry.mixed_supplier_cargo_quantity),
+    mixed_zaxon_cargo_weight: getNumber(entry.mixed_zaxon_cargo_weight),
+    mixed_zaxon_cargo_unit_type: getString(entry.mixed_zaxon_cargo_unit_type),
+    mixed_zaxon_cargo_unit_type_other: getString(
+      entry.mixed_zaxon_cargo_unit_type_other,
+    ),
+    mixed_zaxon_cargo_quantity: getNumber(entry.mixed_zaxon_cargo_quantity),
     cargo_weight: getNumber(entry.cargo_weight),
     cargo_unit_type: getString(entry.cargo_unit_type),
     cargo_unit_type_other: getString(entry.cargo_unit_type_other),
@@ -200,7 +224,8 @@ export function countActiveBookedTrucks(rows: TruckBookingRow[]): {
 } {
   const active = rows.filter((row) => row.booking_status !== "CANCELLED").length;
   const booked = rows.filter(
-    (row) => row.booking_status === "BOOKED" && !!row.booking_date,
+    (row) =>
+      (row.booking_status === "BOOKED" || row.truck_booked) && !!row.booking_date,
   ).length;
   return { active, booked };
 }
@@ -267,4 +292,3 @@ export function buildImportStockSummary(
     };
   });
 }
-

@@ -92,8 +92,14 @@ function errorMessage(error: string | null) {
   if (error === "truck_locked") {
     return "Truck details are locked because export invoice is finalized.";
   }
+  if (error === "truck_booking_required") {
+    return "Booking date is required for each booked truck.";
+  }
   if (error === "loading_required") {
     return "Complete mandatory loading fields and photos before saving loaded trucks.";
+  }
+  if (error === "tracking_locked") {
+    return "Tracking is locked until loading is done, invoice is finalized, and customs agents are allocated.";
   }
   if (error === "invalid") {
     return "Invalid request data.";

@@ -16,15 +16,21 @@ import {
   buildImportStockSummary,
   computeImportWarnings,
   computeLoadingProgress,
-  countActiveBookedTrucks,
   getString,
   isTruthy,
   parseImportShipmentRows,
   parseLoadingRows,
   parseTruckBookingRows,
 } from "@/lib/ftlExport/helpers";
-import { StepEditorCard } from "./StepEditorCard";
 import type { FtlDocumentMeta, FtlShipmentMeta, FtlStepData } from "./types";
+import { CustomsAgentsStepForm } from "./forms/CustomsAgentsStepForm";
+import { ExportInvoiceStepForm } from "./forms/ExportInvoiceStepForm";
+import { ExportPlanStepForm } from "./forms/ExportPlanStepForm";
+import { ImportShipmentSelectionStepForm } from "./forms/ImportShipmentSelectionStepForm";
+import { LoadingDetailsStepForm } from "./forms/LoadingDetailsStepForm";
+import { StockViewStepForm } from "./forms/StockViewStepForm";
+import { TrackingStepForm } from "./forms/TrackingStepForm";
+import { TrucksDetailsStepForm } from "./forms/TrucksDetailsStepForm";
 
 export type FtlMainTab =
   | "plan"
@@ -107,10 +113,7 @@ export function FtlExportWorkspace({
     initialTrackingTab && isTrackingTab(initialTrackingTab) ? initialTrackingTab : "uae",
   );
 
-  const stepByName = useMemo(
-    () => new Map(steps.map((step) => [step.name, step])),
-    [steps],
-  );
+  const stepByName = useMemo(() => new Map(steps.map((step) => [step.name, step])), [steps]);
 
   const planStep = stepByName.get(FTL_EXPORT_STEP_NAMES.exportPlanOverview);
   const trucksStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trucksDetails);
@@ -124,21 +127,24 @@ export function FtlExportWorkspace({
   const jordanStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trackingJordan);
   const syriaStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trackingSyria);
 
-  const plannedTrucks = Number(getString(planStep?.values.total_trucks_planned) || "0");
   const truckRows = parseTruckBookingRows((trucksStep?.values ?? {}) as Record<string, unknown>);
-  const activeTruckStats = countActiveBookedTrucks(truckRows);
-  const actualTrucks = activeTruckStats.active;
   const loadingRows = parseLoadingRows((loadingStep?.values ?? {}) as Record<string, unknown>);
   const loadingProgress = computeLoadingProgress({ truckRows, loadingRows });
   const importRows = parseImportShipmentRows((importStep?.values ?? {}) as Record<string, unknown>);
   const importWarnings = computeImportWarnings(importRows);
   const stockSummary = buildImportStockSummary(importRows);
   const importsAvailable = allReferencedImportsAvailable(importRows);
-  const loadingCompleted =
-    loadingProgress.expected > 0 && loadingProgress.loaded >= loadingProgress.expected;
+  const loadingCompleted = loadingProgress.expected > 0 && loadingProgress.loaded >= loadingProgress.expected;
   const canFinalizeInvoice = loadingCompleted && importsAvailable;
   const invoiceFinalized = isTruthy(invoiceStep?.values.invoice_finalized);
+  const invoiceDone = invoiceStep?.status === "DONE";
+  const agentsDone = agentsStep?.status === "DONE";
+  const trackingUnlocked = loadingCompleted && invoiceDone && agentsDone;
   const trackingLink = trackingToken ? `/track/${trackingToken}` : "";
+  const syriaClearanceMode =
+    getString(agentsStep?.values.naseeb_clearance_mode).toUpperCase() === "ZAXON"
+      ? "ZAXON"
+      : "CLIENT";
 
   const baseUrl = `/shipments/ftl-export/${shipment.id}`;
   const returnTo = (nextTab: FtlMainTab, sub?: string) => {
@@ -151,9 +157,7 @@ export function FtlExportWorkspace({
   return (
     <div className="space-y-6">
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">
-          FTL export workflow
-        </div>
+        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">FTL export workflow</div>
         <h1 className={`${headingClassName} mt-2 text-2xl font-semibold text-zinc-900`}>
           {shipment.shipment_code}
         </h1>
@@ -200,14 +204,11 @@ export function FtlExportWorkspace({
 
       {tab === "plan" ? (
         planStep ? (
-          <StepEditorCard
+          <ExportPlanStepForm
             step={planStep}
-            title="Export plan overview"
-            description="Order trigger, planning date, and truck plan baseline."
-            canEdit={canEdit}
-            latestDocsByType={latestDocsByType}
             updateAction={updateAction}
             returnTo={returnTo("plan")}
+            canEdit={canEdit}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.exportPlanOverview} />
@@ -216,36 +217,12 @@ export function FtlExportWorkspace({
 
       {tab === "trucks" ? (
         trucksStep ? (
-          <StepEditorCard
+          <TrucksDetailsStepForm
             step={trucksStep}
-            title="Trucks details"
-            description="Plan, book, and maintain truck cards. Keep planned vs actual variance visible."
-            canEdit={canEdit}
-            latestDocsByType={latestDocsByType}
             updateAction={updateAction}
             returnTo={returnTo("trucks")}
-            disabled={invoiceFinalized}
-            disabledMessage={
-              invoiceFinalized
-                ? "Truck details are locked after export invoice is finalized."
-                : undefined
-            }
-            beforeForm={
-              <div className="grid gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-sm md:grid-cols-3">
-                <div>
-                  <div className="text-xs text-zinc-500">Planned trucks</div>
-                  <div className="font-semibold text-zinc-900">{plannedTrucks || 0}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-zinc-500">Actual trucks</div>
-                  <div className="font-semibold text-zinc-900">{actualTrucks}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-zinc-500">Variance</div>
-                  <div className="font-semibold text-zinc-900">{actualTrucks - (plannedTrucks || 0)}</div>
-                </div>
-              </div>
-            }
+            canEdit={canEdit}
+            invoiceFinalized={invoiceFinalized}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.trucksDetails} />
@@ -254,21 +231,13 @@ export function FtlExportWorkspace({
 
       {tab === "loading" ? (
         loadingStep ? (
-          <StepEditorCard
+          <LoadingDetailsStepForm
             step={loadingStep}
-            title="Loading details"
-            description="Record loading per truck with mandatory loading origin and loading evidence."
-            canEdit={canEdit}
-            latestDocsByType={latestDocsByType}
             updateAction={updateAction}
             returnTo={returnTo("loading")}
-            beforeForm={
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
-                Shipment loading status is automatically aggregated from truck-level
-                <span className="font-medium"> Truck Loaded </span>
-                values.
-              </div>
-            }
+            canEdit={canEdit}
+            truckRows={truckRows}
+            latestDocsByType={latestDocsByType}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.loadingDetails} />
@@ -300,31 +269,24 @@ export function FtlExportWorkspace({
 
           {invoiceTab === "imports" ? (
             importStep ? (
-              <StepEditorCard
-                step={importStep}
-                title="Import shipment selection"
-                description="Link and allocate import shipment balances for this export shipment."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
-                updateAction={updateAction}
-                returnTo={returnTo("invoice", "imports")}
-                beforeForm={
-                  <div className="space-y-2">
-                    {importWarnings.unavailable.length ? (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                        Warning: {importWarnings.unavailable.length} reference(s) are marked not
-                        processed/available.
-                      </div>
-                    ) : null}
-                    {importWarnings.overallocation.length ? (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                        Warning: {importWarnings.overallocation.length} allocation(s) exceed remaining
-                        balance. Saving is allowed.
-                      </div>
-                    ) : null}
+              <>
+                {importWarnings.unavailable.length || importWarnings.overallocation.length ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {importWarnings.unavailable.length
+                      ? `${importWarnings.unavailable.length} reference(s) are not processed/available. `
+                      : ""}
+                    {importWarnings.overallocation.length
+                      ? `${importWarnings.overallocation.length} row(s) exceed remaining balance.`
+                      : ""}
                   </div>
-                }
-              />
+                ) : null}
+                <ImportShipmentSelectionStepForm
+                  step={importStep}
+                  updateAction={updateAction}
+                  returnTo={returnTo("invoice", "imports")}
+                  canEdit={canEdit}
+                />
+              </>
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.importShipmentSelection} />
             )
@@ -332,20 +294,13 @@ export function FtlExportWorkspace({
 
           {invoiceTab === "invoice" ? (
             invoiceStep ? (
-              <StepEditorCard
+              <ExportInvoiceStepForm
                 step={invoiceStep}
-                title="Export invoice"
-                description="Invoice can be finalized only after all trucks are loaded and import references are available."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("invoice", "invoice")}
-                disabled={!canFinalizeInvoice}
-                disabledMessage={
-                  !canFinalizeInvoice
-                    ? "Invoice finalization requires loading status DONE and all referenced imports available."
-                    : undefined
-                }
+                canEdit={canEdit}
+                canFinalizeInvoice={canFinalizeInvoice}
+                latestDocsByType={latestDocsByType}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.exportInvoice} />
@@ -354,51 +309,12 @@ export function FtlExportWorkspace({
 
           {invoiceTab === "stock" ? (
             stockStep ? (
-              <StepEditorCard
+              <StockViewStepForm
                 step={stockStep}
-                title="Stock view"
-                description="Consolidated import/export balance summary."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("invoice", "stock")}
-                beforeForm={
-                  <div className="overflow-x-auto rounded-xl border border-zinc-200">
-                    <table className="min-w-full text-left text-xs">
-                      <thead className="bg-zinc-50 text-zinc-600">
-                        <tr>
-                          <th className="px-3 py-2">Import Ref</th>
-                          <th className="px-3 py-2">Imported Qty</th>
-                          <th className="px-3 py-2">Imported Wt</th>
-                          <th className="px-3 py-2">Exported Qty</th>
-                          <th className="px-3 py-2">Exported Wt</th>
-                          <th className="px-3 py-2">Remaining Qty</th>
-                          <th className="px-3 py-2">Remaining Wt</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {stockSummary.map((row) => (
-                          <tr key={row.reference} className="border-t border-zinc-200">
-                            <td className="px-3 py-2 font-medium text-zinc-900">{row.reference}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.importedQuantity}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.importedWeight}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.exportedQuantity}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.exportedWeight}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.remainingQuantity}</td>
-                            <td className="px-3 py-2 text-zinc-700">{row.remainingWeight}</td>
-                          </tr>
-                        ))}
-                        {stockSummary.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="px-3 py-3 text-zinc-500">
-                              No import allocation rows yet.
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                }
+                canEdit={canEdit}
+                summaryRows={stockSummary}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.stockView} />
@@ -409,14 +325,11 @@ export function FtlExportWorkspace({
 
       {tab === "agents" ? (
         agentsStep ? (
-          <StepEditorCard
+          <CustomsAgentsStepForm
             step={agentsStep}
-            title="Customs agents allocation"
-            description="Allocate border clearing agents and define Naseeb clearance mode."
-            canEdit={canEdit}
-            latestDocsByType={latestDocsByType}
             updateAction={updateAction}
             returnTo={returnTo("agents")}
+            canEdit={canEdit}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.customsAgentsAllocation} />
@@ -449,14 +362,19 @@ export function FtlExportWorkspace({
 
           {trackingTab === "uae" ? (
             uaeStep ? (
-              <StepEditorCard
+              <TrackingStepForm
                 step={uaeStep}
-                title="UAE tracking"
-                description="Jebel Ali and Sila customs + movement checkpoints."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "uae")}
+                canEdit={canEdit}
+                region="uae"
+                locked={!trackingUnlocked}
+                lockedMessage={
+                  !trackingUnlocked
+                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    : undefined
+                }
+                latestDocsByType={latestDocsByType}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingUae} />
@@ -465,14 +383,19 @@ export function FtlExportWorkspace({
 
           {trackingTab === "ksa" ? (
             ksaStep ? (
-              <StepEditorCard
+              <TrackingStepForm
                 step={ksaStep}
-                title="KSA tracking"
-                description="Batha entry and Hadietha exit checkpoints."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "ksa")}
+                canEdit={canEdit}
+                region="ksa"
+                locked={!trackingUnlocked}
+                lockedMessage={
+                  !trackingUnlocked
+                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    : undefined
+                }
+                latestDocsByType={latestDocsByType}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingKsa} />
@@ -481,14 +404,19 @@ export function FtlExportWorkspace({
 
           {trackingTab === "jordan" ? (
             jordanStep ? (
-              <StepEditorCard
+              <TrackingStepForm
                 step={jordanStep}
-                title="Jordan tracking"
-                description="Omari entry and Jaber exit checkpoints."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "jordan")}
+                canEdit={canEdit}
+                region="jordan"
+                locked={!trackingUnlocked}
+                lockedMessage={
+                  !trackingUnlocked
+                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    : undefined
+                }
+                latestDocsByType={latestDocsByType}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingJordan} />
@@ -497,14 +425,20 @@ export function FtlExportWorkspace({
 
           {trackingTab === "syria" ? (
             syriaStep ? (
-              <StepEditorCard
+              <TrackingStepForm
                 step={syriaStep}
-                title="Syria tracking"
-                description="Arrival, clearance path, delivery, and offload completion."
-                canEdit={canEdit}
-                latestDocsByType={latestDocsByType}
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "syria")}
+                canEdit={canEdit}
+                region="syria"
+                locked={!trackingUnlocked}
+                lockedMessage={
+                  !trackingUnlocked
+                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    : undefined
+                }
+                syriaClearanceMode={syriaClearanceMode}
+                latestDocsByType={latestDocsByType}
               />
             ) : (
               <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingSyria} />
@@ -512,6 +446,7 @@ export function FtlExportWorkspace({
           ) : null}
         </div>
       ) : null}
+
     </div>
   );
 }

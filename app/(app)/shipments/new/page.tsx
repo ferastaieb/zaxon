@@ -136,26 +136,26 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
     });
 
     const steps = await listShipmentSteps(created.shipmentId);
-    const planStep = steps.find(
-      (step) => step.name === FTL_EXPORT_STEP_NAMES.exportPlanOverview,
+    const trucksStep = steps.find(
+      (step) => step.name === FTL_EXPORT_STEP_NAMES.trucksDetails,
     );
-    if (planStep) {
-      const planValues: Record<string, unknown> = {};
+    if (trucksStep) {
+      const truckValues: Record<string, unknown> = {};
       if (plannedTruckCount !== null && Number.isFinite(plannedTruckCount) && plannedTruckCount > 0) {
-        planValues.total_trucks_planned = String(Math.trunc(plannedTruckCount));
+        truckValues.total_trucks_planned = String(Math.trunc(plannedTruckCount));
       }
       if (plannedTruckType && plannedTruckCount && plannedTruckCount > 0) {
-        planValues.planned_truck_types = [
+        truckValues.planned_truck_types = [
           {
             truck_type: plannedTruckType,
             truck_count: String(Math.trunc(plannedTruckCount)),
           },
         ];
       }
-      if (Object.keys(planValues).length) {
+      if (Object.keys(truckValues).length) {
         await updateShipmentStep({
-          stepId: planStep.id,
-          fieldValuesJson: JSON.stringify(planValues),
+          stepId: trucksStep.id,
+          fieldValuesJson: JSON.stringify(truckValues),
         });
       }
     }

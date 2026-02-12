@@ -108,18 +108,29 @@ const exportPlanOverviewSchema: StepFieldSchema = {
       type: "date",
     },
     {
+      id: "remarks",
+      label: "Remarks",
+      type: "text",
+    },
+  ],
+};
+
+const trucksDetailsSchema: StepFieldSchema = {
+  version: 1,
+  fields: [
+    {
+      id: "total_trucks_planned",
+      label: "Total trucks planned",
+      type: "number",
+    },
+    {
       id: "trucks_booking_required_by",
       label: "Trucks booking required by",
       type: "date",
     },
     {
-      id: "total_trucks_planned",
-      label: "Total number of trucks planned",
-      type: "number",
-    },
-    {
       id: "planned_truck_types",
-      label: "Truck types plan",
+      label: "Planned truck types",
       type: "group",
       repeatable: true,
       fields: [
@@ -135,17 +146,6 @@ const exportPlanOverviewSchema: StepFieldSchema = {
         },
       ],
     },
-    {
-      id: "remarks",
-      label: "Remarks",
-      type: "text",
-    },
-  ],
-};
-
-const trucksDetailsSchema: StepFieldSchema = {
-  version: 1,
-  fields: [
     {
       id: "planned_trucks_snapshot",
       label: "Planned trucks snapshot",
@@ -171,6 +171,11 @@ const trucksDetailsSchema: StepFieldSchema = {
         id: "booking_status",
         label: "Booking status",
         type: "text",
+      },
+      {
+        id: "truck_booked",
+        label: "Truck booked",
+        type: "boolean",
       },
       {
         id: "booking_date",
@@ -279,6 +284,46 @@ const loadingDetailsSchema: StepFieldSchema = {
         id: "mixed_zaxon_remarks",
         label: "Mixed: Zaxon remarks",
         type: "text",
+      },
+      {
+        id: "mixed_supplier_cargo_weight",
+        label: "Mixed: supplier cargo weight",
+        type: "number",
+      },
+      {
+        id: "mixed_supplier_cargo_unit_type",
+        label: "Mixed: supplier cargo unit type",
+        type: "text",
+      },
+      {
+        id: "mixed_supplier_cargo_unit_type_other",
+        label: "Mixed: supplier cargo unit type - other",
+        type: "text",
+      },
+      {
+        id: "mixed_supplier_cargo_quantity",
+        label: "Mixed: supplier cargo quantity",
+        type: "number",
+      },
+      {
+        id: "mixed_zaxon_cargo_weight",
+        label: "Mixed: Zaxon cargo weight",
+        type: "number",
+      },
+      {
+        id: "mixed_zaxon_cargo_unit_type",
+        label: "Mixed: Zaxon cargo unit type",
+        type: "text",
+      },
+      {
+        id: "mixed_zaxon_cargo_unit_type_other",
+        label: "Mixed: Zaxon cargo unit type - other",
+        type: "text",
+      },
+      {
+        id: "mixed_zaxon_cargo_quantity",
+        label: "Mixed: Zaxon cargo quantity",
+        type: "number",
       },
       {
         id: "cargo_weight",
@@ -776,4 +821,3 @@ export async function ensureFtlExportTemplate(input?: { createdByUserId?: number
 
   return templateId;
 }
-

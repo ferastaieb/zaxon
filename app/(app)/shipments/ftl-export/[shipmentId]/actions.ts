@@ -13,10 +13,14 @@ import { listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import { stepStatusLabel } from "@/lib/domain";
 import { nowIso, scanAll, tableName } from "@/lib/db";
-import { FTL_EXPORT_STEP_NAMES } from "@/lib/ftlExport/constants";
+import {
+  FTL_EXPORT_STEP_NAMES,
+  FTL_EXPORT_TRACKING_STEPS,
+} from "@/lib/ftlExport/constants";
 import {
   getString,
   normalizeLoadingOrigin,
+  parseTruckBookingRows,
   parseLoadingRows,
   toRecord,
   isTruthy,
@@ -64,6 +68,17 @@ function hasDocType(docTypes: Set<string>, stepId: number, path: string[]) {
   return docTypes.has(docType);
 }
 
+function validateTruckBookingRows(values: Record<string, unknown>) {
+  const rows = parseTruckBookingRows(toRecord(values));
+  for (const row of rows) {
+    const booked = row.booking_status === "BOOKED" || row.truck_booked;
+    if (booked && !row.booking_date) {
+      return { ok: false, truckIndex: row.index + 1 };
+    }
+  }
+  return { ok: true as const };
+}
+
 function validateLoadingRows(input: {
   stepId: number;
   values: Record<string, unknown>;
@@ -72,27 +87,65 @@ function validateLoadingRows(input: {
   const rows = parseLoadingRows(toRecord(input.values));
   for (const row of rows) {
     if (!row.truck_loaded) continue;
-    if (row.cargo_weight <= 0 || row.cargo_quantity <= 0 || !row.cargo_unit_type) {
+    if (!row.raw_loading_origin) {
       return { ok: false, truckIndex: row.index + 1 };
     }
-    if (
-      row.cargo_unit_type.toLowerCase() === "other" &&
-      !row.cargo_unit_type_other.trim()
-    ) {
+    const origin = normalizeLoadingOrigin(row.raw_loading_origin);
+    if (!origin) {
       return { ok: false, truckIndex: row.index + 1 };
     }
 
-    const origin = normalizeLoadingOrigin(row.loading_origin);
+    if (origin === "MIXED") {
+      if (!row.mixed_supplier_loading_date || !row.mixed_zaxon_loading_date) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      if (
+        row.mixed_supplier_cargo_weight <= 0 ||
+        row.mixed_supplier_cargo_quantity <= 0 ||
+        !row.mixed_supplier_cargo_unit_type
+      ) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      if (
+        row.mixed_supplier_cargo_unit_type.toLowerCase() === "other" &&
+        !row.mixed_supplier_cargo_unit_type_other.trim()
+      ) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      if (
+        row.mixed_zaxon_cargo_weight <= 0 ||
+        row.mixed_zaxon_cargo_quantity <= 0 ||
+        !row.mixed_zaxon_cargo_unit_type
+      ) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      if (
+        row.mixed_zaxon_cargo_unit_type.toLowerCase() === "other" &&
+        !row.mixed_zaxon_cargo_unit_type_other.trim()
+      ) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      const totalWeight = row.mixed_supplier_cargo_weight + row.mixed_zaxon_cargo_weight;
+      const totalQuantity = row.mixed_supplier_cargo_quantity + row.mixed_zaxon_cargo_quantity;
+      if (totalWeight <= 0 || totalQuantity <= 0) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+    } else {
+      if (row.cargo_weight <= 0 || row.cargo_quantity <= 0 || !row.cargo_unit_type) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+      if (
+        row.cargo_unit_type.toLowerCase() === "other" &&
+        !row.cargo_unit_type_other.trim()
+      ) {
+        return { ok: false, truckIndex: row.index + 1 };
+      }
+    }
+
     if (origin === "EXTERNAL_SUPPLIER" && !row.external_loading_date) {
       return { ok: false, truckIndex: row.index + 1 };
     }
     if (origin === "ZAXON_WAREHOUSE" && !row.zaxon_actual_loading_date) {
-      return { ok: false, truckIndex: row.index + 1 };
-    }
-    if (
-      origin === "MIXED" &&
-      (!row.mixed_supplier_loading_date || !row.mixed_zaxon_loading_date)
-    ) {
       return { ok: false, truckIndex: row.index + 1 };
     }
 
@@ -164,6 +217,21 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   if (step.name === FTL_EXPORT_STEP_NAMES.trucksDetails && invoiceFinalized) {
     redirect(appendParam(returnBase, "error", "truck_locked"));
   }
+  const trackingSteps = new Set<string>(FTL_EXPORT_TRACKING_STEPS);
+  if (trackingSteps.has(step.name)) {
+    const loadingStep = steps.find((row) => row.name === FTL_EXPORT_STEP_NAMES.loadingDetails);
+    const invoiceStatusStep = steps.find((row) => row.name === FTL_EXPORT_STEP_NAMES.exportInvoice);
+    const agentsStep = steps.find(
+      (row) => row.name === FTL_EXPORT_STEP_NAMES.customsAgentsAllocation,
+    );
+    if (
+      loadingStep?.status !== "DONE" ||
+      invoiceStatusStep?.status !== "DONE" ||
+      agentsStep?.status !== "DONE"
+    ) {
+      redirect(appendParam(returnBase, "error", "tracking_locked"));
+    }
+  }
 
   const fieldUploads = extractStepFieldUploads(formData).map((upload) => ({
     file: upload.file,
@@ -200,16 +268,25 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
     });
   }
 
-  await updateShipmentStep({
-    stepId,
-    notes,
-    fieldValuesJson: JSON.stringify(mergedValues),
-  });
-
   const docs = await listDocuments(shipmentId);
   const docTypes = new Set(
     docs.filter((doc) => doc.is_received).map((doc) => String(doc.document_type)),
   );
+
+  if (step.name === FTL_EXPORT_STEP_NAMES.trucksDetails) {
+    const bookingValidation = validateTruckBookingRows(
+      mergedValues as Record<string, unknown>,
+    );
+    if (!bookingValidation.ok) {
+      redirect(
+        appendParam(
+          appendParam(returnBase, "error", "truck_booking_required"),
+          "truck",
+          String(bookingValidation.truckIndex),
+        ),
+      );
+    }
+  }
 
   if (step.name === FTL_EXPORT_STEP_NAMES.loadingDetails) {
     const loadingValidation = validateLoadingRows({
@@ -258,6 +335,16 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
     docTypes,
   });
 
+  if (trackingSteps.has(step.name)) {
+    const loadingDone = computed.statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] === "DONE";
+    const invoiceDone = computed.statuses[FTL_EXPORT_STEP_NAMES.exportInvoice] === "DONE";
+    const agentsDone =
+      computed.statuses[FTL_EXPORT_STEP_NAMES.customsAgentsAllocation] === "DONE";
+    if (!loadingDone || !invoiceDone || !agentsDone) {
+      redirect(appendParam(returnBase, "error", "tracking_locked"));
+    }
+  }
+
   if (
     step.name === FTL_EXPORT_STEP_NAMES.exportInvoice &&
     isTruthy((mergedValues as Record<string, unknown>).invoice_finalized) &&
@@ -265,6 +352,12 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   ) {
     redirect(appendParam(returnBase, "error", "invoice_prereq"));
   }
+
+  await updateShipmentStep({
+    stepId,
+    notes,
+    fieldValuesJson: JSON.stringify(mergedValues),
+  });
 
   for (const row of steps) {
     const nextStatus = computed.statuses[row.name];
