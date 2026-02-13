@@ -4,6 +4,7 @@ import type {
   StepStatus,
 } from "@/lib/domain";
 import type { StepFieldSchema, StepFieldValues } from "@/lib/stepFields";
+import type { FtlImportCandidate } from "@/lib/ftlExport/importCandidateTypes";
 
 export type FtlStepData = {
   id: number;
@@ -32,3 +33,5 @@ export type FtlShipmentMeta = {
   overall_status: ShipmentOverallStatus;
   risk: ShipmentRisk;
 };
+
+export type { FtlImportCandidate };

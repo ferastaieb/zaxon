@@ -25,6 +25,11 @@ const importShipmentGroup = (): StepFieldDefinition => ({
   repeatable: true,
   fields: [
     {
+      id: "source_shipment_id",
+      label: "Source import shipment id",
+      type: "text",
+    },
+    {
       id: "import_shipment_reference",
       label: "Import shipment number",
       type: "text",
@@ -57,6 +62,16 @@ const importShipmentGroup = (): StepFieldDefinition => ({
     {
       id: "imported_quantity",
       label: "Imported quantity",
+      type: "number",
+    },
+    {
+      id: "already_allocated_weight",
+      label: "Already allocated weight across previous exports",
+      type: "number",
+    },
+    {
+      id: "already_allocated_quantity",
+      label: "Already allocated quantity across previous exports",
       type: "number",
     },
     {

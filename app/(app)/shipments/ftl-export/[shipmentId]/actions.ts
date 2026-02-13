@@ -20,11 +20,13 @@ import {
 import {
   getString,
   normalizeLoadingOrigin,
+  parseImportShipmentRows,
   parseTruckBookingRows,
   parseLoadingRows,
   toRecord,
   isTruthy,
 } from "@/lib/ftlExport/helpers";
+import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import { computeFtlExportStatuses } from "@/lib/ftlExport/status";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
@@ -161,6 +163,24 @@ function validateLoadingRows(input: {
     }
   }
   return { ok: true as const };
+}
+
+function hasAnyImportRowData(row: {
+  source_shipment_id: string;
+  import_shipment_reference: string;
+  import_boe_number: string;
+  allocated_quantity: number;
+  allocated_weight: number;
+  remarks: string;
+}) {
+  return (
+    !!row.source_shipment_id ||
+    !!row.import_shipment_reference ||
+    !!row.import_boe_number ||
+    row.allocated_quantity > 0 ||
+    row.allocated_weight > 0 ||
+    !!row.remarks
+  );
 }
 
 async function ensureInvoiceNumberUnique(input: {
@@ -317,6 +337,50 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
         redirect(appendParam(returnBase, "error", "invoice_duplicate"));
       }
     }
+  }
+
+  if (step.name === FTL_EXPORT_STEP_NAMES.importShipmentSelection) {
+    const importRows = parseImportShipmentRows(toRecord(mergedValues));
+    const candidates = await listFtlImportCandidates({
+      userId: user.id,
+      role: user.role,
+      currentShipmentId: shipmentId,
+    });
+    const candidateById = new Map(
+      candidates.map((candidate) => [String(candidate.shipmentId), candidate]),
+    );
+
+    const normalizedRows: Array<Record<string, unknown>> = [];
+    for (const row of importRows) {
+      if (!hasAnyImportRowData(row)) continue;
+      const candidate = candidateById.get(row.source_shipment_id);
+      if (!candidate) {
+        redirect(appendParam(returnBase, "error", "import_reference_invalid"));
+      }
+
+      normalizedRows.push({
+        source_shipment_id: String(candidate.shipmentId),
+        import_shipment_reference: candidate.shipmentCode,
+        client_number: candidate.clientNumber,
+        import_boe_number: candidate.importBoeNumber,
+        processed_available: candidate.processedAvailable ? "1" : "",
+        non_physical_stock: candidate.nonPhysicalStock ? "1" : "",
+        imported_weight: candidate.importedWeight,
+        imported_quantity: candidate.importedQuantity,
+        already_allocated_weight: candidate.alreadyAllocatedWeight,
+        already_allocated_quantity: candidate.alreadyAllocatedQuantity,
+        package_type: candidate.packageType,
+        cargo_description: candidate.cargoDescription,
+        allocated_weight: row.allocated_weight,
+        allocated_quantity: row.allocated_quantity,
+        remarks: row.remarks,
+      });
+    }
+
+    mergedValues = {
+      ...toRecord(mergedValues),
+      import_shipments: normalizedRows as unknown as Array<unknown>,
+    } as typeof mergedValues;
   }
 
   const stepsByName: Record<string, { id: number; values: Record<string, unknown> }> = {};

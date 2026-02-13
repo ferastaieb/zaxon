@@ -49,12 +49,15 @@ export type LoadingTruckRow = {
 
 export type ImportShipmentAllocationRow = {
   index: number;
+  source_shipment_id: string;
   import_shipment_reference: string;
   client_number: string;
   import_boe_number: string;
   processed_available: boolean;
   imported_quantity: number;
   imported_weight: number;
+  already_allocated_quantity: number;
+  already_allocated_weight: number;
   allocated_quantity: number;
   allocated_weight: number;
   package_type: string;
@@ -203,12 +206,15 @@ export function parseLoadingRows(values: AnyRecord): LoadingTruckRow[] {
 export function parseImportShipmentRows(values: AnyRecord): ImportShipmentAllocationRow[] {
   return asGroupArray(values, "import_shipments").map((entry, index) => ({
     index,
+    source_shipment_id: getString(entry.source_shipment_id),
     import_shipment_reference: getString(entry.import_shipment_reference),
     client_number: getString(entry.client_number),
     import_boe_number: getString(entry.import_boe_number),
     processed_available: isTruthy(entry.processed_available),
     imported_quantity: getNumber(entry.imported_quantity),
     imported_weight: getNumber(entry.imported_weight),
+    already_allocated_quantity: getNumber(entry.already_allocated_quantity),
+    already_allocated_weight: getNumber(entry.already_allocated_weight),
     allocated_quantity: getNumber(entry.allocated_quantity),
     allocated_weight: getNumber(entry.allocated_weight),
     package_type: getString(entry.package_type),
@@ -251,10 +257,16 @@ export function computeImportWarnings(
     if (!row.processed_available) {
       unavailable.push(row);
     }
-    const quantityOver =
-      row.imported_quantity > 0 && row.allocated_quantity > row.imported_quantity;
-    const weightOver =
-      row.imported_weight > 0 && row.allocated_weight > row.imported_weight;
+    const remainingQuantity = Math.max(
+      0,
+      row.imported_quantity - row.already_allocated_quantity,
+    );
+    const remainingWeight = Math.max(
+      0,
+      row.imported_weight - row.already_allocated_weight,
+    );
+    const quantityOver = row.allocated_quantity > remainingQuantity;
+    const weightOver = row.allocated_weight > remainingWeight;
     if (quantityOver || weightOver) {
       overallocation.push(row);
     }
@@ -275,8 +287,10 @@ export function buildImportStockSummary(
   rows: ImportShipmentAllocationRow[],
 ): ImportStockSummaryRow[] {
   return rows.map((row) => {
-    const remainingQuantity = Math.max(0, row.imported_quantity - row.allocated_quantity);
-    const remainingWeight = Math.max(0, row.imported_weight - row.allocated_weight);
+    const exportedQuantity = row.already_allocated_quantity + row.allocated_quantity;
+    const exportedWeight = row.already_allocated_weight + row.allocated_weight;
+    const remainingQuantity = Math.max(0, row.imported_quantity - exportedQuantity);
+    const remainingWeight = Math.max(0, row.imported_weight - exportedWeight);
     return {
       reference:
         row.import_shipment_reference ||
@@ -285,8 +299,8 @@ export function buildImportStockSummary(
         `Import ${row.index + 1}`,
       importedQuantity: row.imported_quantity,
       importedWeight: row.imported_weight,
-      exportedQuantity: row.allocated_quantity,
-      exportedWeight: row.allocated_weight,
+      exportedQuantity,
+      exportedWeight,
       remainingQuantity,
       remainingWeight,
     };

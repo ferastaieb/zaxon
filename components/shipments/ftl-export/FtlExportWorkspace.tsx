@@ -22,7 +22,12 @@ import {
   parseLoadingRows,
   parseTruckBookingRows,
 } from "@/lib/ftlExport/helpers";
-import type { FtlDocumentMeta, FtlShipmentMeta, FtlStepData } from "./types";
+import type {
+  FtlDocumentMeta,
+  FtlImportCandidate,
+  FtlShipmentMeta,
+  FtlStepData,
+} from "./types";
 import { CustomsAgentsStepForm } from "./forms/CustomsAgentsStepForm";
 import { ExportInvoiceStepForm } from "./forms/ExportInvoiceStepForm";
 import { ExportPlanStepForm } from "./forms/ExportPlanStepForm";
@@ -31,6 +36,7 @@ import { LoadingDetailsStepForm } from "./forms/LoadingDetailsStepForm";
 import { StockViewStepForm } from "./forms/StockViewStepForm";
 import { TrackingStepForm } from "./forms/TrackingStepForm";
 import { TrucksDetailsStepForm } from "./forms/TrucksDetailsStepForm";
+import { TRACKING_REGION_FLOW } from "./forms/trackingTimelineConfig";
 
 export type FtlMainTab =
   | "plan"
@@ -47,6 +53,7 @@ type WorkspaceProps = {
   shipment: FtlShipmentMeta;
   steps: FtlStepData[];
   latestDocsByType: Record<string, FtlDocumentMeta>;
+  importCandidates: FtlImportCandidate[];
   trackingToken: string | null;
   canEdit: boolean;
   updateAction: (formData: FormData) => void;
@@ -85,6 +92,21 @@ function isTrackingTab(value: string | undefined): value is FtlTrackingTab {
   return value === "uae" || value === "ksa" || value === "jordan" || value === "syria";
 }
 
+function daysSince(isoDate: string) {
+  if (!isoDate) return 0;
+  const target = new Date(isoDate);
+  if (Number.isNaN(target.getTime())) return 0;
+  const diff = Date.now() - target.getTime();
+  return Math.floor(diff / (1000 * 60 * 60 * 24));
+}
+
+function latestDateValue(values: Record<string, unknown>) {
+  const dates = Object.entries(values)
+    .filter(([key, value]) => key.endsWith("_date") && typeof value === "string" && !!value)
+    .map(([, value]) => String(value));
+  return dates.sort().at(-1) ?? "";
+}
+
 function MissingStep({ name }: { name: string }) {
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -98,6 +120,7 @@ export function FtlExportWorkspace({
   shipment,
   steps,
   latestDocsByType,
+  importCandidates,
   trackingToken,
   canEdit,
   updateAction,
@@ -141,6 +164,24 @@ export function FtlExportWorkspace({
   const agentsDone = agentsStep?.status === "DONE";
   const trackingUnlocked = loadingCompleted && invoiceDone && agentsDone;
   const trackingLink = trackingToken ? `/track/${trackingToken}` : "";
+  const trackingRegionStates = TRACKING_REGION_FLOW.map((regionEntry) => {
+    const step =
+      regionEntry.id === "uae"
+        ? uaeStep
+        : regionEntry.id === "ksa"
+          ? ksaStep
+          : regionEntry.id === "jordan"
+            ? jordanStep
+            : syriaStep;
+    const latestDate = latestDateValue((step?.values ?? {}) as Record<string, unknown>);
+    const stalled =
+      !!latestDate && step?.status !== "DONE" && daysSince(latestDate) >= 3;
+    return {
+      ...regionEntry,
+      stepStatus: step?.status ?? "PENDING",
+      stalled,
+    };
+  });
   const syriaClearanceMode =
     getString(agentsStep?.values.naseeb_clearance_mode).toUpperCase() === "ZAXON"
       ? "ZAXON"
@@ -285,6 +326,7 @@ export function FtlExportWorkspace({
                   updateAction={updateAction}
                   returnTo={returnTo("invoice", "imports")}
                   canEdit={canEdit}
+                  candidates={importCandidates}
                 />
               </>
             ) : (
@@ -338,26 +380,79 @@ export function FtlExportWorkspace({
 
       {tab === "tracking" ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-200 bg-white p-3">
-            {[
-              { id: "uae", label: "UAE" },
-              { id: "ksa", label: "KSA" },
-              { id: "jordan", label: "Jordan" },
-              { id: "syria", label: "Syria" },
-            ].map((entry) => (
-              <button
-                key={entry.id}
-                type="button"
-                onClick={() => setTrackingTab(entry.id as FtlTrackingTab)}
-                className={`rounded-lg px-3 py-2 text-sm font-medium ${
-                  trackingTab === entry.id
-                    ? "bg-zinc-900 text-white"
-                    : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                }`}
-              >
-                {entry.label}
-              </button>
-            ))}
+          <div className="rounded-2xl border border-zinc-200 bg-white p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              Route timeline
+            </div>
+            <div className="overflow-x-auto pb-1">
+              <div className="flex min-w-max items-center gap-2">
+                {trackingRegionStates.map((entry, index) => {
+                  const tone =
+                    entry.stepStatus === "DONE"
+                      ? "done"
+                      : entry.stalled
+                        ? "stalled"
+                        : trackingTab === entry.id
+                          ? "active"
+                          : entry.stepStatus === "IN_PROGRESS"
+                            ? "active"
+                            : "pending";
+                  const buttonClass =
+                    tone === "done"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                      : tone === "stalled"
+                        ? "border-red-300 bg-red-50 text-red-900"
+                        : tone === "active"
+                          ? "border-blue-300 bg-blue-50 text-blue-900"
+                          : "border-zinc-200 bg-white text-zinc-700";
+                  const dotClass =
+                    tone === "done"
+                      ? "bg-emerald-500"
+                      : tone === "stalled"
+                        ? "bg-red-500"
+                        : tone === "active"
+                          ? "bg-blue-500"
+                          : "bg-zinc-300";
+
+                  return (
+                    <div key={entry.id} className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTrackingTab(entry.id as FtlTrackingTab)}
+                        className={`w-32 rounded-lg border px-3 py-2 text-left text-xs transition ${buttonClass}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
+                          <span className="font-semibold">
+                            {entry.label} ({entry.code})
+                          </span>
+                        </div>
+                        <div className="mt-1 opacity-80">
+                          {entry.stepStatus === "DONE"
+                            ? "Completed"
+                            : entry.stalled
+                              ? "Stalled"
+                              : entry.stepStatus === "IN_PROGRESS"
+                                ? "In progress"
+                                : "Pending"}
+                        </div>
+                      </button>
+                      {index < trackingRegionStates.length - 1 ? (
+                        <div
+                          className={`h-[3px] w-8 rounded-full ${
+                            entry.stepStatus === "DONE"
+                              ? "bg-emerald-400"
+                              : entry.stalled
+                                ? "bg-red-400"
+                                : "bg-zinc-300"
+                          }`}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {trackingTab === "uae" ? (

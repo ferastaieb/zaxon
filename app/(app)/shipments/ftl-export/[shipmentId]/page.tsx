@@ -22,6 +22,7 @@ import {
   FTL_EXPORT_OPERATIONS_STEPS,
   FTL_EXPORT_TRACKING_STEPS,
 } from "@/lib/ftlExport/constants";
+import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
 import { updateFtlStepAction } from "./actions";
 
@@ -101,6 +102,9 @@ function errorMessage(error: string | null) {
   if (error === "tracking_locked") {
     return "Tracking is locked until loading is done, invoice is finalized, and customs agents are allocated.";
   }
+  if (error === "import_reference_invalid") {
+    return "Import references must be selected from existing import shipments.";
+  }
   if (error === "invalid") {
     return "Invalid request data.";
   }
@@ -160,10 +164,15 @@ export default async function FtlExportShipmentPage({
     }
   }
 
-  const [docs, docRequests, trackingToken] = await Promise.all([
+  const [docs, docRequests, trackingToken, importCandidates] = await Promise.all([
     listDocuments(id),
     listDocumentRequests(id),
     getTrackingTokenForShipment(id),
+    listFtlImportCandidates({
+      userId: user.id,
+      role: user.role,
+      currentShipmentId: id,
+    }),
   ]);
 
   const stepData = steps.map((step) => ({
@@ -235,6 +244,7 @@ export default async function FtlExportShipmentPage({
         shipment={shipment}
         steps={stepData}
         latestDocsByType={buildLatestDocMap(docs)}
+        importCandidates={importCandidates}
         trackingToken={trackingToken}
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
         updateAction={updateFtlStepAction.bind(null, shipment.id)}
