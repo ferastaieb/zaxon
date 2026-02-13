@@ -33,7 +33,10 @@ import { listShipmentLinksForShipment } from "@/lib/data/shipmentLinks";
 import { listTasks } from "@/lib/data/tasks";
 import { listActiveUsers } from "@/lib/data/users";
 import { getWorkflowTemplate } from "@/lib/data/workflows";
-import { FTL_EXPORT_TEMPLATE_NAME } from "@/lib/ftlExport/constants";
+import {
+  FTL_EXPORT_STEP_NAMES,
+  FTL_EXPORT_TEMPLATE_NAME,
+} from "@/lib/ftlExport/constants";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { parseWorkflowGlobalValues, parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
@@ -67,9 +70,20 @@ export default async function ShipmentDetailsPage({
   const template = shipment.workflow_template_id
     ? await getWorkflowTemplate(shipment.workflow_template_id)
     : null;
+  const steps = await listShipmentSteps(id);
+  const stepNameSet = new Set(steps.map((step) => step.name));
+  const hasFtlStepSignature = [
+    FTL_EXPORT_STEP_NAMES.exportPlanOverview,
+    FTL_EXPORT_STEP_NAMES.trucksDetails,
+    FTL_EXPORT_STEP_NAMES.loadingDetails,
+    FTL_EXPORT_STEP_NAMES.importShipmentSelection,
+    FTL_EXPORT_STEP_NAMES.exportInvoice,
+    FTL_EXPORT_STEP_NAMES.customsAgentsAllocation,
+  ].every((name) => stepNameSet.has(name));
   if (
-    template?.name &&
-    template.name.toLowerCase() === FTL_EXPORT_TEMPLATE_NAME.toLowerCase()
+    (template?.name &&
+      template.name.toLowerCase() === FTL_EXPORT_TEMPLATE_NAME.toLowerCase()) ||
+    hasFtlStepSignature
   ) {
     redirect(`/shipments/ftl-export/${id}`);
   }
@@ -136,7 +150,6 @@ export default async function ShipmentDetailsPage({
     shipment.workflow_global_values_json,
   );
 
-  const steps = await listShipmentSteps(id);
   const internalSteps = steps.filter((s) => !s.is_external);
   const trackingSteps = steps.filter((s) => s.is_external);
   const jobIds = await listShipmentJobIds(id);

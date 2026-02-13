@@ -102,12 +102,13 @@ export function ExportInvoiceStepForm({
             <div className="flex flex-wrap gap-2">
               {!invoiceFinalized ? (
                 <button
-                  type="button"
-                  onClick={(event) => {
+                  type="submit"
+                  name="finalizeInvoice"
+                  value="1"
+                  onClick={() => {
                     setInvoiceFinalized(true);
                     setStampPulse(true);
                     setTimeout(() => setStampPulse(false), 400);
-                    event.currentTarget.form?.requestSubmit();
                   }}
                   disabled={disableForm}
                   className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-red-700 hover:bg-red-100 disabled:bg-zinc-100 disabled:text-zinc-400"
@@ -138,7 +139,6 @@ export function ExportInvoiceStepForm({
                 name={fieldName(["invoice_number"])}
                 value={invoiceNumber}
                 onChange={(event) => setInvoiceNumber(event.target.value)}
-                required={canFinalizeInvoice}
                 disabled={disableForm}
                 className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100 ${lockInputClass}`}
               />
@@ -152,7 +152,6 @@ export function ExportInvoiceStepForm({
                 name={fieldName(["invoice_date"])}
                 value={invoiceDate}
                 onChange={(event) => setInvoiceDate(event.target.value)}
-                required={canFinalizeInvoice}
                 disabled={disableForm}
                 className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100 ${lockInputClass}`}
               />
@@ -166,7 +165,6 @@ export function ExportInvoiceStepForm({
             <input
               type="file"
               name={fieldName(["invoice_upload"])}
-              required={canFinalizeInvoice && !invoiceDoc}
               disabled={disableForm}
               className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-xs disabled:bg-zinc-100 ${lockInputClass}`}
             />

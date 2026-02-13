@@ -248,34 +248,46 @@ export function ImportShipmentSelectionStepForm({
         `}</style>
 
         <div className="grid gap-3 lg:grid-cols-[1fr_320px_auto]">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search imports by shipment number, client, or BOE"
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-          />
-          <select
-            value={candidatePicker}
-            onChange={(event) => setCandidatePicker(event.target.value)}
-            disabled={disableEdit}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-          >
-            <option value="">Select import shipment to link</option>
-            {filteredCandidates.map((candidate) => (
-              <option key={candidate.shipmentId} value={String(candidate.shipmentId)}>
-                {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
-                {candidate.importBoeNumber || "No BOE"}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => addCandidateRow(candidatePicker)}
-            disabled={disableEdit || !candidatePicker}
-            className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
-          >
-            Link shipment
-          </button>
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-zinc-600">
+              Search existing import shipment
+            </div>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Shipment no / client no / BOE no"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-zinc-600">
+              Import shipment to link
+            </div>
+            <select
+              value={candidatePicker}
+              onChange={(event) => setCandidatePicker(event.target.value)}
+              disabled={disableEdit}
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+            >
+              <option value="">Select import shipment</option>
+              {filteredCandidates.map((candidate) => (
+                <option key={candidate.shipmentId} value={String(candidate.shipmentId)}>
+                  {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
+                  {candidate.importBoeNumber || "No BOE"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => addCandidateRow(candidatePicker)}
+              disabled={disableEdit || !candidatePicker}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+            >
+              Link shipment
+            </button>
+          </div>
         </div>
 
         <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
@@ -421,110 +433,172 @@ export function ImportShipmentSelectionStepForm({
                 value={String(alreadyAllocatedQuantity)}
               />
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                <input
-                  name={fieldName(["import_shipments", String(index), "import_shipment_reference"])}
-                  value={referenceValue}
-                  onChange={(event) =>
-                    updateRow(index, { import_shipment_reference: event.target.value })
-                  }
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  name={fieldName(["import_shipments", String(index), "client_number"])}
-                  value={clientValue}
-                  onChange={(event) => updateRow(index, { client_number: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  name={fieldName(["import_shipments", String(index), "import_boe_number"])}
-                  value={boeValue}
-                  onChange={(event) => updateRow(index, { import_boe_number: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
+              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                Linked Import Reference (Read-Only)
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">
+                    Import shipment number
+                  </div>
+                  <input
+                    name={fieldName([
+                      "import_shipments",
+                      String(index),
+                      "import_shipment_reference",
+                    ])}
+                    value={referenceValue}
+                    onChange={(event) =>
+                      updateRow(index, { import_shipment_reference: event.target.value })
+                    }
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Client number</div>
+                  <input
+                    name={fieldName(["import_shipments", String(index), "client_number"])}
+                    value={clientValue}
+                    onChange={(event) => updateRow(index, { client_number: event.target.value })}
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Import BOE number</div>
+                  <input
+                    name={fieldName(["import_shipments", String(index), "import_boe_number"])}
+                    value={boeValue}
+                    onChange={(event) =>
+                      updateRow(index, { import_boe_number: event.target.value })
+                    }
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
               </div>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  name={fieldName(["import_shipments", String(index), "imported_weight"])}
-                  value={String(importedWeight)}
-                  onChange={(event) => updateRow(index, { imported_weight: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  name={fieldName(["import_shipments", String(index), "imported_quantity"])}
-                  value={String(importedQuantity)}
-                  onChange={(event) => updateRow(index, { imported_quantity: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={alreadyAllocatedWeight}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  value={alreadyAllocatedQuantity}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
+              <div className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                Current Stock Snapshot (Read-Only)
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Imported weight</div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    name={fieldName(["import_shipments", String(index), "imported_weight"])}
+                    value={String(importedWeight)}
+                    onChange={(event) => updateRow(index, { imported_weight: event.target.value })}
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Imported quantity</div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    name={fieldName(["import_shipments", String(index), "imported_quantity"])}
+                    value={String(importedQuantity)}
+                    onChange={(event) =>
+                      updateRow(index, { imported_quantity: event.target.value })
+                    }
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">
+                    Previously exported weight
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={alreadyAllocatedWeight}
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">
+                    Previously exported quantity
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={alreadyAllocatedQuantity}
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
               </div>
 
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <input
-                  name={fieldName(["import_shipments", String(index), "package_type"])}
-                  value={packageTypeValue}
-                  onChange={(event) => updateRow(index, { package_type: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                />
-                <input
-                  name={fieldName(["import_shipments", String(index), "cargo_description"])}
-                  value={cargoDescriptionValue}
-                  onChange={(event) => updateRow(index, { cargo_description: event.target.value })}
-                  readOnly
-                  className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm sm:col-span-2"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  name={fieldName(["import_shipments", String(index), "allocated_weight"])}
-                  value={row.allocated_weight}
-                  onChange={(event) => updateRow(index, { allocated_weight: event.target.value })}
-                  placeholder="Allocate weight"
-                  disabled={disableEdit}
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  name={fieldName(["import_shipments", String(index), "allocated_quantity"])}
-                  value={row.allocated_quantity}
-                  onChange={(event) =>
-                    updateRow(index, { allocated_quantity: event.target.value })
-                  }
-                  placeholder="Allocate quantity"
-                  disabled={disableEdit}
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                />
+              <div className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                Cargo Info And Current Allocation
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Cargo package type</div>
+                  <input
+                    name={fieldName(["import_shipments", String(index), "package_type"])}
+                    value={packageTypeValue}
+                    onChange={(event) => updateRow(index, { package_type: event.target.value })}
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">Cargo description</div>
+                  <input
+                    name={fieldName(["import_shipments", String(index), "cargo_description"])}
+                    value={cargoDescriptionValue}
+                    onChange={(event) =>
+                      updateRow(index, { cargo_description: event.target.value })
+                    }
+                    readOnly
+                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">
+                    Allocate weight for this export
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    name={fieldName(["import_shipments", String(index), "allocated_weight"])}
+                    value={row.allocated_weight}
+                    onChange={(event) => updateRow(index, { allocated_weight: event.target.value })}
+                    placeholder="Enter weight"
+                    disabled={disableEdit}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-xs font-medium text-zinc-600">
+                    Allocate quantity for this export
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    name={fieldName(["import_shipments", String(index), "allocated_quantity"])}
+                    value={row.allocated_quantity}
+                    onChange={(event) =>
+                      updateRow(index, { allocated_quantity: event.target.value })
+                    }
+                    placeholder="Enter quantity"
+                    disabled={disableEdit}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                  />
+                </label>
               </div>
 
               <div className="mt-3 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
@@ -555,14 +629,19 @@ export function ImportShipmentSelectionStepForm({
                 ) : null}
               </div>
 
-              <textarea
-                name={fieldName(["import_shipments", String(index), "remarks"])}
-                value={row.remarks}
-                onChange={(event) => updateRow(index, { remarks: event.target.value })}
-                placeholder="Optional remarks"
-                disabled={disableEdit}
-                className="mt-3 min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-              />
+              <label className="mt-3 block">
+                <div className="mb-1 text-xs font-medium text-zinc-600">
+                  Optional remarks for this import allocation
+                </div>
+                <textarea
+                  name={fieldName(["import_shipments", String(index), "remarks"])}
+                  value={row.remarks}
+                  onChange={(event) => updateRow(index, { remarks: event.target.value })}
+                  placeholder="Add notes for this linked import shipment"
+                  disabled={disableEdit}
+                  className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                />
+              </label>
             </div>
           );
         })}

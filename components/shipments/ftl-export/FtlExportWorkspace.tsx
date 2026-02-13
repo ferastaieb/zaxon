@@ -159,7 +159,7 @@ export function FtlExportWorkspace({
   const importWarnings = computeImportWarnings(importRows);
   const stockSummary = buildImportStockSummary(importRows);
   const importsAvailable = allReferencedImportsAvailable(importRows);
-  const loadingCompleted = loadingProgress.expected > 0 && loadingProgress.loaded >= loadingProgress.expected;
+  const loadingCompleted = loadingStep?.status === "DONE";
   const canFinalizeInvoice = loadingCompleted && importsAvailable;
   const invoiceFinalized = isTruthy(invoiceStep?.values.invoice_finalized);
   const invoiceDone = invoiceStep?.status === "DONE";

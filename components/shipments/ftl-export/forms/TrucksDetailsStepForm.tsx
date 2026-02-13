@@ -446,7 +446,6 @@ export function TrucksDetailsStepForm({
                         value={truck.booking_date}
                         onChange={(event) => updateTruck(index, { booking_date: event.target.value })}
                         name={fieldName(["trucks", String(index), "booking_date"])}
-                        required={isBooked}
                         disabled={disableEdit || isCancelled}
                         className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />

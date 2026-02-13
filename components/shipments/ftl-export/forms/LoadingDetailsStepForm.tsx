@@ -276,9 +276,6 @@ export function LoadingDetailsStepForm({
             "0",
             "file",
           ]);
-          const requiresZaxonPhoto =
-            row.truck_loaded &&
-            (row.loading_origin === "ZAXON_WAREHOUSE" || row.loading_origin === "MIXED");
 
           return (
             <div key={`loading-${index}`} className="rounded-xl border border-zinc-200 bg-white p-4">
@@ -309,7 +306,6 @@ export function LoadingDetailsStepForm({
                     name={fieldName(["trucks", String(index), "loading_origin"])}
                     value={row.loading_origin}
                     onChange={(event) => updateRow(index, { loading_origin: normalizeOrigin(event.target.value) })}
-                    required={row.truck_loaded}
                     disabled={disableEdit}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                   >
@@ -338,7 +334,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "external_loading_date"])}
                         value={row.external_loading_date}
                         onChange={(event) => updateRow(index, { external_loading_date: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -362,7 +357,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "zaxon_actual_loading_date"])}
                         value={row.zaxon_actual_loading_date}
                         onChange={(event) => updateRow(index, { zaxon_actual_loading_date: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -386,7 +380,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "mixed_supplier_loading_date"])}
                         value={row.mixed_supplier_loading_date}
                         onChange={(event) => updateRow(index, { mixed_supplier_loading_date: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -395,7 +388,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "mixed_zaxon_loading_date"])}
                         value={row.mixed_zaxon_loading_date}
                         onChange={(event) => updateRow(index, { mixed_zaxon_loading_date: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -482,7 +474,6 @@ export function LoadingDetailsStepForm({
                                             mixed_supplier_loading_date: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -518,7 +509,6 @@ export function LoadingDetailsStepForm({
                                             mixed_supplier_cargo_weight: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -538,7 +528,6 @@ export function LoadingDetailsStepForm({
                                             mixed_supplier_cargo_quantity: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -554,7 +543,6 @@ export function LoadingDetailsStepForm({
                                             mixed_supplier_cargo_unit_type: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
                                       >
@@ -580,7 +568,6 @@ export function LoadingDetailsStepForm({
                                             })
                                           }
                                           placeholder="Supplier unit type (other)"
-                                          required={row.truck_loaded}
                                           disabled={disableEdit}
                                           className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
                                         />
@@ -601,7 +588,6 @@ export function LoadingDetailsStepForm({
                                             mixed_zaxon_loading_date: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -637,7 +623,6 @@ export function LoadingDetailsStepForm({
                                             mixed_zaxon_cargo_weight: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -657,7 +642,6 @@ export function LoadingDetailsStepForm({
                                             mixed_zaxon_cargo_quantity: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                                       />
@@ -673,7 +657,6 @@ export function LoadingDetailsStepForm({
                                             mixed_zaxon_cargo_unit_type: event.target.value,
                                           })
                                         }
-                                        required={row.truck_loaded}
                                         disabled={disableEdit}
                                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
                                       >
@@ -699,7 +682,6 @@ export function LoadingDetailsStepForm({
                                             })
                                           }
                                           placeholder="Zaxon unit type (other)"
-                                          required={row.truck_loaded}
                                           disabled={disableEdit}
                                           className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
                                         />
@@ -738,7 +720,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "cargo_weight"])}
                         value={row.cargo_weight}
                         onChange={(event) => updateRow(index, { cargo_weight: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -746,7 +727,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "cargo_unit_type"])}
                         value={row.cargo_unit_type}
                         onChange={(event) => updateRow(index, { cargo_unit_type: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       >
@@ -765,7 +745,6 @@ export function LoadingDetailsStepForm({
                         name={fieldName(["trucks", String(index), "cargo_quantity"])}
                         value={row.cargo_quantity}
                         onChange={(event) => updateRow(index, { cargo_quantity: event.target.value })}
-                        required={row.truck_loaded}
                         disabled={disableEdit}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                       />
@@ -777,7 +756,6 @@ export function LoadingDetailsStepForm({
                             updateRow(index, { cargo_unit_type_other: event.target.value })
                           }
                           placeholder="Unit type (other)"
-                          required={row.truck_loaded}
                           disabled={disableEdit}
                           className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-3"
                         />
@@ -789,7 +767,6 @@ export function LoadingDetailsStepForm({
                     <input
                       type="file"
                       name={fieldName(["trucks", String(index), "loading_photo"])}
-                      required={requiresZaxonPhoto && !loadingPhotoDoc}
                       disabled={disableEdit}
                       className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
                     />
@@ -970,3 +947,4 @@ export function LoadingDetailsStepForm({
     </form>
   );
 }
+

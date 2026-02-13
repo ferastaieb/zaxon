@@ -14,6 +14,7 @@ import {
   parseTruckBookingRows,
   toRecord,
   type ImportSelectionWarnings,
+  type LoadingTruckRow,
 } from "./helpers";
 
 type StepSnapshot = {
@@ -46,6 +47,70 @@ function statusByDoneAndTouched(done: boolean, touched: boolean): StepStatus {
   return "PENDING";
 }
 
+function hasPositive(value: number) {
+  return Number.isFinite(value) && value > 0;
+}
+
+function hasUnit(unitType: string, unitOther: string) {
+  if (!unitType) return false;
+  if (unitType.trim().toLowerCase() !== "other") return true;
+  return !!unitOther.trim();
+}
+
+function isLoadingRowComplete(
+  row: LoadingTruckRow,
+  rowIndex: number,
+  step: StepSnapshot | undefined,
+  docTypes: Set<string>,
+) {
+  if (!row.truck_loaded) return false;
+  const origin = row.loading_origin;
+  if (!origin) return false;
+
+  if (origin === "EXTERNAL_SUPPLIER" && !row.external_loading_date) {
+    return false;
+  }
+  if (origin === "ZAXON_WAREHOUSE" && !row.zaxon_actual_loading_date) {
+    return false;
+  }
+  if (origin === "MIXED") {
+    if (!row.mixed_supplier_loading_date || !row.mixed_zaxon_loading_date) {
+      return false;
+    }
+    if (
+      !hasPositive(row.mixed_supplier_cargo_weight) ||
+      !hasPositive(row.mixed_supplier_cargo_quantity) ||
+      !hasUnit(row.mixed_supplier_cargo_unit_type, row.mixed_supplier_cargo_unit_type_other)
+    ) {
+      return false;
+    }
+    if (
+      !hasPositive(row.mixed_zaxon_cargo_weight) ||
+      !hasPositive(row.mixed_zaxon_cargo_quantity) ||
+      !hasUnit(row.mixed_zaxon_cargo_unit_type, row.mixed_zaxon_cargo_unit_type_other)
+    ) {
+      return false;
+    }
+    const totalWeight = row.mixed_supplier_cargo_weight + row.mixed_zaxon_cargo_weight;
+    const totalQuantity =
+      row.mixed_supplier_cargo_quantity + row.mixed_zaxon_cargo_quantity;
+    if (!hasPositive(totalWeight) || !hasPositive(totalQuantity)) {
+      return false;
+    }
+  } else if (
+    !hasPositive(row.cargo_weight) ||
+    !hasPositive(row.cargo_quantity) ||
+    !hasUnit(row.cargo_unit_type, row.cargo_unit_type_other)
+  ) {
+    return false;
+  }
+
+  if (origin === "ZAXON_WAREHOUSE" || origin === "MIXED") {
+    return hasFile(step, ["trucks", String(rowIndex), "loading_photo"], docTypes);
+  }
+  return true;
+}
+
 export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusResult {
   const statuses: Record<string, StepStatus> = {};
 
@@ -76,12 +141,16 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
     truckRows,
     loadingRows,
   });
+  const loadedSelections = loadingRows.filter((row) => row.truck_loaded).length;
+  const completeLoaded = loadingRows.filter((row, index) =>
+    isLoadingRowComplete(row, index, loadingStep, input.docTypes),
+  ).length;
   statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] =
     loadingProgress.expected <= 0
       ? "PENDING"
-      : loadingProgress.loaded <= 0
+      : loadedSelections <= 0
         ? "PENDING"
-        : loadingProgress.loaded >= loadingProgress.expected
+        : completeLoaded >= loadingProgress.expected
           ? "DONE"
           : "IN_PROGRESS";
 
@@ -208,4 +277,3 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
     importWarnings,
   };
 }
-
