@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -42,6 +43,7 @@ type Props = {
   disabled?: boolean;
   saveLabel?: string;
   canEdit: boolean;
+  isAdmin?: boolean;
   disabledMessage?: string;
 };
 
@@ -55,10 +57,17 @@ export function SectionFrame({
   disabled = false,
   saveLabel = "Save",
   canEdit,
+  isAdmin = false,
   disabledMessage,
 }: Props) {
+  const [adminOverride, setAdminOverride] = useState(false);
+  const done = status === "DONE";
+  const doneReadOnly = done && (!isAdmin || !adminOverride);
+  const effectiveDisabled = disabled || doneReadOnly;
+  const doneClass = done ? "border-emerald-200 bg-[#E8F5E9]" : "border-zinc-200 bg-white";
+
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+    <div className={`rounded-2xl border p-5 shadow-sm ${doneClass}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Step</div>
@@ -68,17 +77,34 @@ export function SectionFrame({
         <Badge tone={statusTone(status)}>{stepStatusLabel(status)}</Badge>
       </div>
       {before ? <div className="mt-4">{before}</div> : null}
+      {doneReadOnly ? (
+        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+          This step is marked done and is read-only.
+        </div>
+      ) : null}
       {disabledMessage ? (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           {disabledMessage}
         </div>
       ) : null}
-      <div className="mt-4 space-y-4">{children}</div>
+      {done && isAdmin ? (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setAdminOverride((prev) => !prev)}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            {adminOverride ? "Lock Step" : "Edit (Admin)"}
+          </button>
+        </div>
+      ) : null}
+      <fieldset disabled={effectiveDisabled} className="mt-4 space-y-4 disabled:opacity-100">
+        {children}
+      </fieldset>
       <div className="mt-4 flex items-center justify-between gap-3">
         {footer ?? <span className="text-xs text-zinc-500" />}
-        <SaveButton disabled={!canEdit || disabled} label={saveLabel} />
+        <SaveButton disabled={!canEdit || effectiveDisabled} label={saveLabel} />
       </div>
     </div>
   );
 }
-

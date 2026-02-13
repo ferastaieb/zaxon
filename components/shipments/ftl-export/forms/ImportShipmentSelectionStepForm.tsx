@@ -36,6 +36,7 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
   candidates: FtlImportCandidate[];
 };
 
@@ -155,6 +156,7 @@ export function ImportShipmentSelectionStepForm({
   updateAction,
   returnTo,
   canEdit,
+  isAdmin,
   candidates,
 }: Props) {
   const initialRows = toGroupRows(step.values, "import_shipments").map(mapRow);
@@ -219,6 +221,7 @@ export function ImportShipmentSelectionStepForm({
         description="Select existing import shipments (FCL/import workflows), then allocate export quantity and weight."
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         saveLabel="Save import references"
       >
         <style jsx>{`

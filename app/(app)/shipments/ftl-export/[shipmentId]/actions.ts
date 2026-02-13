@@ -234,7 +234,11 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
       : parseStepFieldValues(invoiceStep.field_values_json)
     : {};
   const invoiceFinalized = isTruthy((invoiceValues as Record<string, unknown>).invoice_finalized);
-  if (step.name === FTL_EXPORT_STEP_NAMES.trucksDetails && invoiceFinalized) {
+  if (
+    step.name === FTL_EXPORT_STEP_NAMES.trucksDetails &&
+    invoiceFinalized &&
+    user.role !== "ADMIN"
+  ) {
     redirect(appendParam(returnBase, "error", "truck_locked"));
   }
   const trackingSteps = new Set<string>(FTL_EXPORT_TRACKING_STEPS);

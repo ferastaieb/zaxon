@@ -56,6 +56,7 @@ type WorkspaceProps = {
   importCandidates: FtlImportCandidate[];
   trackingToken: string | null;
   canEdit: boolean;
+  isAdmin: boolean;
   updateAction: (formData: FormData) => void;
   initialTab?: FtlMainTab;
   initialInvoiceTab?: FtlInvoiceTab;
@@ -123,6 +124,7 @@ export function FtlExportWorkspace({
   importCandidates,
   trackingToken,
   canEdit,
+  isAdmin,
   updateAction,
   initialTab,
   initialInvoiceTab,
@@ -195,6 +197,19 @@ export function FtlExportWorkspace({
     return `${baseUrl}?${params.toString()}`;
   };
 
+  const mainTabDone: Record<FtlMainTab, boolean> = {
+    plan: planStep?.status === "DONE",
+    trucks: trucksStep?.status === "DONE",
+    loading: loadingStep?.status === "DONE",
+    invoice: invoiceStep?.status === "DONE",
+    agents: agentsStep?.status === "DONE",
+    tracking:
+      uaeStep?.status === "DONE" &&
+      ksaStep?.status === "DONE" &&
+      jordanStep?.status === "DONE" &&
+      syriaStep?.status === "DONE",
+  };
+
   return (
     <div className="space-y-6">
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
@@ -234,8 +249,12 @@ export function FtlExportWorkspace({
             onClick={() => setTab(entry.id as FtlMainTab)}
             className={`rounded-lg px-3 py-2 text-sm font-medium ${
               tab === entry.id
-                ? "bg-zinc-900 text-white"
-                : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                ? mainTabDone[entry.id as FtlMainTab]
+                  ? "bg-emerald-200 text-emerald-900"
+                  : "bg-zinc-900 text-white"
+                : mainTabDone[entry.id as FtlMainTab]
+                  ? "border border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200"
+                  : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
             }`}
           >
             {entry.label}
@@ -250,6 +269,7 @@ export function FtlExportWorkspace({
             updateAction={updateAction}
             returnTo={returnTo("plan")}
             canEdit={canEdit}
+            isAdmin={isAdmin}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.exportPlanOverview} />
@@ -263,6 +283,7 @@ export function FtlExportWorkspace({
             updateAction={updateAction}
             returnTo={returnTo("trucks")}
             canEdit={canEdit}
+            isAdmin={isAdmin}
             invoiceFinalized={invoiceFinalized}
           />
         ) : (
@@ -277,6 +298,7 @@ export function FtlExportWorkspace({
             updateAction={updateAction}
             returnTo={returnTo("loading")}
             canEdit={canEdit}
+            isAdmin={isAdmin}
             truckRows={truckRows}
             latestDocsByType={latestDocsByType}
           />
@@ -326,6 +348,7 @@ export function FtlExportWorkspace({
                   updateAction={updateAction}
                   returnTo={returnTo("invoice", "imports")}
                   canEdit={canEdit}
+                  isAdmin={isAdmin}
                   candidates={importCandidates}
                 />
               </>
@@ -341,6 +364,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("invoice", "invoice")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 canFinalizeInvoice={canFinalizeInvoice}
                 latestDocsByType={latestDocsByType}
               />
@@ -356,6 +380,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("invoice", "stock")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 summaryRows={stockSummary}
               />
             ) : (
@@ -372,6 +397,7 @@ export function FtlExportWorkspace({
             updateAction={updateAction}
             returnTo={returnTo("agents")}
             canEdit={canEdit}
+            isAdmin={isAdmin}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.customsAgentsAllocation} />
@@ -462,6 +488,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "uae")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 region="uae"
                 locked={!trackingUnlocked}
                 lockedMessage={
@@ -483,6 +510,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "ksa")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 region="ksa"
                 locked={!trackingUnlocked}
                 lockedMessage={
@@ -504,6 +532,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "jordan")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 region="jordan"
                 locked={!trackingUnlocked}
                 lockedMessage={
@@ -525,6 +554,7 @@ export function FtlExportWorkspace({
                 updateAction={updateAction}
                 returnTo={returnTo("tracking", "syria")}
                 canEdit={canEdit}
+                isAdmin={isAdmin}
                 region="syria"
                 locked={!trackingUnlocked}
                 lockedMessage={

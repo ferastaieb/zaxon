@@ -247,6 +247,7 @@ export default async function FtlExportShipmentPage({
         importCandidates={importCandidates}
         trackingToken={trackingToken}
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        isAdmin={user.role === "ADMIN"}
         updateAction={updateFtlStepAction.bind(null, shipment.id)}
         initialTab={initialTab}
         initialInvoiceTab={initialInvoiceTab}

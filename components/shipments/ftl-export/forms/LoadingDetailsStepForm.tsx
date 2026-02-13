@@ -45,6 +45,7 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
   truckRows: TruckBookingRow[];
   latestDocsByType: Record<string, FtlDocumentMeta>;
 };
@@ -148,6 +149,32 @@ function summaryForMixed(row: LoadingTruckCard) {
   return { totalWeight, totalQuantity, cargoUnitType, cargoUnitTypeOther };
 }
 
+function mixedStopComplete(row: LoadingTruckCard, stop: "supplier" | "zaxon") {
+  if (stop === "supplier") {
+    const baseFilled =
+      !!row.mixed_supplier_loading_date &&
+      toNumber(row.mixed_supplier_cargo_weight) > 0 &&
+      toNumber(row.mixed_supplier_cargo_quantity) > 0 &&
+      !!row.mixed_supplier_cargo_unit_type;
+    if (!baseFilled) return false;
+    if (row.mixed_supplier_cargo_unit_type === "Other") {
+      return !!row.mixed_supplier_cargo_unit_type_other.trim();
+    }
+    return true;
+  }
+
+  const baseFilled =
+    !!row.mixed_zaxon_loading_date &&
+    toNumber(row.mixed_zaxon_cargo_weight) > 0 &&
+    toNumber(row.mixed_zaxon_cargo_quantity) > 0 &&
+    !!row.mixed_zaxon_cargo_unit_type;
+  if (!baseFilled) return false;
+  if (row.mixed_zaxon_cargo_unit_type === "Other") {
+    return !!row.mixed_zaxon_cargo_unit_type_other.trim();
+  }
+  return true;
+}
+
 function toDoc(
   latestDocsByType: Record<string, FtlDocumentMeta>,
   stepId: number,
@@ -162,6 +189,7 @@ export function LoadingDetailsStepForm({
   updateAction,
   returnTo,
   canEdit,
+  isAdmin,
   truckRows,
   latestDocsByType,
 }: Props) {
@@ -175,6 +203,9 @@ export function LoadingDetailsStepForm({
       const source = toRecord(existingRows[index]);
       return Object.keys(source).length ? mapRow(source, index, fallbackReference) : emptyRow(index, fallbackReference);
     }),
+  );
+  const [openMixedStops, setOpenMixedStops] = useState<Record<number, "supplier" | "zaxon">>(
+    {},
   );
   const [notes, setNotes] = useState(step.notes ?? "");
   const loadedCount = rows.filter((row) => row.truck_loaded).length;
@@ -198,6 +229,7 @@ export function LoadingDetailsStepForm({
         description="Origin-first flow: pick origin and dates, then complete only required loading details."
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         saveLabel={tab === "origin" ? "Save origin & dates" : "Save loading details"}
         before={
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-sm">
@@ -394,121 +426,291 @@ export function LoadingDetailsStepForm({
                 <div className="mt-3 space-y-3">
                   {row.loading_origin === "MIXED" ? (
                     <>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          placeholder="Supplier weight"
-                          name={fieldName(["trucks", String(index), "mixed_supplier_cargo_weight"])}
-                          value={row.mixed_supplier_cargo_weight}
-                          onChange={(event) => updateRow(index, { mixed_supplier_cargo_weight: event.target.value })}
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          placeholder="Zaxon weight"
-                          name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_weight"])}
-                          value={row.mixed_zaxon_cargo_weight}
-                          onChange={(event) => updateRow(index, { mixed_zaxon_cargo_weight: event.target.value })}
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          placeholder="Supplier quantity"
-                          name={fieldName(["trucks", String(index), "mixed_supplier_cargo_quantity"])}
-                          value={row.mixed_supplier_cargo_quantity}
-                          onChange={(event) => updateRow(index, { mixed_supplier_cargo_quantity: event.target.value })}
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          placeholder="Zaxon quantity"
-                          name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_quantity"])}
-                          value={row.mixed_zaxon_cargo_quantity}
-                          onChange={(event) => updateRow(index, { mixed_zaxon_cargo_quantity: event.target.value })}
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
-                        <select
-                          name={fieldName(["trucks", String(index), "mixed_supplier_cargo_unit_type"])}
-                          value={row.mixed_supplier_cargo_unit_type}
-                          onChange={(event) =>
-                            updateRow(index, { mixed_supplier_cargo_unit_type: event.target.value })
-                          }
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        >
-                          <option value="">Supplier unit type</option>
-                          {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
-                            <option key={`sup-unit-${index}-${unit}`} value={unit}>
-                              {unit}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_unit_type"])}
-                          value={row.mixed_zaxon_cargo_unit_type}
-                          onChange={(event) =>
-                            updateRow(index, { mixed_zaxon_cargo_unit_type: event.target.value })
-                          }
-                          required={row.truck_loaded}
-                          disabled={disableEdit}
-                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        >
-                          <option value="">Zaxon unit type</option>
-                          {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
-                            <option key={`zax-unit-${index}-${unit}`} value={unit}>
-                              {unit}
-                            </option>
-                          ))}
-                        </select>
-                        {row.mixed_supplier_cargo_unit_type === "Other" ? (
-                          <input
-                            name={fieldName([
-                              "trucks",
-                              String(index),
-                              "mixed_supplier_cargo_unit_type_other",
-                            ])}
-                            value={row.mixed_supplier_cargo_unit_type_other}
-                            onChange={(event) =>
-                              updateRow(index, {
-                                mixed_supplier_cargo_unit_type_other: event.target.value,
-                              })
-                            }
-                            placeholder="Supplier unit type (other)"
-                            required={row.truck_loaded}
-                            disabled={disableEdit}
-                            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                          />
-                        ) : null}
-                        {row.mixed_zaxon_cargo_unit_type === "Other" ? (
-                          <input
-                            name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_unit_type_other"])}
-                            value={row.mixed_zaxon_cargo_unit_type_other}
-                            onChange={(event) =>
-                              updateRow(index, { mixed_zaxon_cargo_unit_type_other: event.target.value })
-                            }
-                            placeholder="Zaxon unit type (other)"
-                            required={row.truck_loaded}
-                            disabled={disableEdit}
-                            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                          />
-                        ) : null}
+                      <div className="space-y-2">
+                        {(
+                          [
+                            {
+                              stop: "zaxon" as const,
+                              title: "Stop 1: Zaxon Warehouse",
+                            },
+                            {
+                              stop: "supplier" as const,
+                              title: "Stop 2: External Supplier",
+                            },
+                          ] satisfies Array<{ stop: "supplier" | "zaxon"; title: string }>
+                        ).map((stopEntry) => {
+                          const expanded =
+                            (openMixedStops[index] ?? "zaxon") === stopEntry.stop;
+                          const complete = mixedStopComplete(row, stopEntry.stop);
+                          return (
+                            <div key={`${index}-${stopEntry.stop}`} className="rounded-lg border border-zinc-200 bg-white">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenMixedStops((prev) => ({
+                                    ...prev,
+                                    [index]: stopEntry.stop,
+                                  }))
+                                }
+                                className="flex w-full items-center justify-between px-3 py-2 text-left"
+                              >
+                                <span className="text-sm font-medium text-zinc-900">{stopEntry.title}</span>
+                                <span
+                                  className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                                    complete
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-zinc-100 text-zinc-600"
+                                  }`}
+                                >
+                                  {complete ? "Complete" : "Pending"}
+                                </span>
+                              </button>
+                              {expanded ? (
+                                <div className="grid gap-3 border-t border-zinc-200 p-3 sm:grid-cols-2">
+                                  {stopEntry.stop === "supplier" ? (
+                                    <>
+                                      <input
+                                        type="date"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_supplier_loading_date",
+                                        ])}
+                                        value={row.mixed_supplier_loading_date}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_supplier_loading_date: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_supplier_remarks",
+                                        ])}
+                                        value={row.mixed_supplier_remarks}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_supplier_remarks: event.target.value,
+                                          })
+                                        }
+                                        placeholder="Supplier remarks (optional)"
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min={0}
+                                        placeholder="Supplier weight"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_supplier_cargo_weight",
+                                        ])}
+                                        value={row.mixed_supplier_cargo_weight}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_supplier_cargo_weight: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min={0}
+                                        placeholder="Supplier quantity"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_supplier_cargo_quantity",
+                                        ])}
+                                        value={row.mixed_supplier_cargo_quantity}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_supplier_cargo_quantity: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <select
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_supplier_cargo_unit_type",
+                                        ])}
+                                        value={row.mixed_supplier_cargo_unit_type}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_supplier_cargo_unit_type: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
+                                      >
+                                        <option value="">Supplier unit type</option>
+                                        {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
+                                          <option key={`sup-unit-${index}-${unit}`} value={unit}>
+                                            {unit}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {row.mixed_supplier_cargo_unit_type === "Other" ? (
+                                        <input
+                                          name={fieldName([
+                                            "trucks",
+                                            String(index),
+                                            "mixed_supplier_cargo_unit_type_other",
+                                          ])}
+                                          value={row.mixed_supplier_cargo_unit_type_other}
+                                          onChange={(event) =>
+                                            updateRow(index, {
+                                              mixed_supplier_cargo_unit_type_other:
+                                                event.target.value,
+                                            })
+                                          }
+                                          placeholder="Supplier unit type (other)"
+                                          required={row.truck_loaded}
+                                          disabled={disableEdit}
+                                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
+                                        />
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <input
+                                        type="date"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_zaxon_loading_date",
+                                        ])}
+                                        value={row.mixed_zaxon_loading_date}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_zaxon_loading_date: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_zaxon_remarks",
+                                        ])}
+                                        value={row.mixed_zaxon_remarks}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_zaxon_remarks: event.target.value,
+                                          })
+                                        }
+                                        placeholder="Zaxon remarks (optional)"
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min={0}
+                                        placeholder="Zaxon weight"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_zaxon_cargo_weight",
+                                        ])}
+                                        value={row.mixed_zaxon_cargo_weight}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_zaxon_cargo_weight: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min={0}
+                                        placeholder="Zaxon quantity"
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_zaxon_cargo_quantity",
+                                        ])}
+                                        value={row.mixed_zaxon_cargo_quantity}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_zaxon_cargo_quantity: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                                      />
+                                      <select
+                                        name={fieldName([
+                                          "trucks",
+                                          String(index),
+                                          "mixed_zaxon_cargo_unit_type",
+                                        ])}
+                                        value={row.mixed_zaxon_cargo_unit_type}
+                                        onChange={(event) =>
+                                          updateRow(index, {
+                                            mixed_zaxon_cargo_unit_type: event.target.value,
+                                          })
+                                        }
+                                        required={row.truck_loaded}
+                                        disabled={disableEdit}
+                                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
+                                      >
+                                        <option value="">Zaxon unit type</option>
+                                        {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
+                                          <option key={`zax-unit-${index}-${unit}`} value={unit}>
+                                            {unit}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {row.mixed_zaxon_cargo_unit_type === "Other" ? (
+                                        <input
+                                          name={fieldName([
+                                            "trucks",
+                                            String(index),
+                                            "mixed_zaxon_cargo_unit_type_other",
+                                          ])}
+                                          value={row.mixed_zaxon_cargo_unit_type_other}
+                                          onChange={(event) =>
+                                            updateRow(index, {
+                                              mixed_zaxon_cargo_unit_type_other:
+                                                event.target.value,
+                                            })
+                                          }
+                                          placeholder="Zaxon unit type (other)"
+                                          required={row.truck_loaded}
+                                          disabled={disableEdit}
+                                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100 sm:col-span-2"
+                                        />
+                                      ) : null}
+                                    </>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
                         Consolidated total: {mixed.totalWeight} weight / {mixed.totalQuantity} quantity

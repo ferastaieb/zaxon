@@ -72,6 +72,7 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
   invoiceFinalized: boolean;
 };
 
@@ -80,6 +81,7 @@ export function TrucksDetailsStepForm({
   updateAction,
   returnTo,
   canEdit,
+  isAdmin,
   invoiceFinalized,
 }: Props) {
   const values = toRecord(step.values);
@@ -156,7 +158,7 @@ export function TrucksDetailsStepForm({
     });
   };
 
-  const disableEdit = !canEdit || invoiceFinalized;
+  const disableEdit = !canEdit || (invoiceFinalized && !isAdmin);
 
   return (
     <form action={updateAction}>
@@ -170,10 +172,11 @@ export function TrucksDetailsStepForm({
         description="Plan trucks first, then complete booking cards with statuses and driver details."
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         saveLabel="Save trucks"
-        disabled={invoiceFinalized}
+        disabled={invoiceFinalized && !isAdmin}
         disabledMessage={
-          invoiceFinalized
+          invoiceFinalized && !isAdmin
             ? "Truck booking/details are locked after invoice finalization."
             : undefined
         }
@@ -578,4 +581,3 @@ export function TrucksDetailsStepForm({
     </form>
   );
 }
-

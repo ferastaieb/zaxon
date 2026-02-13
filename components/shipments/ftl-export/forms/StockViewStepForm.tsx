@@ -21,6 +21,7 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
   summaryRows: StockSummaryRow[];
 };
 
@@ -29,6 +30,7 @@ export function StockViewStepForm({
   updateAction,
   returnTo,
   canEdit,
+  isAdmin,
   summaryRows,
 }: Props) {
   const [snapshotConfirmed, setSnapshotConfirmed] = useState(
@@ -48,6 +50,7 @@ export function StockViewStepForm({
         description="Consolidated import/export balance by linked import shipment."
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         saveLabel="Save stock snapshot"
       >
         <div className="overflow-x-auto rounded-lg border border-zinc-200">
@@ -125,4 +128,3 @@ export function StockViewStepForm({
     </form>
   );
 }
-

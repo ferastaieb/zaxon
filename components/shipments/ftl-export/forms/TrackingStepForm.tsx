@@ -19,6 +19,7 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
   latestDocsByType: Record<string, FtlDocumentMeta>;
   region: TrackingRegion;
   locked: boolean;
@@ -72,6 +73,7 @@ export function TrackingStepForm({
   updateAction,
   returnTo,
   canEdit,
+  isAdmin,
   latestDocsByType,
   region,
   locked,
@@ -164,6 +166,7 @@ export function TrackingStepForm({
         description={regionMeta.description}
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         disabled={locked}
         disabledMessage={lockedMessage}
         saveLabel="Save tracking"

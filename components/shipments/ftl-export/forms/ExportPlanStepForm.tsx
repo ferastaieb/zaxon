@@ -11,11 +11,37 @@ type Props = {
   updateAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
+  isAdmin: boolean;
 };
 
-export function ExportPlanStepForm({ step, updateAction, returnTo, canEdit }: Props) {
+export function ExportPlanStepForm({
+  step,
+  updateAction,
+  returnTo,
+  canEdit,
+  isAdmin,
+}: Props) {
   const values = toRecord(step.values);
   const [orderReceived, setOrderReceived] = useState(boolValue(values.order_received));
+  const [orderReceivedDate, setOrderReceivedDate] = useState(
+    stringValue(values.order_received_date),
+  );
+
+  const todayIso = () => new Date().toISOString().slice(0, 10);
+
+  const toggleMission = () => {
+    setOrderReceived((prev) => {
+      const next = !prev;
+      if (next && !orderReceivedDate) {
+        setOrderReceivedDate(todayIso());
+      }
+      return next;
+    });
+  };
+
+  const missionDateDisplay = orderReceivedDate
+    ? orderReceivedDate.split("-").reverse().join(".")
+    : "--.--.----";
 
   return (
     <form action={updateAction}>
@@ -26,37 +52,78 @@ export function ExportPlanStepForm({ step, updateAction, returnTo, canEdit }: Pr
         description="Order confirmation triggers the loading workflow for the shipment."
         status={step.status}
         canEdit={canEdit}
+        isAdmin={isAdmin}
         saveLabel="Save overview"
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
-            <input type="hidden" name={fieldName(["order_received"])} value="" />
-            <input
-              type="checkbox"
-              name={fieldName(["order_received"])}
-              value="1"
-              checked={orderReceived}
-              onChange={(event) => setOrderReceived(event.target.checked)}
-              disabled={!canEdit}
-              className="h-4 w-4 rounded border-zinc-300"
-            />
-            <span>Order received</span>
-          </label>
-
-          <label className="block">
-            <div className="mb-1 text-xs font-medium text-zinc-600">
-              Order received date {orderReceived ? "*" : ""}
+        <div
+          className={`rounded-xl border p-4 transition ${
+            orderReceived
+              ? "border-blue-300 bg-blue-50"
+              : "border-zinc-200 bg-zinc-50"
+          }`}
+        >
+          <input type="hidden" name={fieldName(["order_received"])} value="" />
+          <input
+            type="hidden"
+            name={fieldName(["order_received"])}
+            value={orderReceived ? "1" : ""}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                Mission control
+              </div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900">
+                Export order received
+              </div>
             </div>
-            <input
-              type="date"
-              name={fieldName(["order_received_date"])}
-              defaultValue={stringValue(values.order_received_date)}
-              required={orderReceived}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={orderReceived}
+              onClick={toggleMission}
               disabled={!canEdit}
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
-          </label>
+              className={`relative inline-flex h-11 w-28 items-center rounded-full border transition ${
+                orderReceived
+                  ? "border-blue-500 bg-blue-600 text-white"
+                  : "border-zinc-300 bg-white text-zinc-700"
+              }`}
+            >
+              <span
+                className={`absolute left-1 h-9 w-12 rounded-full bg-white shadow-sm transition-transform ${
+                  orderReceived ? "translate-x-14" : "translate-x-0"
+                }`}
+              />
+              <span className="relative z-10 w-full text-center text-xs font-semibold uppercase tracking-[0.12em]">
+                {orderReceived ? "Started" : "Start"}
+              </span>
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px]">
+            <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+                Start date
+              </div>
+              <div className="mt-2 font-mono text-3xl tracking-[0.18em] text-zinc-900">
+                {missionDateDisplay}
+              </div>
+            </div>
+            <label className="block">
+              <div className="mb-1 text-xs font-medium text-zinc-600">Order received date *</div>
+              <input
+                type="date"
+                name={fieldName(["order_received_date"])}
+                value={orderReceivedDate}
+                onChange={(event) => setOrderReceivedDate(event.target.value)}
+                required={orderReceived}
+                disabled={!canEdit || !orderReceived}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+              />
+            </label>
+          </div>
+        </div>
 
+        <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Planned loading date</div>
             <input
@@ -92,4 +159,3 @@ export function ExportPlanStepForm({ step, updateAction, returnTo, canEdit }: Pr
     </form>
   );
 }
-
