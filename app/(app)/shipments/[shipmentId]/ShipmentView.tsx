@@ -260,6 +260,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
         jobIds,
         tasks,
         docs,
+        docRequests,
         exceptions,
         exceptionTypes,
         activities,
@@ -1510,6 +1511,528 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                 ) : null}
                             </div>
                         )
+                    )}
+
+                    {activeTab === "stock-tracking" && (
+                        <div id="stock-tracking" className="space-y-6">
+                            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-zinc-900">Stock tracking</h3>
+                                        <p className="mt-1 text-sm text-zinc-500">
+                                            Consolidated stock details captured during FCL offload.
+                                        </p>
+                                    </div>
+                                    <Badge tone="zinc">{stockRows.length} rows</Badge>
+                                </div>
+
+                                {stockRows.length ? (
+                                    <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200">
+                                        <table className="min-w-full text-left text-xs">
+                                            <thead className="bg-zinc-50 text-zinc-600">
+                                                <tr>
+                                                    <th className="px-3 py-2">Container</th>
+                                                    <th className="px-3 py-2">Stock source</th>
+                                                    <th className="px-3 py-2">Weight (kg)</th>
+                                                    <th className="px-3 py-2">Packages</th>
+                                                    <th className="px-3 py-2">Package type</th>
+                                                    <th className="px-3 py-2">Cargo description</th>
+                                                    <th className="px-3 py-2">Damage</th>
+                                                    <th className="px-3 py-2">Offload photos</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {stockRows.map(({ index, row, enabled }) => (
+                                                    <tr key={`stock-row-${index}`} className="border-t border-zinc-200">
+                                                        <td className="px-3 py-2 font-medium text-zinc-900">
+                                                            {row.container_number || `Container ${index + 1}`}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {enabled ? "Tracked from pull-out" : "Captured at delivery"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {row.total_weight_kg?.trim() || "-"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {row.total_packages?.trim() || "-"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {row.package_type?.trim() || "-"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {row.cargo_description?.trim() || "-"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {isTruthy(row.cargo_damage) ? "Yes" : "No"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {countStockDocs(deliveryStep?.id, index, "offload_pictures")}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <div className="mt-4 rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                        No stock rows available yet.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === "goods" && (
+                        <div id="goods" className="space-y-6">
+                            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-zinc-900">Goods</h3>
+                                        <p className="mt-1 text-sm text-zinc-500">
+                                            Shipment goods, allocations, and remaining inventory.
+                                        </p>
+                                    </div>
+                                    <Badge tone="zinc">{shipmentGoods.length} lines</Badge>
+                                </div>
+
+                                {shipmentGoods.length ? (
+                                    <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200">
+                                        <table className="min-w-full text-left text-xs">
+                                            <thead className="bg-zinc-50 text-zinc-600">
+                                                <tr>
+                                                    <th className="px-3 py-2">Good</th>
+                                                    <th className="px-3 py-2">Origin</th>
+                                                    <th className="px-3 py-2">Unit</th>
+                                                    <th className="px-3 py-2">Customer scope</th>
+                                                    <th className="px-3 py-2">Quantity</th>
+                                                    <th className="px-3 py-2">Allocated</th>
+                                                    <th className="px-3 py-2">Remaining</th>
+                                                    {canEdit ? <th className="px-3 py-2">Action</th> : null}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {shipmentGoods.map((sg) => (
+                                                    <tr key={sg.id} className="border-t border-zinc-200">
+                                                        <td className="px-3 py-2 font-medium text-zinc-900">{sg.good_name}</td>
+                                                        <td className="px-3 py-2 text-zinc-700">{sg.good_origin}</td>
+                                                        <td className="px-3 py-2 text-zinc-700">{sg.unit_type}</td>
+                                                        <td className="px-3 py-2 text-zinc-700">
+                                                            {sg.applies_to_all_customers
+                                                                ? "All shipment customers"
+                                                                : sg.customer_name || "-"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-zinc-700">{sg.quantity}</td>
+                                                        <td className="px-3 py-2 text-zinc-700">{sg.allocated_quantity}</td>
+                                                        <td className="px-3 py-2 text-zinc-700">{sg.inventory_quantity}</td>
+                                                        {canEdit ? (
+                                                            <td className="px-3 py-2">
+                                                                <form action={deleteShipmentGoodAction.bind(null, shipment.id)}>
+                                                                    <input type="hidden" name="shipmentGoodId" value={sg.id} />
+                                                                    <button
+                                                                        type="submit"
+                                                                        className="rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50"
+                                                                    >
+                                                                        Remove
+                                                                    </button>
+                                                                </form>
+                                                            </td>
+                                                        ) : null}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <div className="mt-4 rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                        No goods lines added yet.
+                                    </div>
+                                )}
+                            </div>
+
+                            {canEdit ? (
+                                <div className="grid gap-6 lg:grid-cols-2">
+                                    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                        <h4 className="text-sm font-semibold text-zinc-900">Add shipment good</h4>
+                                        <form
+                                            action={addShipmentGoodAction.bind(null, shipment.id)}
+                                            className="mt-4 space-y-3"
+                                        >
+                                            <label className="block">
+                                                <div className="mb-1 text-xs font-medium text-zinc-600">Good</div>
+                                                <select
+                                                    name="goodId"
+                                                    required
+                                                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                >
+                                                    <option value="">Select good</option>
+                                                    {goods.map((good) => (
+                                                        <option key={good.id} value={good.id}>
+                                                            {good.name} - {good.origin} ({good.unit_type})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <label className="block">
+                                                    <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                        Quantity
+                                                    </div>
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        name="quantity"
+                                                        required
+                                                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                    />
+                                                </label>
+                                                <label className="block">
+                                                    <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                        Customer (optional if all)
+                                                    </div>
+                                                    <select
+                                                        name="customerPartyId"
+                                                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                    >
+                                                        <option value="">Select customer</option>
+                                                        {shipmentCustomers.map((customer) => (
+                                                            <option key={customer.id} value={customer.id}>
+                                                                {customer.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                            </div>
+                                            <label className="flex items-center gap-2 text-xs text-zinc-700">
+                                                <input type="hidden" name="appliesToAllCustomers" value="" />
+                                                <input
+                                                    type="checkbox"
+                                                    name="appliesToAllCustomers"
+                                                    value="1"
+                                                    className="h-4 w-4 rounded border-zinc-300"
+                                                />
+                                                Applies to all shipment customers
+                                            </label>
+                                            <button
+                                                type="submit"
+                                                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                            >
+                                                Add line
+                                            </button>
+                                        </form>
+                                    </div>
+
+                                    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                        <h4 className="text-sm font-semibold text-zinc-900">Create new good</h4>
+                                        <form
+                                            action={createGoodAction.bind(null, shipment.id)}
+                                            className="mt-4 space-y-3"
+                                        >
+                                            <input
+                                                name="name"
+                                                placeholder="Good name"
+                                                required
+                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                            />
+                                            <input
+                                                name="origin"
+                                                placeholder="Origin"
+                                                required
+                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                            />
+                                            <input
+                                                name="unitType"
+                                                placeholder="Unit type"
+                                                required
+                                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                            />
+                                            <button
+                                                type="submit"
+                                                className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                            >
+                                                Create good
+                                            </button>
+                                        </form>
+                                        <div className="mt-3 text-xs text-zinc-500">
+                                            After creating, add it to this shipment from the left card.
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    )}
+
+                    {activeTab === "documents" && (
+                        <div id="documents" className="space-y-6">
+                            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-zinc-900">Documents</h3>
+                                        <p className="mt-1 text-sm text-zinc-500">
+                                            Upload files, review status, and fulfill customer requests.
+                                        </p>
+                                    </div>
+                                    <Badge tone="zinc">{docs.length} files</Badge>
+                                </div>
+
+                                {canEdit ? (
+                                    <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+                                        <h4 className="text-sm font-semibold text-zinc-900">Upload document</h4>
+                                        <form
+                                            action={uploadDocumentAction.bind(null, shipment.id)}
+                                            className="mt-3 grid gap-3 md:grid-cols-2"
+                                            encType="multipart/form-data"
+                                        >
+                                            <label className="block">
+                                                <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                    Document type
+                                                </div>
+                                                <input
+                                                    name="documentType"
+                                                    list="document-types"
+                                                    required
+                                                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                />
+                                                <datalist id="document-types">
+                                                    {Array.from(
+                                                        new Set([
+                                                            ...docs.map((doc) => String(doc.document_type)),
+                                                            ...docRequests.map((req) => String(req.document_type)),
+                                                        ]),
+                                                    ).map((type) => (
+                                                        <option key={type} value={type} />
+                                                    ))}
+                                                </datalist>
+                                            </label>
+                                            <label className="block">
+                                                <div className="mb-1 text-xs font-medium text-zinc-600">File</div>
+                                                <input
+                                                    type="file"
+                                                    name="file"
+                                                    required
+                                                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                />
+                                            </label>
+                                            <label className="block">
+                                                <div className="mb-1 text-xs font-medium text-zinc-600">
+                                                    Link to request (optional)
+                                                </div>
+                                                <select
+                                                    name="documentRequestId"
+                                                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                                >
+                                                    <option value="">No request</option>
+                                                    {docRequests
+                                                        .filter((req) => req.status === "OPEN")
+                                                        .map((req) => (
+                                                            <option key={req.id} value={req.id}>
+                                                                #{req.id} - {req.document_type}
+                                                            </option>
+                                                        ))}
+                                                </select>
+                                            </label>
+                                            <div className="space-y-2">
+                                                <label className="flex items-center gap-2 text-xs text-zinc-700">
+                                                    <input type="hidden" name="isRequired" value="" />
+                                                    <input
+                                                        type="checkbox"
+                                                        name="isRequired"
+                                                        value="1"
+                                                        className="h-4 w-4 rounded border-zinc-300"
+                                                    />
+                                                    Mark as required
+                                                </label>
+                                                <label className="flex items-center gap-2 text-xs text-zinc-700">
+                                                    <input type="hidden" name="shareWithCustomer" value="" />
+                                                    <input
+                                                        type="checkbox"
+                                                        name="shareWithCustomer"
+                                                        value="1"
+                                                        defaultChecked
+                                                        className="h-4 w-4 rounded border-zinc-300"
+                                                    />
+                                                    Share with customer
+                                                </label>
+                                                <button
+                                                    type="submit"
+                                                    className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                                >
+                                                    Upload
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                ) : null}
+
+                                <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200">
+                                    <table className="min-w-full text-left text-xs">
+                                        <thead className="bg-zinc-50 text-zinc-600">
+                                            <tr>
+                                                <th className="px-3 py-2">Type</th>
+                                                <th className="px-3 py-2">File</th>
+                                                <th className="px-3 py-2">Source</th>
+                                                <th className="px-3 py-2">Uploaded</th>
+                                                <th className="px-3 py-2">Review</th>
+                                                <th className="px-3 py-2">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {docs.map((doc) => (
+                                                <tr key={doc.id} className="border-t border-zinc-200">
+                                                    <td className="px-3 py-2 font-medium text-zinc-900">
+                                                        {formatDocumentType(String(doc.document_type))}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-zinc-700">{doc.file_name}</td>
+                                                    <td className="px-3 py-2 text-zinc-700">{doc.source}</td>
+                                                    <td className="px-3 py-2 text-zinc-700">
+                                                        {new Date(doc.uploaded_at).toLocaleString()}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-zinc-700">
+                                                        {doc.review_status || "-"}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <a
+                                                                href={`/api/documents/${doc.id}`}
+                                                                className="rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700 hover:bg-zinc-50"
+                                                            >
+                                                                Download
+                                                            </a>
+                                                            {canEdit ? (
+                                                                <>
+                                                                    <form action={reviewDocumentAction.bind(null, shipment.id)}>
+                                                                        <input type="hidden" name="documentId" value={doc.id} />
+                                                                        <input type="hidden" name="status" value="VERIFIED" />
+                                                                        <button
+                                                                            type="submit"
+                                                                            className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-100"
+                                                                        >
+                                                                            Verify
+                                                                        </button>
+                                                                    </form>
+                                                                    <form action={reviewDocumentAction.bind(null, shipment.id)}>
+                                                                        <input type="hidden" name="documentId" value={doc.id} />
+                                                                        <input type="hidden" name="status" value="REJECTED" />
+                                                                        <button
+                                                                            type="submit"
+                                                                            className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700 hover:bg-red-100"
+                                                                        >
+                                                                            Reject
+                                                                        </button>
+                                                                    </form>
+                                                                </>
+                                                            ) : null}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {docs.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} className="px-3 py-4 text-zinc-500">
+                                                        No documents uploaded yet.
+                                                    </td>
+                                                </tr>
+                                            ) : null}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {canEdit ? (
+                                <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                    <h4 className="text-sm font-semibold text-zinc-900">Request from customer</h4>
+                                    <form
+                                        action={requestDocumentAction.bind(null, shipment.id)}
+                                        className="mt-3 grid gap-3 md:grid-cols-[220px_1fr_auto]"
+                                    >
+                                        <input name="documentType" placeholder="Document type" required className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
+                                        <input name="message" placeholder="Optional message to customer" className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
+                                        <button
+                                            type="submit"
+                                            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                        >
+                                            Request
+                                        </button>
+                                    </form>
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                        {docRequests.map((req) => (
+                                            <span
+                                                key={req.id}
+                                                className={`rounded-full border px-2 py-1 text-xs ${
+                                                    req.status === "OPEN"
+                                                        ? "border-amber-200 bg-amber-50 text-amber-700"
+                                                        : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                                }`}
+                                            >
+                                                #{req.id} {req.document_type} - {req.status}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    )}
+
+                    {activeTab === "activity" && (
+                        <div id="activity" className="space-y-6">
+                            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-zinc-900">Activity</h3>
+                                        <p className="mt-1 text-sm text-zinc-500">
+                                            Timeline of updates, document events, and comments.
+                                        </p>
+                                    </div>
+                                    <Badge tone="zinc">{activities.length} events</Badge>
+                                </div>
+
+                                {canEdit ? (
+                                    <form
+                                        action={addCommentAction.bind(null, shipment.id)}
+                                        className="mt-4 flex flex-wrap gap-2"
+                                    >
+                                        <input
+                                            name="message"
+                                            placeholder="Add comment..."
+                                            required
+                                            className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                                        />
+                                        <button
+                                            type="submit"
+                                            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                                        >
+                                            Post
+                                        </button>
+                                    </form>
+                                ) : null}
+
+                                <div className="mt-4 space-y-3">
+                                    {activities.map((item) => (
+                                        <div
+                                            key={item.id}
+                                            className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3"
+                                        >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                                                    {item.type}
+                                                </div>
+                                                <div className="text-xs text-zinc-500">
+                                                    {new Date(item.created_at).toLocaleString()}
+                                                </div>
+                                            </div>
+                                            <div className="mt-1 text-sm text-zinc-900">{item.message}</div>
+                                            <div className="mt-1 text-xs text-zinc-500">
+                                                By {item.actor_name || "System"}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {activities.length === 0 ? (
+                                        <div className="rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-600">
+                                            No activity logged yet.
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </div>
                     )}
 
 
