@@ -11,6 +11,7 @@ import {
 } from "@/lib/fclImport/constants";
 import {
   FTL_EXPORT_OPERATIONS_STEPS,
+  FTL_EXPORT_ROUTES,
   FTL_EXPORT_SERVICE_TYPE,
   FTL_EXPORT_TRACKING_STEPS,
 } from "@/lib/ftlExport/constants";
@@ -41,11 +42,16 @@ export function FclImportCreateForm({
   const [serviceType, setServiceType] = useState(
     SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
   );
-  const [plannedTruckCount, setPlannedTruckCount] = useState("");
-  const [plannedTruckType, setPlannedTruckType] = useState("");
+  const [ftlRouteId, setFtlRouteId] = useState<string>(
+    FTL_EXPORT_ROUTES[0]?.id ?? "",
+  );
   const containerInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const isFclService = serviceType === "FCL_IMPORT_CLEARANCE";
   const isFtlService = serviceType === FTL_EXPORT_SERVICE_TYPE;
+  const selectedFtlRoute =
+    FTL_EXPORT_ROUTES.find((route) => route.id === ftlRouteId) ??
+    FTL_EXPORT_ROUTES[0] ??
+    null;
   const serviceLabel =
     SERVICE_TYPES.find((option) => option.id === serviceType)?.label ??
     SERVICE_TYPES[0]?.label ??
@@ -58,6 +64,10 @@ export function FclImportCreateForm({
   }, [customers, query]);
 
   const toggleCustomer = (id: string) => {
+    if (isFtlService) {
+      setSelectedCustomers((prev) => (prev[0] === id ? [] : [id]));
+      return;
+    }
     setSelectedCustomers((prev) =>
       prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id],
     );
@@ -123,7 +133,18 @@ export function FclImportCreateForm({
                 <select
                   name="serviceType"
                   value={serviceType}
-                  onChange={(event) => setServiceType(event.target.value)}
+                  onChange={(event) => {
+                    const nextType = event.target.value;
+                    setServiceType(nextType);
+                    if (nextType === FTL_EXPORT_SERVICE_TYPE) {
+                      setSelectedCustomers((prev) =>
+                        prev.length <= 1 ? prev : prev.slice(0, 1),
+                      );
+                      if (!ftlRouteId && FTL_EXPORT_ROUTES.length) {
+                        setFtlRouteId(FTL_EXPORT_ROUTES[0].id);
+                      }
+                    }
+                  }}
                   disabled={!canWrite}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
                   required
@@ -135,30 +156,64 @@ export function FclImportCreateForm({
                   ))}
                 </select>
               </label>
-              <label className="block">
-                <div className="mb-1 text-sm font-medium text-slate-700">
-                  Origin
-                </div>
-                <input
-                  name="origin"
-                  disabled={!canWrite}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
-                  placeholder="Origin port or city"
-                  required
-                />
-              </label>
-              <label className="block">
-                <div className="mb-1 text-sm font-medium text-slate-700">
-                  Destination
-                </div>
-                <input
-                  name="destination"
-                  disabled={!canWrite}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
-                  placeholder="Destination port or city"
-                  required
-                />
-              </label>
+              {isFtlService ? (
+                <label className="block md:col-span-2">
+                  <div className="mb-1 text-sm font-medium text-slate-700">
+                    FTL route
+                  </div>
+                  <select
+                    name="ftlRouteId"
+                    value={ftlRouteId}
+                    onChange={(event) => setFtlRouteId(event.target.value)}
+                    disabled={!canWrite}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                    required
+                  >
+                    {FTL_EXPORT_ROUTES.map((route) => (
+                      <option key={route.id} value={route.id}>
+                        {route.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Route path: {selectedFtlRoute?.origin ?? "-"} to{" "}
+                    {selectedFtlRoute?.destination ?? "-"}
+                  </div>
+                  <input type="hidden" name="origin" value={selectedFtlRoute?.origin ?? ""} />
+                  <input
+                    type="hidden"
+                    name="destination"
+                    value={selectedFtlRoute?.destination ?? ""}
+                  />
+                </label>
+              ) : (
+                <>
+                  <label className="block">
+                    <div className="mb-1 text-sm font-medium text-slate-700">
+                      Origin
+                    </div>
+                    <input
+                      name="origin"
+                      disabled={!canWrite}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                      placeholder="Origin port or city"
+                      required
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-1 text-sm font-medium text-slate-700">
+                      Destination
+                    </div>
+                    <input
+                      name="destination"
+                      disabled={!canWrite}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                      placeholder="Destination port or city"
+                      required
+                    />
+                  </label>
+                </>
+              )}
             </div>
           </div>
 
@@ -234,7 +289,9 @@ export function FclImportCreateForm({
               </div>
             ) : (
               <div className="mt-3 text-xs text-slate-500">
-                Select at least one customer to continue.
+                {isFtlService
+                  ? "Select one customer for FTL Export."
+                  : "Select at least one customer to continue."}
               </div>
             )}
           </div>
@@ -301,50 +358,6 @@ export function FclImportCreateForm({
               </div>
               <div className="mt-3 text-xs text-slate-500">
                 Tip: press Enter to add another container quickly.
-              </div>
-            </div>
-          ) : null}
-
-          {isFtlService ? (
-            <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
-              <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Truck planning
-              </div>
-              <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                Optional planning seed
-              </h2>
-              <p className="mt-2 text-sm text-slate-600">
-                These values prefill the first Export Plan step and remain editable later.
-              </p>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <label className="block">
-                  <div className="mb-1 text-sm font-medium text-slate-700">
-                    Planned truck count
-                  </div>
-                  <input
-                    name="plannedTruckCount"
-                    type="number"
-                    min={0}
-                    value={plannedTruckCount}
-                    onChange={(event) => setPlannedTruckCount(event.target.value)}
-                    disabled={!canWrite}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
-                    placeholder="e.g. 6"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-sm font-medium text-slate-700">
-                    Primary truck type
-                  </div>
-                  <input
-                    name="plannedTruckType"
-                    value={plannedTruckType}
-                    onChange={(event) => setPlannedTruckType(event.target.value)}
-                    disabled={!canWrite}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
-                    placeholder="e.g. Curtain side"
-                  />
-                </label>
               </div>
             </div>
           ) : null}

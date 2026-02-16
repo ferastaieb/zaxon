@@ -17,10 +17,29 @@ export type TruckBookingRow = {
   cancellation_reason: string;
 };
 
+export type InvoiceTruckMissingField =
+  | "truck_number"
+  | "driver_name"
+  | "driver_contact";
+
+export type InvoiceTruckMissingRow = {
+  index: number;
+  truck_reference: string;
+  missing_fields: InvoiceTruckMissingField[];
+};
+
+export type InvoiceTruckDetailsCheck = {
+  active_trucks: number;
+  missing_rows: InvoiceTruckMissingRow[];
+  complete: boolean;
+};
+
 export type LoadingTruckRow = {
   index: number;
   truck_reference: string;
   truck_loaded: boolean;
+  mixed_supplier_loaded: boolean;
+  mixed_zaxon_loaded: boolean;
   raw_loading_origin: string;
   loading_origin: string;
   supplier_name: string;
@@ -167,11 +186,39 @@ export function parseTruckBookingRows(values: AnyRecord): TruckBookingRow[] {
   }));
 }
 
+export function evaluateInvoiceTruckDetails(
+  rows: TruckBookingRow[],
+): InvoiceTruckDetailsCheck {
+  const activeRows = rows.filter((row) => row.booking_status !== "CANCELLED");
+  const missingRows: InvoiceTruckMissingRow[] = [];
+
+  for (const row of activeRows) {
+    const missingFields: InvoiceTruckMissingField[] = [];
+    if (!row.truck_number) missingFields.push("truck_number");
+    if (!row.driver_name) missingFields.push("driver_name");
+    if (!row.driver_contact) missingFields.push("driver_contact");
+    if (!missingFields.length) continue;
+    missingRows.push({
+      index: row.index,
+      truck_reference: row.truck_reference || `Truck ${row.index + 1}`,
+      missing_fields: missingFields,
+    });
+  }
+
+  return {
+    active_trucks: activeRows.length,
+    missing_rows: missingRows,
+    complete: activeRows.length > 0 && missingRows.length === 0,
+  };
+}
+
 export function parseLoadingRows(values: AnyRecord): LoadingTruckRow[] {
   return asGroupArray(values, "trucks").map((entry, index) => ({
     index,
     truck_reference: getString(entry.truck_reference),
     truck_loaded: isTruthy(entry.truck_loaded),
+    mixed_supplier_loaded: isTruthy(entry.mixed_supplier_loaded),
+    mixed_zaxon_loaded: isTruthy(entry.mixed_zaxon_loaded),
     raw_loading_origin: getString(entry.loading_origin),
     loading_origin: normalizeLoadingOrigin(getString(entry.loading_origin)),
     supplier_name: getString(entry.supplier_name),

@@ -59,6 +59,7 @@ function buildLatestDocMap(docs: DocumentRow[]) {
       id: number;
       file_name: string;
       uploaded_at: string;
+      count?: number;
       source: "STAFF" | "CUSTOMER";
       is_received: boolean;
       review_status?: "PENDING" | "VERIFIED" | "REJECTED";
@@ -72,11 +73,14 @@ function buildLatestDocMap(docs: DocumentRow[]) {
         id: doc.id,
         file_name: doc.file_name,
         uploaded_at: doc.uploaded_at,
+        count: 1,
         source: doc.source,
         is_received: doc.is_received === 1,
         review_status: doc.review_status,
         review_note: doc.review_note,
       };
+    } else {
+      latest[key].count = (latest[key].count ?? 1) + 1;
     }
   }
   return latest;
@@ -88,7 +92,10 @@ function errorMessage(error: string | null) {
     return "Invoice number must be unique across all shipments.";
   }
   if (error === "invoice_prereq") {
-    return "Invoice cannot be finalized before loading is done and imports are available.";
+    return "Export invoice cannot be saved/finalized before loading is done and imports are available.";
+  }
+  if (error === "invoice_truck_details_required") {
+    return "Complete truck number, driver name, and driver contact for all active trucks before saving/finalizing the export invoice.";
   }
   if (error === "truck_locked") {
     return "Truck details are locked because export invoice is finalized.";
@@ -100,7 +107,10 @@ function errorMessage(error: string | null) {
     return "Complete mandatory loading fields and photos before saving loaded trucks.";
   }
   if (error === "tracking_locked") {
-    return "Tracking is locked until loading is done, invoice is finalized, and customs agents are allocated.";
+    return "Tracking is locked until loading is done and export invoice is finalized.";
+  }
+  if (error === "tracking_agent_required") {
+    return "Assign the corresponding customs agent in Customs Agents before updating that tracking border.";
   }
   if (error === "import_reference_invalid") {
     return "Import references must be selected from existing import shipments.";

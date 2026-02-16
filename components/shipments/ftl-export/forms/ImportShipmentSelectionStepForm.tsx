@@ -28,7 +28,6 @@ type ImportRow = {
   cargo_description: string;
   allocated_weight: string;
   allocated_quantity: string;
-  remarks: string;
 };
 
 type Props = {
@@ -56,7 +55,6 @@ function emptyRow(): ImportRow {
     cargo_description: "",
     allocated_weight: "",
     allocated_quantity: "",
-    remarks: "",
   };
 }
 
@@ -76,59 +74,17 @@ function mapRow(source: Record<string, unknown>): ImportRow {
     cargo_description: stringValue(source.cargo_description),
     allocated_weight: stringValue(source.allocated_weight),
     allocated_quantity: stringValue(source.allocated_quantity),
-    remarks: stringValue(source.remarks),
   };
 }
 
-function toPercent(value: number, total: number) {
-  if (total <= 0) return 0;
-  const pct = (value / total) * 100;
-  return Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
+function formatAmount(value: number) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
-function SegmentBar({
-  total,
-  already,
-  current,
-  label,
-}: {
-  total: number;
-  already: number;
-  current: number;
-  label: string;
-}) {
-  const safeTotal = Math.max(0, total);
-  const safeAlready = Math.max(0, already);
-  const available = Math.max(0, safeTotal - safeAlready);
-  const safeCurrent = Math.max(0, current);
-  const over = safeCurrent > available;
-  const within = over ? available : safeCurrent;
-  const stillAvailable = Math.max(0, available - within);
-  const overflow = over ? safeCurrent - available : 0;
-
-  return (
-    <div className={`space-y-1 ${over ? "ftl-shake" : ""}`}>
-      <div className="flex items-center justify-between text-[11px] text-zinc-600">
-        <span>{label}</span>
-        <span>
-          total {safeTotal} | used {safeAlready} | this {safeCurrent}
-        </span>
-      </div>
-      <div className="h-3 w-full overflow-hidden rounded-full border border-zinc-200 bg-zinc-100">
-        <div className="flex h-full w-full">
-          <div style={{ width: `${toPercent(safeAlready, safeTotal)}%` }} className="bg-zinc-500" />
-          <div style={{ width: `${toPercent(stillAvailable, safeTotal)}%` }} className="bg-emerald-500" />
-          <div style={{ width: `${toPercent(within, safeTotal)}%` }} className="bg-blue-500" />
-          <div style={{ width: `${toPercent(overflow, safeTotal)}%` }} className="bg-red-500" />
-        </div>
-      </div>
-      {over ? (
-        <div className="text-[11px] font-semibold text-red-700">
-          Allocation exceeds available balance.
-        </div>
-      ) : null}
-    </div>
-  );
+function shortDate(value: string) {
+  return value ? value.slice(0, 10) : "";
 }
 
 function rowFromCandidate(candidate: FtlImportCandidate, previous?: ImportRow): ImportRow {
@@ -147,7 +103,6 @@ function rowFromCandidate(candidate: FtlImportCandidate, previous?: ImportRow): 
     cargo_description: candidate.cargoDescription,
     allocated_weight: previous?.allocated_weight ?? "",
     allocated_quantity: previous?.allocated_quantity ?? "",
-    remarks: previous?.remarks ?? "",
   };
 }
 
@@ -164,7 +119,6 @@ export function ImportShipmentSelectionStepForm({
   const [removed, setRemoved] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
   const [candidatePicker, setCandidatePicker] = useState("");
-  const [notes, setNotes] = useState(step.notes ?? "");
   const disableEdit = !canEdit;
   const candidateById = useMemo(
     () => new Map(candidates.map((candidate) => [String(candidate.shipmentId), candidate])),
@@ -224,29 +178,6 @@ export function ImportShipmentSelectionStepForm({
         isAdmin={isAdmin}
         saveLabel="Save import references"
       >
-        <style jsx>{`
-          .ftl-shake {
-            animation: ftl-shake 0.28s linear;
-          }
-          @keyframes ftl-shake {
-            0% {
-              transform: translateX(0);
-            }
-            25% {
-              transform: translateX(-2px);
-            }
-            50% {
-              transform: translateX(2px);
-            }
-            75% {
-              transform: translateX(-2px);
-            }
-            100% {
-              transform: translateX(0);
-            }
-          }
-        `}</style>
-
         <div className="grid gap-3 lg:grid-cols-[1fr_320px_auto]">
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">
@@ -314,9 +245,34 @@ export function ImportShipmentSelectionStepForm({
           const alreadyAllocatedQuantity =
             selectedCandidate?.alreadyAllocatedQuantity ??
             numberValue(row.already_allocated_quantity, 0);
-          const remainingWeight = importedWeight - alreadyAllocatedWeight - allocatedWeight;
-          const remainingQuantity = importedQuantity - alreadyAllocatedQuantity - allocatedQuantity;
-          const overallocated = remainingWeight < 0 || remainingQuantity < 0;
+          const allocationHistory = selectedCandidate?.allocationHistory ?? [];
+          const sortedHistory = [...allocationHistory].sort((a, b) =>
+            (a.exportDate || "").localeCompare(b.exportDate || ""),
+          );
+          let runningBalanceWeight = importedWeight;
+          let runningBalanceQuantity = importedQuantity;
+          for (const entry of sortedHistory) {
+            runningBalanceWeight -= entry.allocatedWeight;
+            runningBalanceQuantity -= entry.allocatedQuantity;
+          }
+          const balanceBeforeCurrentWeight = runningBalanceWeight;
+          const balanceBeforeCurrentQuantity = runningBalanceQuantity;
+          const remainingWeight = balanceBeforeCurrentWeight - allocatedWeight;
+          const remainingQuantity = balanceBeforeCurrentQuantity - allocatedQuantity;
+          const overallocated =
+            allocatedWeight > balanceBeforeCurrentWeight ||
+            allocatedQuantity > balanceBeforeCurrentQuantity;
+          let ledgerRunningWeight = importedWeight;
+          let ledgerRunningQuantity = importedQuantity;
+          const ledgerHistoryRows = sortedHistory.map((entry) => {
+            ledgerRunningWeight -= entry.allocatedWeight;
+            ledgerRunningQuantity -= entry.allocatedQuantity;
+            return {
+              ...entry,
+              balanceWeight: ledgerRunningWeight,
+              balanceQuantity: ledgerRunningQuantity,
+            };
+          });
           const processedAvailable =
             selectedCandidate?.processedAvailable ?? row.processed_available;
           const nonPhysicalStock =
@@ -373,39 +329,7 @@ export function ImportShipmentSelectionStepForm({
                     </option>
                   ))}
                 </select>
-              ) : (
-                <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_auto]">
-                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
-                    <div className="font-medium text-zinc-900">{selectedSummary}</div>
-                    {selectedCandidate ? (
-                      <div className="mt-1">
-                        Current remaining: {selectedCandidate.remainingQuantity} qty /{" "}
-                        {selectedCandidate.remainingWeight} wt
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <span
-                      className={`rounded-full px-2 py-1 font-medium ${
-                        processedAvailable
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-amber-100 text-amber-800"
-                      }`}
-                    >
-                      {processedAvailable ? "Processed" : "Not processed"}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-1 font-medium ${
-                        nonPhysicalStock
-                          ? "bg-sky-100 text-sky-800"
-                          : "bg-zinc-100 text-zinc-700"
-                      }`}
-                    >
-                      {nonPhysicalStock ? "Non-physical stock" : "Physical stock"}
-                    </span>
-                  </div>
-                </div>
-              )}
+              ) : null}
 
               <input
                 type="hidden"
@@ -432,216 +356,191 @@ export function ImportShipmentSelectionStepForm({
                 name={fieldName(["import_shipments", String(index), "already_allocated_quantity"])}
                 value={String(alreadyAllocatedQuantity)}
               />
+              <input
+                type="hidden"
+                name={fieldName([
+                  "import_shipments",
+                  String(index),
+                  "import_shipment_reference",
+                ])}
+                value={referenceValue}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "client_number"])}
+                value={clientValue}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "import_boe_number"])}
+                value={boeValue}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "imported_weight"])}
+                value={String(importedWeight)}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "imported_quantity"])}
+                value={String(importedQuantity)}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "package_type"])}
+                value={packageTypeValue}
+              />
+              <input
+                type="hidden"
+                name={fieldName(["import_shipments", String(index), "cargo_description"])}
+                value={cargoDescriptionValue}
+              />
 
-              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Linked Import Reference (Read-Only)
-              </div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">
-                    Import shipment number
+              {row.source_shipment_id ? (
+                <div className="mt-4 space-y-3">
+                  <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+                      <div className="font-medium text-zinc-900">{selectedSummary}</div>
+                      <div className="mt-1">
+                        Package: {packageTypeValue || "-"} | Cargo: {cargoDescriptionValue || "-"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span
+                        className={`rounded-full px-2 py-1 font-medium ${
+                          processedAvailable
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {processedAvailable ? "Processed" : "Not processed"}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-1 font-medium ${
+                          nonPhysicalStock
+                            ? "bg-sky-100 text-sky-800"
+                            : "bg-zinc-100 text-zinc-700"
+                        }`}
+                      >
+                        {nonPhysicalStock ? "Non-physical stock" : "Physical stock"}
+                      </span>
+                    </div>
                   </div>
-                  <input
-                    name={fieldName([
-                      "import_shipments",
-                      String(index),
-                      "import_shipment_reference",
-                    ])}
-                    value={referenceValue}
-                    onChange={(event) =>
-                      updateRow(index, { import_shipment_reference: event.target.value })
-                    }
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Client number</div>
-                  <input
-                    name={fieldName(["import_shipments", String(index), "client_number"])}
-                    value={clientValue}
-                    onChange={(event) => updateRow(index, { client_number: event.target.value })}
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Import BOE number</div>
-                  <input
-                    name={fieldName(["import_shipments", String(index), "import_boe_number"])}
-                    value={boeValue}
-                    onChange={(event) =>
-                      updateRow(index, { import_boe_number: event.target.value })
-                    }
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
 
-              <div className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Current Stock Snapshot (Read-Only)
-              </div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Imported weight</div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    name={fieldName(["import_shipments", String(index), "imported_weight"])}
-                    value={String(importedWeight)}
-                    onChange={(event) => updateRow(index, { imported_weight: event.target.value })}
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Imported quantity</div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    name={fieldName(["import_shipments", String(index), "imported_quantity"])}
-                    value={String(importedQuantity)}
-                    onChange={(event) =>
-                      updateRow(index, { imported_quantity: event.target.value })
-                    }
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">
-                    Previously exported weight
+                  <div className="overflow-x-auto rounded-lg border border-zinc-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-zinc-50 text-xs uppercase tracking-[0.08em] text-zinc-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Reference</th>
+                          <th className="px-3 py-2 text-left">Transaction</th>
+                          <th className="px-3 py-2 text-right">Weight</th>
+                          <th className="px-3 py-2 text-right">Quantity</th>
+                          <th className="px-3 py-2 text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-zinc-200 bg-emerald-50/50">
+                          <td className="px-3 py-2 font-medium text-zinc-900">
+                            Original import shipment
+                          </td>
+                          <td className="px-3 py-2 text-zinc-700">IN</td>
+                          <td className="px-3 py-2 text-right font-medium text-emerald-700">
+                            +{formatAmount(importedWeight)}
+                          </td>
+                          <td className="px-3 py-2 text-right font-medium text-emerald-700">
+                            +{formatAmount(importedQuantity)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-zinc-700">
+                            {formatAmount(importedQuantity)} qty / {formatAmount(importedWeight)} wt
+                          </td>
+                        </tr>
+                        {ledgerHistoryRows.map((entry, historyIndex) => (
+                          <tr key={`history-${index}-${historyIndex}`} className="border-t border-zinc-200">
+                            <td className="px-3 py-2 text-zinc-900">
+                              {entry.exportShipmentCode || "Previous export"}
+                              {entry.exportDate ? (
+                                <span className="ml-1 text-xs text-zinc-500">
+                                  ({shortDate(entry.exportDate)})
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2 text-zinc-700">OUT</td>
+                            <td className="px-3 py-2 text-right font-medium text-red-700">
+                              -{formatAmount(entry.allocatedWeight)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-red-700">
+                              -{formatAmount(entry.allocatedQuantity)}
+                            </td>
+                            <td className="px-3 py-2 text-right text-zinc-700">
+                              {formatAmount(entry.balanceQuantity)} qty /{" "}
+                              {formatAmount(entry.balanceWeight)} wt
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="border-t border-zinc-200 bg-blue-50/40">
+                          <td className="px-3 py-2 font-medium text-zinc-900">
+                            Current shipment allocation
+                          </td>
+                          <td className="px-3 py-2 text-zinc-700">OUT (Current)</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              max={Math.max(0, balanceBeforeCurrentWeight)}
+                              name={fieldName(["import_shipments", String(index), "allocated_weight"])}
+                              value={row.allocated_weight}
+                              onChange={(event) =>
+                                updateRow(index, { allocated_weight: event.target.value })
+                              }
+                              placeholder="0"
+                              disabled={disableEdit}
+                              className={`w-28 rounded-lg border px-2 py-1 text-right text-sm disabled:bg-zinc-100 ${
+                                overallocated ? "border-red-400 bg-red-50" : "border-zinc-300 bg-white"
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              max={Math.max(0, balanceBeforeCurrentQuantity)}
+                              name={fieldName(["import_shipments", String(index), "allocated_quantity"])}
+                              value={row.allocated_quantity}
+                              onChange={(event) =>
+                                updateRow(index, { allocated_quantity: event.target.value })
+                              }
+                              placeholder="0"
+                              disabled={disableEdit}
+                              className={`w-28 rounded-lg border px-2 py-1 text-right text-sm disabled:bg-zinc-100 ${
+                                overallocated ? "border-red-400 bg-red-50" : "border-zinc-300 bg-white"
+                              }`}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right text-zinc-700">
+                            <span className={remainingQuantity < 0 || remainingWeight < 0 ? "text-red-700" : ""}>
+                              {formatAmount(remainingQuantity)} qty / {formatAmount(remainingWeight)} wt
+                            </span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={alreadyAllocatedWeight}
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">
-                    Previously exported quantity
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={alreadyAllocatedQuantity}
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
 
-              <div className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
-                Cargo Info And Current Allocation
-              </div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Cargo package type</div>
-                  <input
-                    name={fieldName(["import_shipments", String(index), "package_type"])}
-                    value={packageTypeValue}
-                    onChange={(event) => updateRow(index, { package_type: event.target.value })}
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block sm:col-span-2">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">Cargo description</div>
-                  <input
-                    name={fieldName(["import_shipments", String(index), "cargo_description"])}
-                    value={cargoDescriptionValue}
-                    onChange={(event) =>
-                      updateRow(index, { cargo_description: event.target.value })
-                    }
-                    readOnly
-                    className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">
-                    Allocate weight for this export
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    name={fieldName(["import_shipments", String(index), "allocated_weight"])}
-                    value={row.allocated_weight}
-                    onChange={(event) => updateRow(index, { allocated_weight: event.target.value })}
-                    placeholder="Enter weight"
-                    disabled={disableEdit}
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-xs font-medium text-zinc-600">
-                    Allocate quantity for this export
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    name={fieldName(["import_shipments", String(index), "allocated_quantity"])}
-                    value={row.allocated_quantity}
-                    onChange={(event) =>
-                      updateRow(index, { allocated_quantity: event.target.value })
-                    }
-                    placeholder="Enter quantity"
-                    disabled={disableEdit}
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                  />
-                </label>
-              </div>
+                  {overallocated ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                      Current allocation cannot exceed running balance from previous row.
+                    </div>
+                  ) : null}
+                  {!processedAvailable ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                      Warning: import shipment is not marked processed/available (save is allowed).
+                    </div>
+                  ) : null}
 
-              <div className="mt-3 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
-                <SegmentBar
-                  label="Quantity allocation"
-                  total={importedQuantity}
-                  already={alreadyAllocatedQuantity}
-                  current={allocatedQuantity}
-                />
-                <SegmentBar
-                  label="Weight allocation"
-                  total={importedWeight}
-                  already={alreadyAllocatedWeight}
-                  current={allocatedWeight}
-                />
-                <div className="text-xs text-zinc-700">
-                  Remaining after this export: {remainingQuantity} qty / {remainingWeight} wt
                 </div>
-                {overallocated ? (
-                  <div className="text-xs font-semibold text-red-700">
-                    Warning: allocation exceeds remaining balance (save is still allowed).
-                  </div>
-                ) : null}
-                {!processedAvailable ? (
-                  <div className="text-xs font-semibold text-amber-700">
-                    Warning: import shipment is not marked processed/available (save is allowed).
-                  </div>
-                ) : null}
-              </div>
-
-              <label className="mt-3 block">
-                <div className="mb-1 text-xs font-medium text-zinc-600">
-                  Optional remarks for this import allocation
-                </div>
-                <textarea
-                  name={fieldName(["import_shipments", String(index), "remarks"])}
-                  value={row.remarks}
-                  onChange={(event) => updateRow(index, { remarks: event.target.value })}
-                  placeholder="Add notes for this linked import shipment"
-                  disabled={disableEdit}
-                  className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                />
-              </label>
+              ) : null}
             </div>
           );
         })}
@@ -655,16 +554,7 @@ export function ImportShipmentSelectionStepForm({
           />
         ))}
 
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">Notes</div>
-          <textarea
-            name="notes"
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            disabled={disableEdit}
-            className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-          />
-        </label>
+        <input type="hidden" name="notes" value="" />
       </SectionFrame>
     </form>
   );

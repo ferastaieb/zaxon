@@ -14,6 +14,14 @@ import {
   type TrackingStageDefinition,
 } from "./trackingTimelineConfig";
 
+export type TrackingAgentGate = {
+  jebelAliReady: boolean;
+  silaReady: boolean;
+  bathaReady: boolean;
+  omariReady: boolean;
+  naseebReady: boolean;
+};
+
 type Props = {
   step: FtlStepData;
   updateAction: (formData: FormData) => void;
@@ -25,6 +33,7 @@ type Props = {
   locked: boolean;
   lockedMessage?: string;
   syriaClearanceMode?: SyriaClearanceMode;
+  agentGate: TrackingAgentGate;
 };
 
 const STALE_DAYS = 3;
@@ -50,14 +59,66 @@ function daysSince(isoDate: string) {
   return Math.floor(diff / (1000 * 60 * 60 * 24));
 }
 
-type StageState = {
+type GateInfo = {
+  ready: boolean;
+  message: string;
+};
+
+function gateForStage(stageId: string, gate: TrackingAgentGate): GateInfo | null {
+  if (stageId.startsWith("jebel_ali_")) {
+    return {
+      ready: gate.jebelAliReady,
+      message:
+        "Assign Jebel Ali clearing agent in Customs Agents before updating this border.",
+    };
+  }
+  if (stageId.startsWith("sila_")) {
+    return {
+      ready: gate.silaReady,
+      message:
+        "Assign Sila clearing agent in Customs Agents before updating this border.",
+    };
+  }
+  if (stageId.startsWith("batha_")) {
+    return {
+      ready: gate.bathaReady,
+      message:
+        "Assign Batha clearing agent in Customs Agents before updating this border.",
+    };
+  }
+  if (stageId.startsWith("omari_")) {
+    return {
+      ready: gate.omariReady,
+      message:
+        "Assign Omari clearing agent in Customs Agents before updating this border.",
+    };
+  }
+  if (stageId.startsWith("syria_")) {
+    return {
+      ready: gate.naseebReady,
+      message:
+        "Complete Naseeb clearance assignment in Customs Agents before updating Syria border.",
+    };
+  }
+  return null;
+}
+
+type TrackingStageState = {
   stage: TrackingStageDefinition;
   done: boolean;
   dateValue: string;
+  gate: GateInfo | null;
+};
+
+type CustomsStageState = {
+  stage: TrackingStageDefinition;
+  done: boolean;
+  dateValue: string;
+  gate: GateInfo | null;
 };
 
 function stageTone(input: {
-  stage: StageState;
+  stage: TrackingStageState;
   index: number;
   nextIndex: number;
   stalledStageId: string | null;
@@ -79,6 +140,7 @@ export function TrackingStepForm({
   locked,
   lockedMessage,
   syriaClearanceMode,
+  agentGate,
 }: Props) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const source = step.values as Record<string, unknown>;
@@ -112,46 +174,73 @@ export function TrackingStepForm({
         "CLIENT"
       : "CLIENT";
 
-  const stages = useMemo(
+  const allStages = useMemo(
     () => trackingStagesForRegion(region, effectiveSyriaMode),
     [effectiveSyriaMode, region],
   );
+  const customsStages = useMemo(
+    () => allStages.filter((stage) => stage.type === "customs"),
+    [allStages],
+  );
+  const trackingStages = useMemo(
+    () => allStages.filter((stage) => stage.type === "checkpoint"),
+    [allStages],
+  );
 
-  const stageStates = useMemo<StageState[]>(() => {
-    return stages.map((stage) => {
+  const customsStates = useMemo<CustomsStageState[]>(() => {
+    return customsStages.map((stage) => {
+      const dateValue = stringValue(values[stage.dateKey]);
+      const customsDoc =
+        stage.fileKey && stage.type === "customs"
+          ? !!docFor(latestDocsByType, step.id, stage.fileKey) ||
+            !!pendingUploads[stage.id]
+          : true;
+      const done = !!dateValue && customsDoc;
+      return {
+        stage,
+        done,
+        dateValue,
+        gate: gateForStage(stage.id, agentGate),
+      };
+    });
+  }, [agentGate, customsStages, latestDocsByType, pendingUploads, step.id, values]);
+
+  const trackingStates = useMemo<TrackingStageState[]>(() => {
+    return trackingStages.map((stage) => {
       const dateValue = stringValue(values[stage.dateKey]);
       const checkpointDone = stage.flagKey
         ? boolValue(values[stage.flagKey]) || !!dateValue
         : !!dateValue;
-      const customsDoc =
-        stage.type === "customs" && stage.fileKey
-          ? !!docFor(latestDocsByType, step.id, stage.fileKey) ||
-            !!pendingUploads[stage.id]
-          : true;
-      const done =
-        stage.type === "customs" ? !!dateValue && customsDoc : checkpointDone;
-      return { stage, done, dateValue };
+      return {
+        stage,
+        done: checkpointDone,
+        dateValue,
+        gate: gateForStage(stage.id, agentGate),
+      };
     });
-  }, [latestDocsByType, pendingUploads, stages, step.id, values]);
+  }, [agentGate, trackingStages, values]);
 
-  const doneIndexes = stageStates
+  const doneIndexes = trackingStates
     .map((entry, index) => (entry.done ? index : -1))
     .filter((index) => index >= 0);
   const latestDoneIndex = doneIndexes.length ? Math.max(...doneIndexes) : -1;
-  const nextIndex = Math.min(latestDoneIndex + 1, Math.max(stages.length - 1, 0));
+  const nextIndex = Math.min(
+    latestDoneIndex + 1,
+    Math.max(trackingStates.length - 1, 0),
+  );
   const latestDoneDate =
-    latestDoneIndex >= 0 ? stageStates[latestDoneIndex]?.dateValue ?? "" : "";
+    latestDoneIndex >= 0 ? trackingStates[latestDoneIndex]?.dateValue ?? "" : "";
   const stalledStageId =
     latestDoneIndex >= 0 &&
-    latestDoneIndex < stages.length - 1 &&
+    latestDoneIndex < trackingStages.length - 1 &&
     daysSince(latestDoneDate) >= STALE_DAYS
-      ? stages[latestDoneIndex + 1].id
+      ? trackingStages[latestDoneIndex + 1].id
       : null;
-  const activeStage = stages.find((stage) => stage.id === openStageId) ?? null;
+  const activeStage = trackingStages.find((stage) => stage.id === openStageId) ?? null;
   const regionMeta = trackingRegionMeta(region);
 
   return (
-    <form action={updateAction} encType="multipart/form-data">
+    <form action={updateAction}>
       <input type="hidden" name="stepId" value={step.id} />
       <input type="hidden" name="returnTo" value={returnTo} />
       {region === "syria" ? (
@@ -173,39 +262,144 @@ export function TrackingStepForm({
       >
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
-            Interactive timeline
+            Section customs
+          </div>
+          {customsStates.length ? (
+            <div className="space-y-3">
+              {customsStates.map((entry) => {
+                const stage = entry.stage;
+                const stageBlocked = !!entry.gate && !entry.gate.ready;
+                const stageDisabled = disableForm || stageBlocked;
+                const doc =
+                  stage.fileKey && stage.type === "customs"
+                    ? docFor(latestDocsByType, step.id, stage.fileKey)
+                    : undefined;
+
+                return (
+                  <div
+                    key={`customs-${stage.id}`}
+                    className="rounded-lg border border-zinc-200 bg-white p-3"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-900">{stage.title}</div>
+                        <div className="text-xs text-zinc-500">{stage.location}</div>
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                          entry.done
+                            ? "bg-emerald-100 text-emerald-800"
+                            : stageBlocked
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-zinc-100 text-zinc-700"
+                        }`}
+                      >
+                        {entry.done ? "Completed" : stageBlocked ? "Agent required" : "Pending"}
+                      </span>
+                    </div>
+
+                    {stageBlocked ? (
+                      <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                        {entry.gate?.message}
+                      </div>
+                    ) : null}
+
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                      <input
+                        type="date"
+                        name={fieldName([stage.dateKey])}
+                        value={values[stage.dateKey] ?? ""}
+                        onChange={(event) => setValue(stage.dateKey, event.target.value)}
+                        disabled={stageDisabled}
+                        className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setValue(stage.dateKey, todayIso())}
+                        disabled={stageDisabled}
+                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                      >
+                        Set to now
+                      </button>
+                    </div>
+
+                    {stage.fileKey ? (
+                      <div className="mt-2">
+                        <input
+                          type="file"
+                          name={fieldName([stage.fileKey])}
+                          disabled={stageDisabled}
+                          onChange={(event) =>
+                            setPendingUploads((prev) => ({
+                              ...prev,
+                              [stage.id]: (event.target.files?.length ?? 0) > 0,
+                            }))
+                          }
+                          className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
+                        />
+                        <div className="mt-1 text-xs text-zinc-500">
+                          {doc ? (
+                            <a href={`/api/documents/${doc.id}`} className="hover:underline">
+                              Download latest declaration
+                            </a>
+                          ) : (
+                            "No declaration upload yet."
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-600">
+              No customs actions for this region.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            Section tracking
           </div>
           <div className="overflow-x-auto pb-1">
             <div className="flex min-w-max items-center gap-2">
-              {stageStates.map((entry, index) => {
+              {trackingStates.map((entry, index) => {
                 const tone = stageTone({
                   stage: entry,
                   index,
                   nextIndex,
                   stalledStageId,
                 });
+                const stageBlocked = !!entry.gate && !entry.gate.ready;
                 const buttonClass =
-                  tone === "done"
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                    : tone === "active"
-                      ? "border-blue-300 bg-blue-50 text-blue-900"
-                      : tone === "stalled"
-                        ? "border-red-300 bg-red-50 text-red-900"
-                        : "border-zinc-200 bg-white text-zinc-700";
+                  stageBlocked
+                    ? "border-amber-300 bg-amber-50 text-amber-900"
+                    : tone === "done"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                      : tone === "active"
+                        ? "border-blue-300 bg-blue-50 text-blue-900"
+                        : tone === "stalled"
+                          ? "border-red-300 bg-red-50 text-red-900"
+                          : "border-zinc-200 bg-white text-zinc-700";
                 const dotClass =
-                  tone === "done"
-                    ? "bg-emerald-500"
-                    : tone === "active"
-                      ? "bg-blue-500"
-                      : tone === "stalled"
-                        ? "bg-red-500"
-                        : "bg-zinc-300";
+                  stageBlocked
+                    ? "bg-amber-500"
+                    : tone === "done"
+                      ? "bg-emerald-500"
+                      : tone === "active"
+                        ? "bg-blue-500"
+                        : tone === "stalled"
+                          ? "bg-red-500"
+                          : "bg-zinc-300";
                 return (
                   <Fragment key={entry.stage.id}>
                     <button
                       type="button"
                       onClick={() => setOpenStageId(entry.stage.id)}
-                      className={`w-40 rounded-lg border px-3 py-2 text-left transition ${buttonClass}`}
+                      disabled={disableForm || stageBlocked}
+                      className={`w-40 rounded-lg border px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-80 ${buttonClass}`}
                     >
                       <div className="flex items-center gap-2">
                         <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
@@ -213,10 +407,14 @@ export function TrackingStepForm({
                       </div>
                       <div className="mt-1 text-[11px] opacity-80">{entry.stage.location}</div>
                       <div className="mt-1 text-[11px] font-medium">
-                        {entry.done ? "Completed" : "Pending"}
+                        {entry.done
+                          ? "Completed"
+                          : stageBlocked
+                            ? "Agent required"
+                            : "Pending"}
                       </div>
                     </button>
-                    {index < stageStates.length - 1 ? (
+                    {index < trackingStates.length - 1 ? (
                       <div
                         className={`h-[3px] w-8 rounded-full ${
                           entry.done ? "bg-emerald-400" : "bg-zinc-300"
@@ -233,7 +431,7 @@ export function TrackingStepForm({
         {stalledStageId ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
             Tracking looks stalled for more than {STALE_DAYS} days at{" "}
-            {stages.find((stage) => stage.id === stalledStageId)?.shortLabel}.
+            {trackingStages.find((stage) => stage.id === stalledStageId)?.shortLabel}.
           </div>
         ) : null}
 
@@ -243,14 +441,12 @@ export function TrackingStepForm({
           </div>
         ) : null}
 
-        {stageStates.map((entry) => {
+        {trackingStates.map((entry) => {
           const stage = entry.stage;
-          const doc =
-            stage.fileKey && stage.type === "customs"
-              ? docFor(latestDocsByType, step.id, stage.fileKey)
-              : undefined;
           const flagChecked = stage.flagKey ? boolValue(values[stage.flagKey]) : false;
           const stageOpen = openStageId === stage.id;
+          const stageBlocked = !!entry.gate && !entry.gate.ready;
+          const stageDisabled = disableForm || stageBlocked;
 
           return (
             <div
@@ -279,9 +475,20 @@ export function TrackingStepForm({
                 </div>
 
                 <div className="mt-4 space-y-3">
+                  {stageBlocked ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {entry.gate?.message}
+                    </div>
+                  ) : null}
+
                   {stage.type === "checkpoint" && stage.flagKey ? (
                     <label className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
-                      <input type="hidden" name={fieldName([stage.flagKey])} value="" />
+                      <input
+                        type="hidden"
+                        name={fieldName([stage.flagKey])}
+                        value=""
+                        disabled={stageDisabled}
+                      />
                       <input
                         type="checkbox"
                         name={fieldName([stage.flagKey])}
@@ -290,7 +497,7 @@ export function TrackingStepForm({
                         onChange={(event) =>
                           setBoolWithDate(stage.flagKey!, stage.dateKey, event.target.checked)
                         }
-                        disabled={disableForm}
+                        disabled={stageDisabled}
                         className="h-4 w-4 rounded border-zinc-300"
                       />
                       <span>Mark as completed</span>
@@ -303,7 +510,7 @@ export function TrackingStepForm({
                       name={fieldName([stage.dateKey])}
                       value={values[stage.dateKey] ?? ""}
                       onChange={(event) => setValue(stage.dateKey, event.target.value)}
-                      disabled={disableForm}
+                      disabled={stageDisabled}
                       className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                     />
                     <button
@@ -313,38 +520,12 @@ export function TrackingStepForm({
                         setValue(stage.dateKey, now);
                         if (stage.flagKey) setBoolWithDate(stage.flagKey, stage.dateKey, true);
                       }}
-                      disabled={disableForm}
+                      disabled={stageDisabled}
                       className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
                     >
                       Set to now
                     </button>
                   </div>
-
-                  {stage.type === "customs" && stage.fileKey ? (
-                    <div>
-                      <input
-                        type="file"
-                        name={fieldName([stage.fileKey])}
-                        disabled={disableForm}
-                        onChange={(event) =>
-                          setPendingUploads((prev) => ({
-                            ...prev,
-                            [stage.id]: (event.target.files?.length ?? 0) > 0,
-                          }))
-                        }
-                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
-                      />
-                      <div className="mt-1 text-xs text-zinc-500">
-                        {doc ? (
-                          <a href={`/api/documents/${doc.id}`} className="hover:underline">
-                            Download latest declaration
-                          </a>
-                        ) : (
-                          "No declaration upload yet."
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
 
                   {stage.includeOffloadLocation ? (
                     <input
@@ -354,7 +535,7 @@ export function TrackingStepForm({
                         setValue("syria_offload_location", event.target.value)
                       }
                       placeholder="Offload location"
-                      disabled={disableForm}
+                      disabled={stageDisabled}
                       className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                     />
                   ) : null}
@@ -380,7 +561,7 @@ export function TrackingStepForm({
           </div>
         ) : (
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
-            Click any timeline stage to update date, documents, and status.
+            Click any tracking stage to update movement status and dates.
           </div>
         )}
 

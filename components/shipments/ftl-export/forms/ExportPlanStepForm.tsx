@@ -26,6 +26,7 @@ export function ExportPlanStepForm({
   const [orderReceivedDate, setOrderReceivedDate] = useState(
     stringValue(values.order_received_date),
   );
+  const isDone = step.status === "DONE";
 
   const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -53,6 +54,7 @@ export function ExportPlanStepForm({
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
+        lockOnDone={false}
         saveLabel="Save overview"
       >
         <div
@@ -82,7 +84,7 @@ export function ExportPlanStepForm({
               role="switch"
               aria-checked={orderReceived}
               onClick={toggleMission}
-              disabled={!canEdit}
+              disabled={!canEdit || isDone}
               className={`relative inline-flex h-11 w-28 items-center rounded-full border transition ${
                 orderReceived
                   ? "border-blue-500 bg-blue-600 text-white"
@@ -115,7 +117,7 @@ export function ExportPlanStepForm({
                 name={fieldName(["order_received_date"])}
                 value={orderReceivedDate}
                 onChange={(event) => setOrderReceivedDate(event.target.value)}
-                disabled={!canEdit || !orderReceived}
+                disabled={!canEdit || !orderReceived || isDone}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
               />
             </label>
@@ -145,15 +147,6 @@ export function ExportPlanStepForm({
           />
         </label>
 
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">Notes</div>
-          <textarea
-            name="notes"
-            defaultValue={step.notes ?? ""}
-            disabled={!canEdit}
-            className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-          />
-        </label>
       </SectionFrame>
     </form>
   );

@@ -19,6 +19,7 @@ export type FtlDocumentMeta = {
   id: number;
   file_name: string;
   uploaded_at: string;
+  count?: number;
   source?: "STAFF" | "CUSTOMER";
   is_received?: boolean;
   review_status?: "PENDING" | "VERIFIED" | "REJECTED";

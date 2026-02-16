@@ -45,6 +45,8 @@ type Props = {
   canEdit: boolean;
   isAdmin?: boolean;
   disabledMessage?: string;
+  lockOnDone?: boolean;
+  showSaveButton?: boolean;
 };
 
 export function SectionFrame({
@@ -59,10 +61,12 @@ export function SectionFrame({
   canEdit,
   isAdmin = false,
   disabledMessage,
+  lockOnDone = true,
+  showSaveButton = true,
 }: Props) {
   const [adminOverride, setAdminOverride] = useState(false);
   const done = status === "DONE";
-  const doneReadOnly = done && (!isAdmin || !adminOverride);
+  const doneReadOnly = lockOnDone && done && (!isAdmin || !adminOverride);
   const effectiveDisabled = disabled || doneReadOnly;
   const doneClass = done ? "border-emerald-200 bg-[#E8F5E9]" : "border-zinc-200 bg-white";
 
@@ -87,7 +91,7 @@ export function SectionFrame({
           {disabledMessage}
         </div>
       ) : null}
-      {done && isAdmin ? (
+      {lockOnDone && done && isAdmin ? (
         <div className="mt-4">
           <button
             type="button"
@@ -103,7 +107,9 @@ export function SectionFrame({
       </fieldset>
       <div className="mt-4 flex items-center justify-between gap-3">
         {footer ?? <span className="text-xs text-zinc-500" />}
-        <SaveButton disabled={!canEdit || effectiveDisabled} label={saveLabel} />
+        {showSaveButton ? (
+          <SaveButton disabled={!canEdit || effectiveDisabled} label={saveLabel} />
+        ) : null}
       </div>
     </div>
   );

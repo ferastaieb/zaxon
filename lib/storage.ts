@@ -2,6 +2,7 @@ import "server-only";
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import {
   DeleteObjectsCommand,
@@ -166,7 +167,9 @@ export async function saveUpload(input: {
   const fileName = sanitizeFileName(input.file.name || "upload");
   const prefixValue = input.filePrefix ? sanitizeFileName(input.filePrefix) : "";
   const prefix = prefixValue ? `${prefixValue}-` : "";
-  const fullName = sanitizeFileName(`${prefix}${Date.now()}-${fileName}`);
+  const fullName = sanitizeFileName(
+    `${prefix}${Date.now()}-${randomUUID().slice(0, 8)}-${fileName}`,
+  );
 
   const buffer = Buffer.from(await input.file.arrayBuffer());
   const mimeType = input.file.type || null;

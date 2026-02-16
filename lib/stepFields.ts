@@ -252,11 +252,17 @@ export function extractStepFieldUpdates(formData: FormData): StepFieldUpdate[] {
 
 export function extractStepFieldUploads(formData: FormData): StepFieldUpload[] {
   const uploads: StepFieldUpload[] = [];
-  for (const [key, value] of formData.entries()) {
+  const seen = new Set<string>();
+  for (const key of formData.keys()) {
     if (!key.startsWith("field:")) continue;
-    if (!(value instanceof File) || value.size <= 0) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const path = decodeFieldPath(key.slice("field:".length));
-    uploads.push({ path, file: value });
+    const values = formData.getAll(key);
+    for (const value of values) {
+      if (!(value instanceof File) || value.size <= 0) continue;
+      uploads.push({ path, file: value });
+    }
   }
   return uploads;
 }

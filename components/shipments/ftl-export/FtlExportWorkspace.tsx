@@ -22,6 +22,7 @@ import {
   parseLoadingRows,
   parseTruckBookingRows,
 } from "@/lib/ftlExport/helpers";
+import { computeFtlExportStatuses } from "@/lib/ftlExport/status";
 import type {
   FtlDocumentMeta,
   FtlImportCandidate,
@@ -34,7 +35,7 @@ import { ExportPlanStepForm } from "./forms/ExportPlanStepForm";
 import { ImportShipmentSelectionStepForm } from "./forms/ImportShipmentSelectionStepForm";
 import { LoadingDetailsStepForm } from "./forms/LoadingDetailsStepForm";
 import { StockViewStepForm } from "./forms/StockViewStepForm";
-import { TrackingStepForm } from "./forms/TrackingStepForm";
+import { TrackingStepForm, type TrackingAgentGate } from "./forms/TrackingStepForm";
 import { TrucksDetailsStepForm } from "./forms/TrucksDetailsStepForm";
 import { TRACKING_REGION_FLOW } from "./forms/trackingTimelineConfig";
 
@@ -151,6 +152,9 @@ export function FtlExportWorkspace({
   const ksaStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trackingKsa);
   const jordanStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trackingJordan);
   const syriaStep = stepByName.get(FTL_EXPORT_STEP_NAMES.trackingSyria);
+  const orderReceivedDate = getString(
+    (planStep?.values ?? {})["order_received_date"],
+  );
 
   const truckRows = parseTruckBookingRows((trucksStep?.values ?? {}) as Record<string, unknown>);
   const loadingRows = parseLoadingRows((loadingStep?.values ?? {}) as Record<string, unknown>);
@@ -159,12 +163,48 @@ export function FtlExportWorkspace({
   const importWarnings = computeImportWarnings(importRows);
   const stockSummary = buildImportStockSummary(importRows);
   const importsAvailable = allReferencedImportsAvailable(importRows);
-  const loadingCompleted = loadingStep?.status === "DONE";
-  const canFinalizeInvoice = loadingCompleted && importsAvailable;
+  const computedStatus = useMemo(() => {
+    const stepsByName: Record<string, { id: number; values: Record<string, unknown> } | undefined> =
+      {};
+    for (const currentStep of steps) {
+      stepsByName[currentStep.name] = {
+        id: currentStep.id,
+        values: (currentStep.values ?? {}) as Record<string, unknown>,
+      };
+    }
+    return computeFtlExportStatuses({
+      stepsByName,
+      docTypes: new Set(Object.keys(latestDocsByType)),
+    });
+  }, [steps, latestDocsByType]);
+  const loadingCompleted =
+    computedStatus.statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] === "DONE";
+  const canFinalizeInvoice = computedStatus.canFinalizeInvoice;
+  const trucksReadyForInvoice = computedStatus.invoiceTruckDetailsComplete;
+  const missingTruckRefs = computedStatus.missingInvoiceTruckDetails;
+  const missingTruckPreview = missingTruckRefs.slice(0, 3).join(", ");
+  const missingTruckSuffix =
+    missingTruckRefs.length > 3 ? ` +${missingTruckRefs.length - 3} more` : "";
+  const invoicePrereqMessageParts: string[] = [];
+  if (!loadingCompleted) {
+    invoicePrereqMessageParts.push("Complete loading for all trucks.");
+  }
+  if (!importsAvailable) {
+    invoicePrereqMessageParts.push(
+      "All linked import shipments must be processed/available.",
+    );
+  }
+  if (!trucksReadyForInvoice) {
+    invoicePrereqMessageParts.push(
+      missingTruckRefs.length
+        ? `Complete truck details (truck number, driver name, driver contact) for: ${missingTruckPreview}${missingTruckSuffix}.`
+        : "Complete truck details (truck number, driver name, driver contact) in Trucks Details tab.",
+    );
+  }
+  const invoicePrereqMessage = invoicePrereqMessageParts.join(" ");
   const invoiceFinalized = isTruthy(invoiceStep?.values.invoice_finalized);
   const invoiceDone = invoiceStep?.status === "DONE";
-  const agentsDone = agentsStep?.status === "DONE";
-  const trackingUnlocked = loadingCompleted && invoiceDone && agentsDone;
+  const trackingUnlocked = loadingCompleted && invoiceDone;
   const trackingLink = trackingToken ? `/track/${trackingToken}` : "";
   const trackingRegionStates = TRACKING_REGION_FLOW.map((regionEntry) => {
     const step =
@@ -188,6 +228,17 @@ export function FtlExportWorkspace({
     getString(agentsStep?.values.naseeb_clearance_mode).toUpperCase() === "ZAXON"
       ? "ZAXON"
       : "CLIENT";
+  const agentValues = (agentsStep?.values ?? {}) as Record<string, unknown>;
+  const trackingAgentGate: TrackingAgentGate = {
+    jebelAliReady: !!getString(agentValues.jebel_ali_agent_name),
+    silaReady: !!getString(agentValues.sila_agent_name),
+    bathaReady: !!getString(agentValues.batha_agent_name),
+    omariReady: !!getString(agentValues.omari_agent_name),
+    naseebReady:
+      syriaClearanceMode === "ZAXON"
+        ? !!getString(agentValues.naseeb_agent_name)
+        : !!getString(agentValues.naseeb_client_final_choice),
+  };
 
   const baseUrl = `/shipments/ftl-export/${shipment.id}`;
   const returnTo = (nextTab: FtlMainTab, sub?: string) => {
@@ -285,6 +336,7 @@ export function FtlExportWorkspace({
             canEdit={canEdit}
             isAdmin={isAdmin}
             invoiceFinalized={invoiceFinalized}
+            defaultEstimatedLoadingDate={orderReceivedDate}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.trucksDetails} />
@@ -322,10 +374,25 @@ export function FtlExportWorkspace({
                 className={`rounded-lg px-3 py-2 text-sm font-medium ${
                   invoiceTab === entry.id
                     ? "bg-zinc-900 text-white"
+                    : entry.id === "invoice" && !trucksReadyForInvoice
+                      ? "border border-red-200 bg-red-50 text-red-800 hover:bg-red-100"
                     : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
                 }`}
               >
-                {entry.label}
+                <span className="inline-flex items-center gap-2">
+                  <span>{entry.label}</span>
+                  {entry.id === "invoice" && !trucksReadyForInvoice ? (
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        invoiceTab === entry.id
+                          ? "bg-white/20 text-white"
+                          : "bg-red-100 text-red-700"
+                      }`}
+                    >
+                      Truck details required
+                    </span>
+                  ) : null}
+                </span>
               </button>
             ))}
           </div>
@@ -366,6 +433,7 @@ export function FtlExportWorkspace({
                 canEdit={canEdit}
                 isAdmin={isAdmin}
                 canFinalizeInvoice={canFinalizeInvoice}
+                prerequisiteMessage={invoicePrereqMessage || undefined}
                 latestDocsByType={latestDocsByType}
               />
             ) : (
@@ -493,9 +561,10 @@ export function FtlExportWorkspace({
                 locked={!trackingUnlocked}
                 lockedMessage={
                   !trackingUnlocked
-                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    ? "Tracking starts only after loading is done and export invoice is finalized."
                     : undefined
                 }
+                agentGate={trackingAgentGate}
                 latestDocsByType={latestDocsByType}
               />
             ) : (
@@ -515,9 +584,10 @@ export function FtlExportWorkspace({
                 locked={!trackingUnlocked}
                 lockedMessage={
                   !trackingUnlocked
-                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    ? "Tracking starts only after loading is done and export invoice is finalized."
                     : undefined
                 }
+                agentGate={trackingAgentGate}
                 latestDocsByType={latestDocsByType}
               />
             ) : (
@@ -537,9 +607,10 @@ export function FtlExportWorkspace({
                 locked={!trackingUnlocked}
                 lockedMessage={
                   !trackingUnlocked
-                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    ? "Tracking starts only after loading is done and export invoice is finalized."
                     : undefined
                 }
+                agentGate={trackingAgentGate}
                 latestDocsByType={latestDocsByType}
               />
             ) : (
@@ -559,10 +630,11 @@ export function FtlExportWorkspace({
                 locked={!trackingUnlocked}
                 lockedMessage={
                   !trackingUnlocked
-                    ? "Tracking starts only after loading is done, invoice is finalized, and customs agents are allocated."
+                    ? "Tracking starts only after loading is done and export invoice is finalized."
                     : undefined
                 }
                 syriaClearanceMode={syriaClearanceMode}
+                agentGate={trackingAgentGate}
                 latestDocsByType={latestDocsByType}
               />
             ) : (

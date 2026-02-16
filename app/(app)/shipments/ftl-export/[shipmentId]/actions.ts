@@ -80,6 +80,48 @@ function hasAnyImportRowData(row: {
   );
 }
 
+function hasTrackingAgentPrerequisite(
+  stepName: string,
+  rawAgentsValues: Record<string, unknown>,
+  touchedFieldKeys: Set<string>,
+) {
+  const agentsValues = toRecord(rawAgentsValues);
+  const hasPrefix = (prefix: string) => {
+    for (const key of touchedFieldKeys) {
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingUae) {
+    const requiresJebel = hasPrefix("jebel_ali_");
+    const requiresSila = hasPrefix("sila_");
+    const jebelReady = !!getString(agentsValues.jebel_ali_agent_name);
+    const silaReady = !!getString(agentsValues.sila_agent_name);
+    return (!requiresJebel || jebelReady) && (!requiresSila || silaReady);
+  }
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingKsa) {
+    const requiresBatha = hasPrefix("batha_");
+    return !requiresBatha || !!getString(agentsValues.batha_agent_name);
+  }
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingJordan) {
+    const requiresOmari = hasPrefix("omari_");
+    return !requiresOmari || !!getString(agentsValues.omari_agent_name);
+  }
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingSyria) {
+    if (!hasPrefix("syria_")) return true;
+    const mode = getString(agentsValues.naseeb_clearance_mode).toUpperCase();
+    if (mode === "ZAXON") {
+      return !!getString(agentsValues.naseeb_agent_name);
+    }
+    if (mode === "CLIENT") {
+      return !!getString(agentsValues.naseeb_client_final_choice);
+    }
+    return false;
+  }
+  return true;
+}
+
 async function ensureInvoiceNumberUnique(input: {
   shipmentId: number;
   currentStepId: number;
@@ -120,6 +162,9 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   const fieldRemovals = extractStepFieldRemovals(formData);
   let mergedValues = applyStepFieldUpdates(existingValues, fieldUpdates);
   mergedValues = applyStepFieldRemovals(mergedValues, fieldRemovals);
+  const touchedFieldKeys = new Set(
+    fieldUpdates.map((update) => (update.path.length ? update.path[0] : "")),
+  );
 
   const finalizeInvoice =
     String(formData.get("finalizeInvoice") ?? "").trim() === "1";
@@ -154,12 +199,17 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
     const agentsStep = steps.find(
       (row) => row.name === FTL_EXPORT_STEP_NAMES.customsAgentsAllocation,
     );
+    const agentsValues = agentsStep
+      ? parseStepFieldValues(agentsStep.field_values_json)
+      : {};
     if (
       loadingStep?.status !== "DONE" ||
-      invoiceStatusStep?.status !== "DONE" ||
-      agentsStep?.status !== "DONE"
+      invoiceStatusStep?.status !== "DONE"
     ) {
       redirect(appendParam(returnBase, "error", "tracking_locked"));
+    }
+    if (!hasTrackingAgentPrerequisite(step.name, agentsValues, touchedFieldKeys)) {
+      redirect(appendParam(returnBase, "error", "tracking_agent_required"));
     }
   }
 
@@ -280,19 +330,16 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   if (trackingSteps.has(step.name)) {
     const loadingDone = computed.statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] === "DONE";
     const invoiceDone = computed.statuses[FTL_EXPORT_STEP_NAMES.exportInvoice] === "DONE";
-    const agentsDone =
-      computed.statuses[FTL_EXPORT_STEP_NAMES.customsAgentsAllocation] === "DONE";
-    if (!loadingDone || !invoiceDone || !agentsDone) {
+    if (!loadingDone || !invoiceDone) {
       redirect(appendParam(returnBase, "error", "tracking_locked"));
     }
   }
 
-  if (
-    step.name === FTL_EXPORT_STEP_NAMES.exportInvoice &&
-    isTruthy((mergedValues as Record<string, unknown>).invoice_finalized) &&
-    !computed.canFinalizeInvoice
-  ) {
-    redirect(appendParam(returnBase, "error", "invoice_prereq"));
+  if (step.name === FTL_EXPORT_STEP_NAMES.exportInvoice && !computed.canFinalizeInvoice) {
+    const errorCode = computed.invoiceTruckDetailsComplete
+      ? "invoice_prereq"
+      : "invoice_truck_details_required";
+    redirect(appendParam(returnBase, "error", errorCode));
   }
 
   await updateShipmentStep({

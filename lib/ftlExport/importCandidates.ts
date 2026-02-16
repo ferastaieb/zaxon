@@ -7,7 +7,10 @@ import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import { isTruthy } from "@/lib/fclImport/helpers";
 import { parseStepFieldValues } from "@/lib/stepFields";
 import { FTL_EXPORT_STEP_NAMES } from "./constants";
-import type { FtlImportCandidate } from "./importCandidateTypes";
+import type {
+  FtlImportAllocationHistoryRow,
+  FtlImportCandidate,
+} from "./importCandidateTypes";
 
 type ShipmentStepLite = {
   id: number;
@@ -15,6 +18,7 @@ type ShipmentStepLite = {
   name: string;
   status: "PENDING" | "IN_PROGRESS" | "DONE" | "BLOCKED";
   field_values_json: string;
+  updated_at?: string;
 };
 
 type ShipmentListLite = {
@@ -41,6 +45,85 @@ function toNumber(value: unknown) {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+type AllocationBucket = {
+  weight: number;
+  quantity: number;
+  history: Map<string, FtlImportAllocationHistoryRow>;
+};
+
+function emptyAllocationBucket(): AllocationBucket {
+  return {
+    weight: 0,
+    quantity: 0,
+    history: new Map<string, FtlImportAllocationHistoryRow>(),
+  };
+}
+
+function ensureAllocationBucket<K>(
+  map: Map<K, AllocationBucket>,
+  key: K,
+) {
+  let bucket = map.get(key);
+  if (!bucket) {
+    bucket = emptyAllocationBucket();
+    map.set(key, bucket);
+  }
+  return bucket;
+}
+
+function addAllocationToBucket(
+  bucket: AllocationBucket,
+  entry: FtlImportAllocationHistoryRow,
+) {
+  bucket.weight += entry.allocatedWeight;
+  bucket.quantity += entry.allocatedQuantity;
+  if (entry.allocatedWeight <= 0 && entry.allocatedQuantity <= 0) return;
+  const historyKey =
+    entry.exportShipmentId > 0
+      ? `shipment:${entry.exportShipmentId}`
+      : `legacy:${entry.exportShipmentCode}:${entry.exportDate}`;
+  const current = bucket.history.get(historyKey);
+  if (current) {
+    current.allocatedWeight += entry.allocatedWeight;
+    current.allocatedQuantity += entry.allocatedQuantity;
+    if (!current.exportDate && entry.exportDate) {
+      current.exportDate = entry.exportDate;
+    }
+    return;
+  }
+  bucket.history.set(historyKey, { ...entry });
+}
+
+function mergeAllocationHistories(
+  buckets: Array<AllocationBucket | undefined>,
+): FtlImportAllocationHistoryRow[] {
+  const merged = new Map<string, FtlImportAllocationHistoryRow>();
+  for (const bucket of buckets) {
+    if (!bucket) continue;
+    for (const entry of bucket.history.values()) {
+      const key =
+        entry.exportShipmentId > 0
+          ? `shipment:${entry.exportShipmentId}`
+          : `legacy:${entry.exportShipmentCode}:${entry.exportDate}`;
+      const current = merged.get(key);
+      if (current) {
+        current.allocatedWeight += entry.allocatedWeight;
+        current.allocatedQuantity += entry.allocatedQuantity;
+        continue;
+      }
+      merged.set(key, { ...entry });
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => {
+    const left = a.exportDate || "";
+    const right = b.exportDate || "";
+    if (left && right && left !== right) return left.localeCompare(right);
+    if (left && !right) return -1;
+    if (!left && right) return 1;
+    return a.exportShipmentCode.localeCompare(b.exportShipmentCode);
+  });
 }
 
 function findBoeNumber(steps: ShipmentStepLite[]) {
@@ -115,37 +198,44 @@ function normalizeImportTemplateName(name: string) {
 
 function buildAllocationMap(
   allSteps: ShipmentStepLite[],
+  shipmentMetaById: Map<number, { shipmentCode: string; exportDate: string }>,
   currentShipmentId: number,
 ) {
-  const byShipmentId = new Map<number, { weight: number; quantity: number }>();
-  const byReference = new Map<string, { weight: number; quantity: number }>();
+  const byShipmentId = new Map<number, AllocationBucket>();
+  const byReference = new Map<string, AllocationBucket>();
 
   for (const step of allSteps) {
     if (step.shipment_id === currentShipmentId) continue;
     if (step.name !== FTL_EXPORT_STEP_NAMES.importShipmentSelection) continue;
     const values = parseStepFieldValues(step.field_values_json);
     const importRows = asArray(values.import_shipments);
+    const exportMeta = shipmentMetaById.get(step.shipment_id);
     for (const row of importRows) {
       const sourceShipmentId = Number(toString(row.source_shipment_id) || "0");
       const reference = toString(row.import_shipment_reference).toUpperCase();
       const boe = toString(row.import_boe_number).toUpperCase();
       const quantity = toNumber(row.allocated_quantity);
       const weight = toNumber(row.allocated_weight);
+      const historyRow: FtlImportAllocationHistoryRow = {
+        exportShipmentId: step.shipment_id,
+        exportShipmentCode:
+          exportMeta?.shipmentCode ||
+          `SHP-${String(step.shipment_id).padStart(6, "0")}`,
+        exportDate: exportMeta?.exportDate || step.updated_at || "",
+        allocatedWeight: weight,
+        allocatedQuantity: quantity,
+      };
 
       if (sourceShipmentId > 0) {
-        const current = byShipmentId.get(sourceShipmentId) ?? { weight: 0, quantity: 0 };
-        current.weight += weight;
-        current.quantity += quantity;
-        byShipmentId.set(sourceShipmentId, current);
+        const bucket = ensureAllocationBucket(byShipmentId, sourceShipmentId);
+        addAllocationToBucket(bucket, historyRow);
         continue;
       }
 
       const fallbackKey = reference || boe;
       if (fallbackKey) {
-        const current = byReference.get(fallbackKey) ?? { weight: 0, quantity: 0 };
-        current.weight += weight;
-        current.quantity += quantity;
-        byReference.set(fallbackKey, current);
+        const bucket = ensureAllocationBucket(byReference, fallbackKey);
+        addAllocationToBucket(bucket, historyRow);
       }
     }
   }
@@ -170,6 +260,15 @@ export async function listFtlImportCandidates(input: {
     listWorkflowTemplates({ includeArchived: true }),
     scanAll<ShipmentStepLite>(tableName("shipment_steps")),
   ]);
+  const shipmentMetaById = new Map(
+    shipments.map((shipment) => [
+      shipment.id,
+      {
+        shipmentCode: shipment.shipment_code,
+        exportDate: shipment.last_update_at || shipment.created_at || "",
+      },
+    ]),
+  );
 
   const templateNameById = new Map(
     templates.map((template) => [template.id, normalizeImportTemplateName(template.name)]),
@@ -179,7 +278,11 @@ export async function listFtlImportCandidates(input: {
     if (!stepsByShipmentId.has(step.shipment_id)) stepsByShipmentId.set(step.shipment_id, []);
     stepsByShipmentId.get(step.shipment_id)?.push(step);
   }
-  const allocationMap = buildAllocationMap(allSteps, input.currentShipmentId);
+  const allocationMap = buildAllocationMap(
+    allSteps,
+    shipmentMetaById,
+    input.currentShipmentId,
+  );
 
   const candidates: FtlImportCandidate[] = [];
   for (const shipment of shipments) {
@@ -214,26 +317,26 @@ export async function listFtlImportCandidates(input: {
       shipment.overall_status === "COMPLETED";
     const nonPhysicalStock = isFclImport ? !fclSnapshot.hasPhysicalRows : false;
 
-    const sourceAllocation = allocationMap.byShipmentId.get(shipment.id) ?? {
-      weight: 0,
-      quantity: 0,
-    };
-    const referenceAllocation =
-      allocationMap.byReference.get(shipment.shipment_code.toUpperCase()) ?? {
-        weight: 0,
-        quantity: 0,
-      };
+    const sourceAllocation = allocationMap.byShipmentId.get(shipment.id);
+    const referenceAllocation = allocationMap.byReference.get(
+      shipment.shipment_code.toUpperCase(),
+    );
     const boeAllocation = boeNumber
-      ? allocationMap.byReference.get(boeNumber.toUpperCase()) ?? {
-          weight: 0,
-          quantity: 0,
-        }
-      : { weight: 0, quantity: 0 };
+      ? allocationMap.byReference.get(boeNumber.toUpperCase())
+      : undefined;
+    const allocationBuckets = [sourceAllocation, referenceAllocation, boeAllocation]
+      .filter((bucket): bucket is AllocationBucket => !!bucket)
+      .filter((bucket, index, list) => list.indexOf(bucket) === index);
 
-    const alreadyAllocatedWeight =
-      sourceAllocation.weight + referenceAllocation.weight + boeAllocation.weight;
-    const alreadyAllocatedQuantity =
-      sourceAllocation.quantity + referenceAllocation.quantity + boeAllocation.quantity;
+    const alreadyAllocatedWeight = allocationBuckets.reduce(
+      (total, bucket) => total + bucket.weight,
+      0,
+    );
+    const alreadyAllocatedQuantity = allocationBuckets.reduce(
+      (total, bucket) => total + bucket.quantity,
+      0,
+    );
+    const allocationHistory = mergeAllocationHistories(allocationBuckets);
 
     const meta = visibleById.get(shipment.id);
     candidates.push({
@@ -251,6 +354,7 @@ export async function listFtlImportCandidates(input: {
       alreadyAllocatedQuantity,
       remainingWeight: importedWeight - alreadyAllocatedWeight,
       remainingQuantity: importedQuantity - alreadyAllocatedQuantity,
+      allocationHistory,
       overallStatus: shipment.overall_status,
     });
   }

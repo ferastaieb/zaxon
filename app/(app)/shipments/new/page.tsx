@@ -12,8 +12,8 @@ import { ensureFclImportTemplate } from "@/lib/fclImport/template";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import { normalizeContainerNumbers } from "@/lib/fclImport/helpers";
 import {
+  FTL_EXPORT_ROUTES,
   FTL_EXPORT_SERVICE_TYPE,
-  FTL_EXPORT_STEP_NAMES,
 } from "@/lib/ftlExport/constants";
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
 
@@ -48,14 +48,22 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
     const customerPartyIds = (formData.getAll("customerPartyIds") ?? [])
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value) && value > 0);
-    const origin = String(formData.get("origin") ?? "").trim();
-    const destination = String(formData.get("destination") ?? "").trim();
+    const originInput = String(formData.get("origin") ?? "").trim();
+    const destinationInput = String(formData.get("destination") ?? "").trim();
+    const ftlRouteId = String(formData.get("ftlRouteId") ?? "").trim();
+    const selectedFtlRoute =
+      serviceType === FTL_EXPORT_SERVICE_TYPE
+        ? FTL_EXPORT_ROUTES.find((route) => route.id === ftlRouteId) ?? null
+        : null;
+    const origin =
+      selectedFtlRoute?.origin ??
+      originInput;
+    const destination =
+      selectedFtlRoute?.destination ??
+      destinationInput;
     const containerNumbers = normalizeContainerNumbers(
       formData.getAll("containerNumbers").map((value) => String(value)),
     );
-    const plannedTruckCountRaw = String(formData.get("plannedTruckCount") ?? "").trim();
-    const plannedTruckType = String(formData.get("plannedTruckType") ?? "").trim();
-    const plannedTruckCount = plannedTruckCountRaw ? Number(plannedTruckCountRaw) : null;
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
       ? Array.from(
@@ -70,7 +78,17 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
 
     const validServiceType =
       serviceType === SERVICE_TYPE_FCL || serviceType === FTL_EXPORT_SERVICE_TYPE;
-    if (!validServiceType || customerPartyIds.length === 0 || !origin || !destination) {
+    if (
+      !validServiceType ||
+      customerPartyIds.length === 0 ||
+      !origin ||
+      !destination ||
+      (serviceType === FTL_EXPORT_SERVICE_TYPE && !selectedFtlRoute)
+    ) {
+      redirect("/shipments/new?error=invalid");
+    }
+
+    if (serviceType === FTL_EXPORT_SERVICE_TYPE && customerPartyIds.length !== 1) {
       redirect("/shipments/new?error=invalid");
     }
 
@@ -134,31 +152,6 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       workflowTemplateId,
       createdByUserId: user.id,
     });
-
-    const steps = await listShipmentSteps(created.shipmentId);
-    const trucksStep = steps.find(
-      (step) => step.name === FTL_EXPORT_STEP_NAMES.trucksDetails,
-    );
-    if (trucksStep) {
-      const truckValues: Record<string, unknown> = {};
-      if (plannedTruckCount !== null && Number.isFinite(plannedTruckCount) && plannedTruckCount > 0) {
-        truckValues.total_trucks_planned = String(Math.trunc(plannedTruckCount));
-      }
-      if (plannedTruckType && plannedTruckCount && plannedTruckCount > 0) {
-        truckValues.planned_truck_types = [
-          {
-            truck_type: plannedTruckType,
-            truck_count: String(Math.trunc(plannedTruckCount)),
-          },
-        ];
-      }
-      if (Object.keys(truckValues).length) {
-        await updateShipmentStep({
-          stepId: trucksStep.id,
-          fieldValuesJson: JSON.stringify(truckValues),
-        });
-      }
-    }
 
     await refreshShipmentDerivedState({
       shipmentId: created.shipmentId,

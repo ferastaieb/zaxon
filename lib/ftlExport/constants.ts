@@ -2,6 +2,15 @@ export const FTL_EXPORT_TEMPLATE_NAME = "FTL Export - Warehouse Operations";
 
 export const FTL_EXPORT_SERVICE_TYPE = "FTL_EXPORT_WAREHOUSE";
 
+export const FTL_EXPORT_ROUTES = [
+  {
+    id: "JEBEL_ALI_DUBAI_TO_SYRIA",
+    label: "Jebel Ali, Dubai to Syria",
+    origin: "Jebel Ali, Dubai",
+    destination: "Syria",
+  },
+] as const;
+
 export const FTL_EXPORT_STEP_NAMES = {
   exportPlanOverview: "Export plan overview",
   trucksDetails: "Trucks details",
@@ -42,6 +51,13 @@ export const FTL_EXPORT_CARGO_UNIT_TYPES = [
   "Other",
 ] as const;
 
+export const FTL_EXPORT_TRAILER_TYPES = [
+  "18M Trailer",
+  "16M Trailer",
+  "15M Trailer",
+  "13.5M Refer",
+] as const;
+
 export const FTL_EXPORT_LOADING_ORIGINS = [
   "ZAXON_WAREHOUSE",
   "EXTERNAL_SUPPLIER",
@@ -53,4 +69,3 @@ export const FTL_EXPORT_TRUCK_BOOKING_STATUSES = [
   "BOOKED",
   "CANCELLED",
 ] as const;
-

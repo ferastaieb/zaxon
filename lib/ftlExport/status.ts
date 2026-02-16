@@ -6,6 +6,8 @@ import {
   computeImportWarnings,
   computeLoadingProgress,
   countActiveBookedTrucks,
+  evaluateInvoiceTruckDetails,
+  getNumber,
   getString,
   hasAnyValue,
   isTruthy,
@@ -32,6 +34,8 @@ export type FtlExportStatusResult = {
   loadingExpectedTrucks: number;
   loadingLoadedTrucks: number;
   canFinalizeInvoice: boolean;
+  invoiceTruckDetailsComplete: boolean;
+  missingInvoiceTruckDetails: string[];
   importWarnings: ImportSelectionWarnings;
 };
 
@@ -57,15 +61,29 @@ function hasUnit(unitType: string, unitOther: string) {
   return !!unitOther.trim();
 }
 
+function isLoadingRowStarted(row: LoadingTruckRow) {
+  if (row.loading_origin === "MIXED") {
+    return row.mixed_supplier_loaded || row.mixed_zaxon_loaded || row.truck_loaded;
+  }
+  return row.truck_loaded;
+}
+
 function isLoadingRowComplete(
   row: LoadingTruckRow,
   rowIndex: number,
   step: StepSnapshot | undefined,
   docTypes: Set<string>,
 ) {
-  if (!row.truck_loaded) return false;
   const origin = row.loading_origin;
   if (!origin) return false;
+
+  if (origin === "MIXED") {
+    if (!(row.mixed_supplier_loaded && row.mixed_zaxon_loaded)) {
+      return false;
+    }
+  } else if (!row.truck_loaded) {
+    return false;
+  }
 
   if (origin === "EXTERNAL_SUPPLIER" && !row.external_loading_date) {
     return false;
@@ -127,11 +145,25 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
   const trucksStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.trucksDetails];
   const truckRows = parseTruckBookingRows(toRecord(trucksStep?.values ?? {}));
   const truckProgress = countActiveBookedTrucks(truckRows);
-  const trucksTouched = hasAnyValue(trucksStep?.values ?? {});
+  const trucksValues = toRecord(trucksStep?.values ?? {});
+  const trucksTouched = hasAnyValue(trucksValues);
+  const plannedTrucks = Math.max(0, Math.trunc(getNumber(trucksValues.total_trucks_planned)));
+  const actualTrucks = Math.max(0, Math.trunc(getNumber(trucksValues.actual_trucks_count)));
+  const hasPlannedCoverage = plannedTrucks > 0 && truckRows.length >= plannedTrucks;
+  const expectedBookedTrucks = hasPlannedCoverage
+    ? truckProgress.active
+    : plannedTrucks > 0
+      ? Math.max(plannedTrucks, actualTrucks)
+      : actualTrucks > 0
+        ? Math.max(actualTrucks, truckProgress.active)
+        : truckProgress.active;
+  const trucksDone =
+    (expectedBookedTrucks > 0 && truckProgress.booked >= expectedBookedTrucks) ||
+    (hasPlannedCoverage && expectedBookedTrucks === 0 && truckRows.length > 0);
   statuses[FTL_EXPORT_STEP_NAMES.trucksDetails] =
-    truckProgress.active > 0 && truckProgress.booked >= truckProgress.active
+    trucksDone
       ? "DONE"
-      : truckRows.length > 0 || trucksTouched
+      : truckRows.length > 0 || trucksTouched || plannedTrucks > 0
         ? "IN_PROGRESS"
         : "PENDING";
 
@@ -141,16 +173,19 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
     truckRows,
     loadingRows,
   });
-  const loadedSelections = loadingRows.filter((row) => row.truck_loaded).length;
+  const actualTruckCount = Math.max(0, Math.trunc(getNumber(trucksValues.actual_trucks_count)));
+  const expectedLoadingTrucks =
+    actualTruckCount > 0 ? actualTruckCount : loadingProgress.expected;
+  const startedSelections = loadingRows.filter((row) => isLoadingRowStarted(row)).length;
   const completeLoaded = loadingRows.filter((row, index) =>
     isLoadingRowComplete(row, index, loadingStep, input.docTypes),
   ).length;
   statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] =
-    loadingProgress.expected <= 0
+    expectedLoadingTrucks <= 0
       ? "PENDING"
-      : loadedSelections <= 0
+      : startedSelections <= 0
         ? "PENDING"
-        : completeLoaded >= loadingProgress.expected
+        : completeLoaded >= expectedLoadingTrucks
           ? "DONE"
           : "IN_PROGRESS";
 
@@ -179,7 +214,9 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
   const invoiceTouched = hasAnyValue(invoiceValues) || invoiceFile;
   const importsAvailable = allReferencedImportsAvailable(importRows);
   const loadingDone = statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] === "DONE";
-  const canFinalizeInvoice = loadingDone && importsAvailable;
+  const truckDetailsCheck = evaluateInvoiceTruckDetails(truckRows);
+  const canFinalizeInvoice =
+    loadingDone && importsAvailable && truckDetailsCheck.complete;
 
   statuses[FTL_EXPORT_STEP_NAMES.exportInvoice] = !canFinalizeInvoice
     ? invoiceTouched
@@ -271,9 +308,13 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
 
   return {
     statuses,
-    loadingExpectedTrucks: loadingProgress.expected,
+    loadingExpectedTrucks: expectedLoadingTrucks,
     loadingLoadedTrucks: loadingProgress.loaded,
     canFinalizeInvoice,
+    invoiceTruckDetailsComplete: truckDetailsCheck.complete,
+    missingInvoiceTruckDetails: truckDetailsCheck.missing_rows.map(
+      (row) => row.truck_reference,
+    ),
     importWarnings,
   };
 }

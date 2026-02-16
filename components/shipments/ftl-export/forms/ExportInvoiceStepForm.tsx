@@ -14,6 +14,7 @@ type Props = {
   canEdit: boolean;
   isAdmin: boolean;
   canFinalizeInvoice: boolean;
+  prerequisiteMessage?: string;
   latestDocsByType: Record<string, FtlDocumentMeta>;
 };
 
@@ -24,6 +25,7 @@ export function ExportInvoiceStepForm({
   canEdit,
   isAdmin,
   canFinalizeInvoice,
+  prerequisiteMessage,
   latestDocsByType,
 }: Props) {
   const [invoiceNumber, setInvoiceNumber] = useState(stringValue(step.values.invoice_number));
@@ -31,9 +33,6 @@ export function ExportInvoiceStepForm({
   const [invoiceFinalized, setInvoiceFinalized] = useState(
     boolValue(step.values.invoice_finalized),
   );
-  const [stampPulse, setStampPulse] = useState(false);
-  const [invoiceRemarks, setInvoiceRemarks] = useState(stringValue(step.values.invoice_remarks));
-  const [notes, setNotes] = useState(step.notes ?? "");
 
   const invoiceDocType = stepFieldDocType(step.id, encodeFieldPath(["invoice_upload"]));
   const invoiceDoc = latestDocsByType[invoiceDocType];
@@ -43,52 +42,34 @@ export function ExportInvoiceStepForm({
     : "bg-white text-zinc-900";
 
   return (
-    <form action={updateAction} encType="multipart/form-data">
+    <form action={updateAction}>
       <input type="hidden" name="stepId" value={step.id} />
       <input type="hidden" name="returnTo" value={returnTo} />
       <SectionFrame
         title="Export Invoice"
-        description="This section is active only after loading is done and all referenced imports are available."
+        description="This section is active only after loading is done, linked imports are available, and truck details are complete."
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
         disabled={!canFinalizeInvoice}
         disabledMessage={
           !canFinalizeInvoice
-            ? "Complete loading and import shipment readiness before creating/finalizing the export invoice."
+            ? prerequisiteMessage ??
+              "Complete loading and import shipment readiness before creating/finalizing the export invoice."
             : undefined
         }
         saveLabel="Save export invoice"
       >
-        <style jsx>{`
-          .stamp-pop {
-            animation: stamp-pop 0.36s ease-out;
-          }
-          @keyframes stamp-pop {
-            0% {
-              transform: scale(0.7) rotate(-8deg);
-              opacity: 0;
-            }
-            100% {
-              transform: scale(1) rotate(-8deg);
-              opacity: 1;
-            }
-          }
-        `}</style>
-
         <input
           type="hidden"
           name={fieldName(["invoice_finalized"])}
           value={invoiceFinalized ? "1" : ""}
         />
+        <input type="hidden" name="notes" value="" />
 
         <div className="relative rounded-xl border border-zinc-200 bg-zinc-50 p-4">
           {invoiceFinalized ? (
-            <div
-              className={`pointer-events-none absolute inset-0 flex items-center justify-center ${
-                stampPulse ? "stamp-pop" : ""
-              }`}
-            >
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="rotate-[-8deg] rounded-md border-4 border-red-400/70 px-6 py-2 text-3xl font-bold uppercase tracking-[0.16em] text-red-500/70">
                 Finalized
               </div>
@@ -99,17 +80,17 @@ export function ExportInvoiceStepForm({
             <div className="text-xs uppercase tracking-[0.16em] text-zinc-600">
               Invoice approval
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {!invoiceFinalized ? (
+                <span className="text-[11px] text-zinc-500">
+                  Confirm &amp; Finalize saves automatically.
+                </span>
+              ) : null}
               {!invoiceFinalized ? (
                 <button
                   type="submit"
                   name="finalizeInvoice"
                   value="1"
-                  onClick={() => {
-                    setInvoiceFinalized(true);
-                    setStampPulse(true);
-                    setTimeout(() => setStampPulse(false), 400);
-                  }}
                   disabled={disableForm}
                   className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-red-700 hover:bg-red-100 disabled:bg-zinc-100 disabled:text-zinc-400"
                 >
@@ -180,31 +161,6 @@ export function ExportInvoiceStepForm({
           </label>
         </div>
 
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">
-            Invoice remarks {invoiceFinalized ? "🔒 LOCKED" : ""}
-          </div>
-          <textarea
-            name={fieldName(["invoice_remarks"])}
-            value={invoiceRemarks}
-            onChange={(event) => setInvoiceRemarks(event.target.value)}
-            disabled={disableForm}
-            className={`min-h-20 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100 ${lockInputClass}`}
-          />
-        </label>
-
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">
-            Notes {invoiceFinalized ? "🔒 LOCKED" : ""}
-          </div>
-          <textarea
-            name="notes"
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            disabled={disableForm}
-            className={`min-h-20 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100 ${lockInputClass}`}
-          />
-        </label>
       </SectionFrame>
     </form>
   );

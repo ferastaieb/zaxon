@@ -94,11 +94,6 @@ const importShipmentGroup = (): StepFieldDefinition => ({
       label: "Allocated export quantity",
       type: "number",
     },
-    {
-      id: "remarks",
-      label: "Remarks",
-      type: "text",
-    },
   ],
 });
 
@@ -251,6 +246,16 @@ const loadingDetailsSchema: StepFieldSchema = {
         type: "boolean",
       },
       {
+        id: "mixed_supplier_loaded",
+        label: "Mixed: supplier stop loaded",
+        type: "boolean",
+      },
+      {
+        id: "mixed_zaxon_loaded",
+        label: "Mixed: Zaxon stop loaded",
+        type: "boolean",
+      },
+      {
         id: "loading_origin",
         label: "Loading origin",
         type: "text",
@@ -371,19 +376,6 @@ const loadingDetailsSchema: StepFieldSchema = {
         type: "file",
       },
       {
-        id: "additional_photos",
-        label: "Additional photos",
-        type: "group",
-        repeatable: true,
-        fields: [
-          {
-            id: "file",
-            label: "Photo",
-            type: "file",
-          },
-        ],
-      },
-      {
         id: "remarks",
         label: "Remarks",
         type: "text",
@@ -423,11 +415,6 @@ const exportInvoiceSchema: StepFieldSchema = {
       label: "Finalized",
       type: "boolean",
     },
-    {
-      id: "invoice_remarks",
-      label: "Invoice remarks",
-      type: "text",
-    },
   ],
 };
 
@@ -438,11 +425,6 @@ const stockViewSchema: StepFieldSchema = {
       id: "stock_snapshot_confirmed",
       label: "Stock snapshot confirmed",
       type: "boolean",
-    },
-    {
-      id: "stock_summary_notes",
-      label: "Stock summary notes",
-      type: "text",
     },
   ],
 };

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import type { FtlStepData } from "../types";
-import { boolValue, fieldName, stringValue } from "../fieldNames";
+import { boolValue, fieldName } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
 
 type StockSummaryRow = {
@@ -36,15 +36,12 @@ export function StockViewStepForm({
   const [snapshotConfirmed, setSnapshotConfirmed] = useState(
     boolValue(step.values.stock_snapshot_confirmed),
   );
-  const [summaryNotes, setSummaryNotes] = useState(
-    stringValue(step.values.stock_summary_notes),
-  );
-  const [notes, setNotes] = useState(step.notes ?? "");
 
   return (
     <form action={updateAction}>
       <input type="hidden" name="stepId" value={step.id} />
       <input type="hidden" name="returnTo" value={returnTo} />
+      <input type="hidden" name="notes" value="" />
       <SectionFrame
         title="Stock View"
         description="Consolidated import/export balance by linked import shipment."
@@ -101,28 +98,6 @@ export function StockViewStepForm({
             className="h-4 w-4 rounded border-zinc-300"
           />
           <span>Stock snapshot confirmed</span>
-        </label>
-
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">Stock summary notes</div>
-          <textarea
-            name={fieldName(["stock_summary_notes"])}
-            value={summaryNotes}
-            onChange={(event) => setSummaryNotes(event.target.value)}
-            disabled={!canEdit}
-            className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-          />
-        </label>
-
-        <label className="block">
-          <div className="mb-1 text-xs font-medium text-zinc-600">Notes</div>
-          <textarea
-            name="notes"
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            disabled={!canEdit}
-            className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-          />
         </label>
       </SectionFrame>
     </form>

@@ -1,5 +1,13 @@
 import type { ShipmentOverallStatus } from "@/lib/domain";
 
+export type FtlImportAllocationHistoryRow = {
+  exportShipmentId: number;
+  exportShipmentCode: string;
+  exportDate: string;
+  allocatedWeight: number;
+  allocatedQuantity: number;
+};
+
 export type FtlImportCandidate = {
   shipmentId: number;
   shipmentCode: string;
@@ -15,5 +23,6 @@ export type FtlImportCandidate = {
   alreadyAllocatedQuantity: number;
   remainingWeight: number;
   remainingQuantity: number;
+  allocationHistory: FtlImportAllocationHistoryRow[];
   overallStatus: ShipmentOverallStatus;
 };
