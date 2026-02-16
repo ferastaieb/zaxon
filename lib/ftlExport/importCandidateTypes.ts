@@ -11,6 +11,7 @@ export type FtlImportAllocationHistoryRow = {
 export type FtlImportCandidate = {
   shipmentId: number;
   shipmentCode: string;
+  jobIds: string;
   clientNumber: string;
   importBoeNumber: string;
   processedAvailable: boolean;

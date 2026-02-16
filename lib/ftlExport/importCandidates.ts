@@ -2,9 +2,9 @@ import "server-only";
 
 import { tableName, scanAll } from "@/lib/db";
 import { listShipmentsForUser, type ShipmentRow } from "@/lib/data/shipments";
-import { listWorkflowTemplates } from "@/lib/data/workflows";
 import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
 import { isTruthy } from "@/lib/fclImport/helpers";
+import { IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES } from "@/lib/importTransferOwnership/constants";
 import { parseStepFieldValues } from "@/lib/stepFields";
 import { FTL_EXPORT_STEP_NAMES } from "./constants";
 import type {
@@ -24,6 +24,7 @@ type ShipmentStepLite = {
 type ShipmentListLite = {
   id: number;
   shipment_code: string;
+  job_ids: string | null;
   customer_names: string | null;
 };
 
@@ -133,6 +134,15 @@ function findBoeNumber(steps: ShipmentStepLite[]) {
   return toString(values.boe_number);
 }
 
+function findImportTransferBoeNumber(steps: ShipmentStepLite[]) {
+  const boeStep = steps.find(
+    (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe,
+  );
+  if (!boeStep) return "";
+  const values = parseStepFieldValues(boeStep.field_values_json);
+  return toString(values.boe_number);
+}
+
 function computeFclStockSnapshot(steps: ShipmentStepLite[]) {
   const pullOutStep = steps.find((step) => step.name === FCL_IMPORT_STEP_NAMES.containerPullOut);
   const deliveryStep = steps.find((step) => step.name === FCL_IMPORT_STEP_NAMES.containerDelivery);
@@ -183,17 +193,58 @@ function computeFclStockSnapshot(steps: ShipmentStepLite[]) {
   return { totalWeight, totalQuantity, packageType, cargoDescription, hasPhysicalRows };
 }
 
+function computeImportTransferStockSnapshot(steps: ShipmentStepLite[]) {
+  const partiesStep = steps.find(
+    (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo,
+  );
+  const docsStep = steps.find(
+    (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe,
+  );
+  const collectionStep = steps.find(
+    (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.collectionOutcome,
+  );
+  if (!partiesStep) {
+    return {
+      totalWeight: 0,
+      totalQuantity: 0,
+      packageType: "",
+      cargoDescription: "",
+      processedAvailable: false,
+      nonPhysicalStock: true,
+    };
+  }
+
+  const partiesValues = parseStepFieldValues(partiesStep.field_values_json);
+  const collectionValues = parseStepFieldValues(collectionStep?.field_values_json ?? "{}");
+  const outcomeType = toString(collectionValues.outcome_type).toUpperCase();
+  const deliveredToWarehouse =
+    isTruthy(collectionValues.cargo_delivered_to_zaxon) &&
+    !!toString(collectionValues.dropoff_date);
+  const boeDone = docsStep?.status === "DONE";
+  const nonPhysicalStock = !boeDone
+    ? true
+    : outcomeType === "DELIVER_TO_ZAXON_WAREHOUSE"
+      ? !deliveredToWarehouse
+      : true;
+
+  return {
+    totalWeight: toNumber(partiesValues.total_weight),
+    totalQuantity: toNumber(partiesValues.quantity),
+    packageType: toString(partiesValues.package_type),
+    cargoDescription: toString(partiesValues.cargo_description),
+    processedAvailable: boeDone,
+    nonPhysicalStock,
+  };
+}
+
 function isLikelyProcessedStepName(name: string) {
   const normalized = name.trim().toLowerCase();
   return (
     normalized.includes("bill of entry") ||
     normalized.includes("processed") ||
-    normalized.includes("available")
+    normalized.includes("available") ||
+    normalized.includes("documents and boe")
   );
-}
-
-function normalizeImportTemplateName(name: string) {
-  return name.trim().toLowerCase();
 }
 
 function buildAllocationMap(
@@ -255,9 +306,8 @@ export async function listFtlImportCandidates(input: {
   const visibleIds = new Set(visibleShipments.map((row) => row.id));
   const visibleById = new Map(visibleShipments.map((row) => [row.id, row]));
 
-  const [shipments, templates, allSteps] = await Promise.all([
+  const [shipments, allSteps] = await Promise.all([
     scanAll<ShipmentRow>(tableName("shipments")),
-    listWorkflowTemplates({ includeArchived: true }),
     scanAll<ShipmentStepLite>(tableName("shipment_steps")),
   ]);
   const shipmentMetaById = new Map(
@@ -270,9 +320,6 @@ export async function listFtlImportCandidates(input: {
     ]),
   );
 
-  const templateNameById = new Map(
-    templates.map((template) => [template.id, normalizeImportTemplateName(template.name)]),
-  );
   const stepsByShipmentId = new Map<number, ShipmentStepLite[]>();
   for (const step of allSteps) {
     if (!stepsByShipmentId.has(step.shipment_id)) stepsByShipmentId.set(step.shipment_id, []);
@@ -289,33 +336,58 @@ export async function listFtlImportCandidates(input: {
     if (shipment.id === input.currentShipmentId) continue;
     if (!visibleIds.has(shipment.id)) continue;
 
-    const templateName = shipment.workflow_template_id
-      ? templateNameById.get(shipment.workflow_template_id) ?? ""
-      : "";
-    const isImportTemplate = templateName.includes("import");
-    if (!isImportTemplate) continue;
-
     const steps = stepsByShipmentId.get(shipment.id) ?? [];
-    const boeNumber = findBoeNumber(steps);
+    const isImportTransferWorkflow = steps.some(
+      (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo,
+    );
+    const isFclWorkflow = steps.some(
+      (step) =>
+        step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation ||
+        step.name === FCL_IMPORT_STEP_NAMES.billOfEntry ||
+        step.name === FCL_IMPORT_STEP_NAMES.containerPullOut ||
+        step.name === FCL_IMPORT_STEP_NAMES.containerDelivery,
+    );
+    if (!isImportTransferWorkflow && !isFclWorkflow) continue;
+
+    const boeNumber = isImportTransferWorkflow
+      ? findImportTransferBoeNumber(steps)
+      : findBoeNumber(steps);
     const fclSnapshot = computeFclStockSnapshot(steps);
-    const importedWeight =
-      fclSnapshot.totalWeight > 0 ? fclSnapshot.totalWeight : Number(shipment.weight_kg ?? 0);
-    const importedQuantity =
-      fclSnapshot.totalQuantity > 0
+    const importTransferSnapshot = computeImportTransferStockSnapshot(steps);
+    const importedWeight = isImportTransferWorkflow
+      ? importTransferSnapshot.totalWeight > 0
+        ? importTransferSnapshot.totalWeight
+        : Number(shipment.weight_kg ?? 0)
+      : fclSnapshot.totalWeight > 0
+        ? fclSnapshot.totalWeight
+        : Number(shipment.weight_kg ?? 0);
+    const importedQuantity = isImportTransferWorkflow
+      ? importTransferSnapshot.totalQuantity > 0
+        ? importTransferSnapshot.totalQuantity
+        : Number(shipment.packages_count ?? 0)
+      : fclSnapshot.totalQuantity > 0
         ? fclSnapshot.totalQuantity
         : Number(shipment.packages_count ?? 0);
-    const packageType = fclSnapshot.packageType || "";
-    const cargoDescription = fclSnapshot.cargoDescription || shipment.cargo_description || "";
-    const isFclImport =
-      steps.some((step) => step.name === FCL_IMPORT_STEP_NAMES.containerDelivery) ||
-      steps.some((step) => step.name === FCL_IMPORT_STEP_NAMES.containerPullOut);
+    const packageType = isImportTransferWorkflow
+      ? importTransferSnapshot.packageType || ""
+      : fclSnapshot.packageType || "";
+    const cargoDescription = isImportTransferWorkflow
+      ? importTransferSnapshot.cargoDescription || shipment.cargo_description || ""
+      : fclSnapshot.cargoDescription || shipment.cargo_description || "";
+    const isFclImport = isFclWorkflow;
     const processedAvailable =
-      steps.some(
-        (step) => step.name === FCL_IMPORT_STEP_NAMES.billOfEntry && step.status === "DONE",
-      ) ||
+      (isImportTransferWorkflow
+        ? importTransferSnapshot.processedAvailable
+        : steps.some(
+            (step) => step.name === FCL_IMPORT_STEP_NAMES.billOfEntry && step.status === "DONE",
+          )) ||
       steps.some((step) => step.status === "DONE" && isLikelyProcessedStepName(step.name)) ||
       shipment.overall_status === "COMPLETED";
-    const nonPhysicalStock = isFclImport ? !fclSnapshot.hasPhysicalRows : false;
+    const nonPhysicalStock = isImportTransferWorkflow
+      ? importTransferSnapshot.nonPhysicalStock
+      : isFclImport
+        ? !fclSnapshot.hasPhysicalRows
+        : false;
 
     const sourceAllocation = allocationMap.byShipmentId.get(shipment.id);
     const referenceAllocation = allocationMap.byReference.get(
@@ -342,6 +414,7 @@ export async function listFtlImportCandidates(input: {
     candidates.push({
       shipmentId: shipment.id,
       shipmentCode: shipment.shipment_code,
+      jobIds: meta?.job_ids ?? "",
       clientNumber: meta?.customer_names ?? "",
       importBoeNumber: boeNumber,
       processedAvailable,

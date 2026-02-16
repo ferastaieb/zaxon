@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { AppIcon } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
 import {
@@ -264,7 +265,10 @@ export function FtlExportWorkspace({
   return (
     <div className="space-y-6">
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">FTL export workflow</div>
+        <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-zinc-500">
+          <AppIcon name="icon-route" size={22} />
+          FTL export workflow
+        </div>
         <h1 className={`${headingClassName} mt-2 text-2xl font-semibold text-zinc-900`}>
           {shipment.shipment_code}
         </h1>
@@ -285,20 +289,20 @@ export function FtlExportWorkspace({
         </div>
       </header>
 
-      <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
+      <div className="flex flex-nowrap gap-2 overflow-x-auto rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
         {[
-          { id: "plan", label: "1. Export Plan Overview" },
-          { id: "trucks", label: "2. Trucks Details" },
-          { id: "loading", label: "3. Loading Details" },
-          { id: "invoice", label: "4. Export Invoice & Reference" },
-          { id: "agents", label: "5. Customs Agents" },
-          { id: "tracking", label: "6. Shipment Tracking" },
+          { id: "plan", label: "1. Export Plan Overview", icon: "icon-order-received" as const },
+          { id: "trucks", label: "2. Trucks Details", icon: "icon-calendar-trigger" as const },
+          { id: "loading", label: "3. Loading Details", icon: "icon-upload-proof" as const },
+          { id: "invoice", label: "4. Export Invoice & Reference", icon: "icon-finalized" as const },
+          { id: "agents", label: "5. Customs Agents", icon: "icon-doc-required" as const },
+          { id: "tracking", label: "6. Shipment Tracking", icon: "icon-route" as const },
         ].map((entry) => (
           <button
             key={entry.id}
             type="button"
             onClick={() => setTab(entry.id as FtlMainTab)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${
+            className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium ${
               tab === entry.id
                 ? mainTabDone[entry.id as FtlMainTab]
                   ? "bg-emerald-200 text-emerald-900"
@@ -308,7 +312,20 @@ export function FtlExportWorkspace({
                   : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
             }`}
           >
-            {entry.label}
+            <span className="inline-flex items-center gap-2 whitespace-nowrap">
+              <AppIcon
+                name={entry.icon}
+                size={20}
+                className={
+                  tab === entry.id
+                    ? mainTabDone[entry.id as FtlMainTab]
+                      ? "opacity-90"
+                      : "invert"
+                    : "opacity-80"
+                }
+              />
+              {entry.label}
+            </span>
           </button>
         ))}
       </div>
@@ -361,17 +378,17 @@ export function FtlExportWorkspace({
 
       {tab === "invoice" ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-200 bg-white p-3">
+          <div className="flex flex-nowrap gap-2 overflow-x-auto rounded-2xl border border-zinc-200 bg-white p-3">
             {[
-              { id: "imports", label: "Import shipments" },
-              { id: "invoice", label: "Export invoice" },
-              { id: "stock", label: "Stock view" },
+              { id: "imports", label: "Import shipments", icon: "icon-allocation" as const },
+              { id: "invoice", label: "Export invoice", icon: "icon-finalized" as const },
+              { id: "stock", label: "Stock view", icon: "icon-stock" as const },
             ].map((entry) => (
               <button
                 key={entry.id}
                 type="button"
                 onClick={() => setInvoiceTab(entry.id as FtlInvoiceTab)}
-                className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium ${
                   invoiceTab === entry.id
                     ? "bg-zinc-900 text-white"
                     : entry.id === "invoice" && !trucksReadyForInvoice
@@ -379,7 +396,12 @@ export function FtlExportWorkspace({
                     : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
                 }`}
               >
-                <span className="inline-flex items-center gap-2">
+                <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                  <AppIcon
+                    name={entry.icon}
+                    size={20}
+                    className={invoiceTab === entry.id ? "invert" : "opacity-80"}
+                  />
                   <span>{entry.label}</span>
                   {entry.id === "invoice" && !trucksReadyForInvoice ? (
                     <span
@@ -475,7 +497,8 @@ export function FtlExportWorkspace({
       {tab === "tracking" ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-zinc-200 bg-white p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+            <div className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              <AppIcon name="icon-route" size={19} />
               Route timeline
             </div>
             <div className="overflow-x-auto pb-1">

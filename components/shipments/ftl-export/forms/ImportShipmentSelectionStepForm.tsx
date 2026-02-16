@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import type { FtlImportCandidate, FtlStepData } from "../types";
 import {
   boolValue,
@@ -117,25 +118,43 @@ export function ImportShipmentSelectionStepForm({
   const initialRows = toGroupRows(step.values, "import_shipments").map(mapRow);
   const [rows, setRows] = useState<ImportRow[]>(initialRows);
   const [removed, setRemoved] = useState<Set<number>>(new Set());
-  const [search, setSearch] = useState("");
+  const [linkQuery, setLinkQuery] = useState("");
   const [candidatePicker, setCandidatePicker] = useState("");
+  const [candidatePickerOpen, setCandidatePickerOpen] = useState(false);
   const disableEdit = !canEdit;
   const candidateById = useMemo(
     () => new Map(candidates.map((candidate) => [String(candidate.shipmentId), candidate])),
     [candidates],
   );
+  const activeLinkedCandidateIds = useMemo(() => {
+    const ids = new Set<string>();
+    rows.forEach((row, index) => {
+      if (removed.has(index)) return;
+      const sourceId = row.source_shipment_id.trim();
+      if (sourceId) ids.add(sourceId);
+    });
+    return ids;
+  }, [rows, removed]);
+  const availableCandidates = useMemo(
+    () =>
+      candidates.filter(
+        (candidate) => !activeLinkedCandidateIds.has(String(candidate.shipmentId)),
+      ),
+    [candidates, activeLinkedCandidateIds],
+  );
 
-  const normalizedSearch = search.trim().toLowerCase();
-  const filteredCandidates = useMemo(() => {
-    if (!normalizedSearch) return candidates;
-    return candidates.filter((candidate) => {
+  const normalizedLinkQuery = linkQuery.trim().toLowerCase();
+  const searchableCandidates = useMemo(() => {
+    if (!normalizedLinkQuery) return availableCandidates;
+    return availableCandidates.filter((candidate) => {
       return (
-        candidate.shipmentCode.toLowerCase().includes(normalizedSearch) ||
-        candidate.clientNumber.toLowerCase().includes(normalizedSearch) ||
-        candidate.importBoeNumber.toLowerCase().includes(normalizedSearch)
+        candidate.shipmentCode.toLowerCase().includes(normalizedLinkQuery) ||
+        candidate.jobIds.toLowerCase().includes(normalizedLinkQuery) ||
+        candidate.clientNumber.toLowerCase().includes(normalizedLinkQuery) ||
+        candidate.importBoeNumber.toLowerCase().includes(normalizedLinkQuery)
       );
     });
-  }, [candidates, normalizedSearch]);
+  }, [availableCandidates, normalizedLinkQuery]);
 
   const updateRow = (index: number, patch: Partial<ImportRow>) => {
     setRows((prev) => {
@@ -159,7 +178,19 @@ export function ImportShipmentSelectionStepForm({
     if (existingIndex !== undefined) return;
 
     setRows((prev) => [...prev, rowFromCandidate(candidate, emptyRow())]);
+    setLinkQuery("");
     setCandidatePicker("");
+    setCandidatePickerOpen(false);
+  };
+
+  const selectCandidateFromPicker = (candidate: FtlImportCandidate) => {
+    setCandidatePicker(String(candidate.shipmentId));
+    setLinkQuery(
+      `${candidate.shipmentCode} | ${candidate.clientNumber || "-"} | ${
+        candidate.importBoeNumber || "No BOE"
+      }${candidate.jobIds ? ` | Job: ${candidate.jobIds}` : ""}`,
+    );
+    setCandidatePickerOpen(false);
   };
 
   const visibleIndexes = rows
@@ -172,42 +203,65 @@ export function ImportShipmentSelectionStepForm({
       <input type="hidden" name="returnTo" value={returnTo} />
       <SectionFrame
         title="Import Shipment Selection"
-        description="Select existing import shipments (FCL/import workflows), then allocate export quantity and weight."
+        description="Select existing import shipments (FCL + Import Transfer of Ownership), then allocate export quantity and weight."
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
         saveLabel="Save import references"
       >
-        <div className="grid gap-3 lg:grid-cols-[1fr_320px_auto]">
-          <label className="block">
-            <div className="mb-1 text-xs font-medium text-zinc-600">
-              Search existing import shipment
-            </div>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Shipment no / client no / BOE no"
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block">
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+          <label className="relative block">
             <div className="mb-1 text-xs font-medium text-zinc-600">
               Import shipment to link
             </div>
-            <select
-              value={candidatePicker}
-              onChange={(event) => setCandidatePicker(event.target.value)}
+            <input
+              value={linkQuery}
+              onChange={(event) => {
+                setLinkQuery(event.target.value);
+                setCandidatePicker("");
+                setCandidatePickerOpen(true);
+              }}
+              onFocus={() => setCandidatePickerOpen(true)}
+              onBlur={() => {
+                setTimeout(() => setCandidatePickerOpen(false), 120);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setCandidatePickerOpen(false);
+                  return;
+                }
+                if (event.key === "Enter" && candidatePickerOpen && searchableCandidates.length) {
+                  event.preventDefault();
+                  selectCandidateFromPicker(searchableCandidates[0]);
+                }
+              }}
+              placeholder="Shipment no / job id / client no / BOE no"
               disabled={disableEdit}
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            >
-              <option value="">Select import shipment</option>
-              {filteredCandidates.map((candidate) => (
-                <option key={candidate.shipmentId} value={String(candidate.shipmentId)}>
-                  {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
-                  {candidate.importBoeNumber || "No BOE"}
-                </option>
-              ))}
-            </select>
+            />
+            {candidatePickerOpen ? (
+              <div className="absolute left-0 right-0 z-20 mt-1 max-h-64 overflow-auto rounded-lg border border-zinc-200 bg-white shadow-lg">
+                {searchableCandidates.length ? (
+                  searchableCandidates.map((candidate) => (
+                    <button
+                      key={candidate.shipmentId}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectCandidateFromPicker(candidate)}
+                      className="block w-full border-b border-zinc-100 px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-50"
+                    >
+                      {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
+                      {candidate.importBoeNumber || "No BOE"}
+                      {candidate.jobIds ? ` | Job: ${candidate.jobIds}` : ""}
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-3 py-2 text-sm text-zinc-500">
+                    No matching import shipment found.
+                  </div>
+                )}
+              </div>
+            ) : null}
           </label>
           <div className="flex items-end">
             <button
@@ -222,12 +276,21 @@ export function ImportShipmentSelectionStepForm({
         </div>
 
         <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
-          Link only from existing import workflows (FCL or other import templates). Manual references are blocked.
+          Link only from existing import workflows (FCL or Import Transfer of Ownership). Manual references are blocked.
         </div>
 
         {!visibleIndexes.length ? (
-          <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-6 text-center text-sm text-zinc-600">
-            No import shipment linked yet. Search and link at least one import shipment.
+          <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-6 text-center">
+            <AppIllustration
+              name="empty-no-import-links"
+              alt="No linked import shipments"
+              width={360}
+              height={180}
+              className="mx-auto h-32 w-full max-w-sm"
+            />
+            <div className="mt-2 text-sm text-zinc-600">
+              No import shipment linked yet. Search and link at least one import shipment.
+            </div>
           </div>
         ) : null}
 
@@ -322,10 +385,11 @@ export function ImportShipmentSelectionStepForm({
                   className="mt-3 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                 >
                   <option value="">Map this row to an existing import shipment *</option>
-                  {filteredCandidates.map((candidate) => (
+                  {availableCandidates.map((candidate) => (
                     <option key={candidate.shipmentId} value={String(candidate.shipmentId)}>
                       {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
                       {candidate.importBoeNumber || "No BOE"}
+                      {candidate.jobIds ? ` | Job: ${candidate.jobIds}` : ""}
                     </option>
                   ))}
                 </select>

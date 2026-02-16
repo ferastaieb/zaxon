@@ -15,6 +15,12 @@ import {
   FTL_EXPORT_SERVICE_TYPE,
   FTL_EXPORT_TRACKING_STEPS,
 } from "@/lib/ftlExport/constants";
+import {
+  IMPORT_TRANSFER_OWNERSHIP_OPERATIONS_STEPS,
+  IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE,
+} from "@/lib/importTransferOwnership/constants";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import { CanvasBackdrop } from "./CanvasBackdrop";
 
 type CreateFormProps = {
@@ -27,6 +33,10 @@ type CreateFormProps = {
 const SERVICE_TYPES = [
   { id: "FCL_IMPORT_CLEARANCE", label: "FCL Import Clearance" },
   { id: FTL_EXPORT_SERVICE_TYPE, label: "FTL Export - Warehouse Operations" },
+  {
+    id: IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE,
+    label: "Import Transfer of Ownership",
+  },
 ];
 
 export function FclImportCreateForm({
@@ -48,6 +58,9 @@ export function FclImportCreateForm({
   const containerInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const isFclService = serviceType === "FCL_IMPORT_CLEARANCE";
   const isFtlService = serviceType === FTL_EXPORT_SERVICE_TYPE;
+  const isImportTransferService =
+    serviceType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE;
+  const requiresSingleCustomer = isFtlService || isImportTransferService;
   const selectedFtlRoute =
     FTL_EXPORT_ROUTES.find((route) => route.id === ftlRouteId) ??
     FTL_EXPORT_ROUTES[0] ??
@@ -56,6 +69,11 @@ export function FclImportCreateForm({
     SERVICE_TYPES.find((option) => option.id === serviceType)?.label ??
     SERVICE_TYPES[0]?.label ??
     "FCL Import Clearance";
+  const heroIllustrationName = isFclService
+    ? "hero-fcl-port"
+    : isFtlService
+      ? "hero-ftl-route"
+      : "hero-import-ownership";
 
   const filteredCustomers = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -64,7 +82,7 @@ export function FclImportCreateForm({
   }, [customers, query]);
 
   const toggleCustomer = (id: string) => {
-    if (isFtlService) {
+    if (requiresSingleCustomer) {
       setSelectedCustomers((prev) => (prev[0] === id ? [] : [id]));
       return;
     }
@@ -107,7 +125,8 @@ export function FclImportCreateForm({
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
               <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-500">
+                  <AppIcon name="icon-shipment-create" size={22} />
                   Shipment profile
                 </div>
                 <h2 className="mt-2 text-lg font-semibold text-slate-900">
@@ -136,7 +155,10 @@ export function FclImportCreateForm({
                   onChange={(event) => {
                     const nextType = event.target.value;
                     setServiceType(nextType);
-                    if (nextType === FTL_EXPORT_SERVICE_TYPE) {
+                    if (
+                      nextType === FTL_EXPORT_SERVICE_TYPE ||
+                      nextType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE
+                    ) {
                       setSelectedCustomers((prev) =>
                         prev.length <= 1 ? prev : prev.slice(0, 1),
                       );
@@ -158,7 +180,8 @@ export function FclImportCreateForm({
               </label>
               {isFtlService ? (
                 <label className="block md:col-span-2">
-                  <div className="mb-1 text-sm font-medium text-slate-700">
+                  <div className="mb-1 inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <AppIcon name="icon-route" size={20} />
                     FTL route
                   </div>
                   <select
@@ -185,6 +208,18 @@ export function FclImportCreateForm({
                     name="destination"
                     value={selectedFtlRoute?.destination ?? ""}
                   />
+                </label>
+              ) : isImportTransferService ? (
+                <label className="block md:col-span-2">
+                  <div className="mb-1 inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <AppIcon name="icon-route" size={20} />
+                    Route
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    Supplier location to Zaxon ownership (defined in workflow steps).
+                  </div>
+                  <input type="hidden" name="origin" value="Supplier Location" />
+                  <input type="hidden" name="destination" value="Zaxon Ownership" />
                 </label>
               ) : (
                 <>
@@ -220,7 +255,8 @@ export function FclImportCreateForm({
           <div className="rounded-2xl border border-slate-200 bg-white/80 p-5 backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-slate-500">
+                  <AppIcon name="icon-client-single" size={22} />
                   Clients
                 </div>
                 <h2 className="mt-2 text-lg font-semibold text-slate-900">
@@ -289,8 +325,10 @@ export function FclImportCreateForm({
               </div>
             ) : (
               <div className="mt-3 text-xs text-slate-500">
-                {isFtlService
-                  ? "Select one customer for FTL Export."
+                {requiresSingleCustomer
+                  ? isFtlService
+                    ? "Select one customer for FTL Export."
+                    : "Select one customer for Import Transfer of Ownership."
                   : "Select at least one customer to continue."}
               </div>
             )}
@@ -411,15 +449,30 @@ export function FclImportCreateForm({
               Workflow preview
             </div>
             <h3 className="mt-2 text-lg font-semibold">
-              {isFclService ? "FCL Clearance Journey" : "FTL Export Journey"}
+              {isFclService
+                ? "FCL Clearance Journey"
+                : isFtlService
+                  ? "FTL Export Journey"
+                  : "Import Ownership Journey"}
             </h3>
             <p className="mt-2 text-sm text-slate-300">
               A live preview of what will be generated once the shipment is created.
             </p>
+            <div className="mt-3 rounded-xl border border-slate-700/60 bg-slate-800/40 p-2">
+              <AppIllustration
+                name={heroIllustrationName}
+                alt={`${serviceLabel} workflow illustration`}
+                width={420}
+                height={210}
+                className="h-36 w-full"
+                priority
+              />
+            </div>
             {isFclService ? (
               <div className="mt-4 space-y-3 text-sm">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    <AppIcon name="icon-route" size={18} className="opacity-90" />
                     Tracking
                   </div>
                   <ul className="mt-2 space-y-2">
@@ -437,7 +490,8 @@ export function FclImportCreateForm({
                   </ul>
                 </div>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    <AppIcon name="icon-order-received" size={18} className="opacity-90" />
                     Operations
                   </div>
                   <ul className="mt-2 space-y-2">
@@ -469,10 +523,11 @@ export function FclImportCreateForm({
                   </ul>
                 </div>
               </div>
-            ) : (
+            ) : isFtlService ? (
               <div className="mt-4 space-y-3 text-sm">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    <AppIcon name="icon-order-received" size={18} className="opacity-90" />
                     Operations
                   </div>
                   <ul className="mt-2 space-y-2">
@@ -488,7 +543,8 @@ export function FclImportCreateForm({
                   </ul>
                 </div>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    <AppIcon name="icon-route" size={18} className="opacity-90" />
                     Tracking
                   </div>
                   <ul className="mt-2 space-y-2">
@@ -501,6 +557,26 @@ export function FclImportCreateForm({
                           {index + 1}. {step}
                         </span>
                         <span className="text-xs text-slate-400">Client</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3 text-sm">
+                <div>
+                  <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    <AppIcon name="icon-order-received" size={18} className="opacity-90" />
+                    Operations
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {IMPORT_TRANSFER_OWNERSHIP_OPERATIONS_STEPS.map((step) => (
+                      <li
+                        key={step}
+                        className="flex items-center justify-between rounded-xl border border-slate-700/70 bg-slate-800/60 px-3 py-2"
+                      >
+                        <span className="text-slate-100">{step}</span>
+                        <span className="text-xs text-slate-400">Internal</span>
                       </li>
                     ))}
                   </ul>

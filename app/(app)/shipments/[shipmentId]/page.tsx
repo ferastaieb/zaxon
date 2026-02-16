@@ -37,6 +37,10 @@ import {
   FTL_EXPORT_STEP_NAMES,
   FTL_EXPORT_TEMPLATE_NAME,
 } from "@/lib/ftlExport/constants";
+import {
+  IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES,
+  IMPORT_TRANSFER_OWNERSHIP_TEMPLATE_NAME,
+} from "@/lib/importTransferOwnership/constants";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { parseWorkflowGlobalValues, parseWorkflowGlobalVariables } from "@/lib/workflowGlobals";
@@ -86,6 +90,20 @@ export default async function ShipmentDetailsPage({
     hasFtlStepSignature
   ) {
     redirect(`/shipments/ftl-export/${id}`);
+  }
+  const hasImportTransferSignature = [
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.collectionOutcome,
+  ].every((name) => stepNameSet.has(name));
+  if (
+    (template?.name &&
+      template.name.toLowerCase() ===
+        IMPORT_TRANSFER_OWNERSHIP_TEMPLATE_NAME.toLowerCase()) ||
+    hasImportTransferSignature
+  ) {
+    redirect(`/shipments/import-transfer-ownership/${id}`);
   }
   const shipmentCustomers = await listShipmentCustomers(id);
   const shipmentCustomerIds = shipmentCustomers.map((c) => c.id);

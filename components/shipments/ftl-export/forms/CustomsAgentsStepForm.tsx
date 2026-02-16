@@ -227,12 +227,12 @@ export function CustomsAgentsStepForm({
         saveLabel="Save customs allocation"
         lockOnDone={false}
       >
-        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+        <div className="max-w-full rounded-xl border border-zinc-200 bg-zinc-50 p-4">
           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
             Border chain
           </div>
-          <div className="overflow-x-auto">
-            <div className="flex min-w-max items-end gap-2 px-1 pt-24 pb-1">
+          <div className="w-full overflow-x-auto overflow-y-visible pb-1">
+            <div className="inline-flex w-max min-w-full flex-nowrap items-end gap-1 px-1 pr-2 pt-24">
               {chain.map((node, index) => {
                 const isEditable = node.kind !== "static";
                 const agentName =
@@ -249,7 +249,7 @@ export function CustomsAgentsStepForm({
                   activeNode === node.fieldKey;
 
                 return (
-                  <div key={node.id} className="relative flex items-center gap-2">
+                  <div key={node.id} className="relative flex shrink-0 items-center gap-1">
                     <div className="relative">
                       <button
                         type="button"
@@ -263,17 +263,19 @@ export function CustomsAgentsStepForm({
                           }
                         }}
                         disabled={!canEdit || !isEditable}
-                        className={`w-36 rounded-lg border px-3 py-2 text-left transition ${
+                        className={`w-32 shrink-0 rounded-lg border px-3 py-2 text-left transition ${
                           complete
                             ? "border-emerald-300 bg-emerald-50 text-emerald-900"
                             : "border-zinc-300 bg-white text-zinc-700"
                         } ${!isEditable ? "cursor-default" : ""} disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500`}
                       >
-                        <div className="text-[11px] uppercase tracking-[0.14em] opacity-80">
+                        <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.14em] opacity-80">
                           {node.country}
                         </div>
-                        <div className="mt-1 text-xs font-semibold">{node.label}</div>
-                        <div className="mt-1 text-[11px] min-h-4">
+                        <div className="mt-1 whitespace-nowrap text-xs font-semibold">
+                          {node.label}
+                        </div>
+                        <div className="mt-1 min-h-4 truncate whitespace-nowrap text-[11px]">
                           {agentName || (isEditable ? "Click to assign agent" : " ")}
                         </div>
                       </button>
@@ -307,7 +309,7 @@ export function CustomsAgentsStepForm({
                       ) : null}
                     </div>
                     {index < chain.length - 1 ? (
-                      <div className="h-[3px] w-7 rounded-full bg-zinc-300" />
+                      <div className="h-[3px] w-5 rounded-full bg-zinc-300" />
                     ) : null}
                   </div>
                 );

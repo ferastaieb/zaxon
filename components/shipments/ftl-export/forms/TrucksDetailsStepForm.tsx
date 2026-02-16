@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import { FTL_EXPORT_TRAILER_TYPES } from "@/lib/ftlExport/constants";
 import type { FtlStepData } from "../types";
 import { boolValue, fieldName, numberValue, stringValue, toGroupRows, toRecord } from "../fieldNames";
@@ -445,8 +446,17 @@ export function TrucksDetailsStepForm({
           </div>
 
           {trucks.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-sm text-zinc-600">
-              No truck cards yet. Set planned total in Planning tab or add a booked truck.
+            <div className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-5 text-center">
+              <AppIllustration
+                name="empty-no-trucks-booked"
+                alt="No trucks booked"
+                width={360}
+                height={180}
+                className="mx-auto h-32 w-full max-w-sm"
+              />
+              <div className="mt-2 text-sm text-zinc-600">
+                No truck cards yet. Set planned total in Planning tab or add a booked truck.
+              </div>
             </div>
           ) : null}
 

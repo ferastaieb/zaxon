@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
 import type { FtlDocumentMeta, FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue } from "../fieldNames";
@@ -219,6 +220,7 @@ export function TrackingStepForm({
       };
     });
   }, [agentGate, trackingStages, values]);
+  const trackingCompletedCount = trackingStates.filter((entry) => entry.done).length;
 
   const doneIndexes = trackingStates
     .map((entry, index) => (entry.done ? index : -1))
@@ -561,6 +563,15 @@ export function TrackingStepForm({
           </div>
         ) : (
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+            {trackingCompletedCount === 0 ? (
+              <AppIllustration
+                name="empty-no-tracking-events"
+                alt="No tracking events yet"
+                width={360}
+                height={180}
+                className="mx-auto mb-2 h-28 w-full max-w-sm"
+              />
+            ) : null}
             Click any tracking stage to update movement status and dates.
           </div>
         )}

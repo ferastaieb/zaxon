@@ -59,6 +59,8 @@ export type ShipmentListRow = {
   job_ids: string | null;
   customer_names: string | null;
   transport_mode: TransportMode;
+  shipment_type: ShipmentType;
+  cargo_description: string;
   origin: string;
   destination: string;
   overall_status: ShipmentOverallStatus;
@@ -264,6 +266,8 @@ export async function listShipmentsForUser(input: {
           ? Array.from(new Set(customerNames)).join(", ")
           : null,
         transport_mode: shipment.transport_mode,
+        shipment_type: shipment.shipment_type,
+        cargo_description: shipment.cargo_description,
         origin: shipment.origin,
         destination: shipment.destination,
         overall_status: shipment.overall_status,

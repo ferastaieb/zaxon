@@ -30,6 +30,23 @@ function riskTone(risk: string) {
   return "green";
 }
 
+function shipmentModeLabel(input: {
+  shipment_type: string;
+  cargo_description: string;
+}) {
+  const cargo = input.cargo_description.toLowerCase();
+  if (cargo.includes("ftl")) return "FTL";
+  if (cargo.includes("import transfer of ownership")) return "Import Transfer";
+  if (input.shipment_type === "LAND") return "LAND";
+  return input.shipment_type;
+}
+
+function positiveIntOrDefault(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
 export default async function ShipmentsPage({
   searchParams,
 }: {
@@ -51,6 +68,7 @@ export default async function ShipmentsPage({
   const status = ShipmentOverallStatuses.includes(statusRaw as ShipmentOverallStatus)
     ? (statusRaw as ShipmentOverallStatus)
     : undefined;
+  const pageRaw = readParam(resolved, "page");
 
   const customers = await listParties({ type: "CUSTOMER" });
   const shipments = await listShipmentsForUser({
@@ -61,6 +79,39 @@ export default async function ShipmentsPage({
     transportMode: mode,
     status,
   });
+
+  const pageSize = 10;
+  const requestedPage = positiveIntOrDefault(pageRaw, 1);
+  const totalRows = shipments.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(requestedPage, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEnd = pageStart + pageSize;
+  const paginatedShipments = shipments.slice(pageStart, pageEnd);
+  const showingFrom = totalRows === 0 ? 0 : pageStart + 1;
+  const showingTo = Math.min(pageEnd, totalRows);
+
+  const buildShipmentsPageHref = (page: number) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (customerIdRaw) params.set("customerId", customerIdRaw);
+    if (modeRaw) params.set("mode", modeRaw);
+    if (statusRaw) params.set("status", statusRaw);
+    if (page > 1) params.set("page", String(page));
+    const query = params.toString();
+    return query ? `/shipments?${query}` : "/shipments";
+  };
+
+  const visiblePages = (() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
+    const pages = new Set<number>([1, totalPages, currentPage]);
+    if (currentPage - 1 > 1) pages.add(currentPage - 1);
+    if (currentPage + 1 < totalPages) pages.add(currentPage + 1);
+    const sorted = Array.from(pages).sort((a, b) => a - b);
+    return sorted;
+  })();
 
   async function createShipmentRedirectAction() {
     "use server";
@@ -173,67 +224,60 @@ export default async function ShipmentsPage({
           <table className="min-w-full text-left text-sm">
             <thead className="text-xs text-zinc-500">
               <tr>
-                <th className="py-2 pr-4">Shipment ID</th>
-                <th className="py-2 pr-4">Customer</th>
-                <th className="py-2 pr-4">Mode</th>
-                <th className="py-2 pr-4">Route</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Last update</th>
-                <th className="py-2 pr-4">ETD / ETA</th>
-                <th className="py-2 pr-4"></th>
+                <th className="whitespace-nowrap py-2 pr-4">Shipment ID</th>
+                <th className="whitespace-nowrap py-2 pr-4">Customer</th>
+                <th className="whitespace-nowrap py-2 pr-4">Mode</th>
+                <th className="whitespace-nowrap py-2 pr-4">Route</th>
+                <th className="whitespace-nowrap py-2 pr-4">Status</th>
+                <th className="whitespace-nowrap py-2 pr-4">Last update</th>
+                <th className="whitespace-nowrap py-2 pr-4"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {shipments.map((s) => (
+              {paginatedShipments.map((s) => (
                 <tr key={s.id} className="hover:bg-zinc-50">
-                  <td className="py-2 pr-4 font-medium text-zinc-900">
-                    <div>{s.shipment_code}</div>
+                  <td className="whitespace-nowrap py-2 pr-4 font-medium text-zinc-900">
+                    <div className="whitespace-nowrap">{s.shipment_code}</div>
                     {s.job_ids ? (
-                      <div className="mt-0.5 text-xs font-normal text-zinc-500">
+                      <div className="mt-0.5 whitespace-nowrap text-xs font-normal text-zinc-500">
                         Job: {s.job_ids}
                       </div>
                     ) : null}
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">
-                    {s.customer_names ?? "—"}
+                  <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
+                    {s.customer_names ?? "-"}
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">
-                    {transportModeLabel(s.transport_mode)}
+                  <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
+                    {shipmentModeLabel({
+                      shipment_type: s.shipment_type,
+                      cargo_description: s.cargo_description,
+                    })}
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">
-                    {s.origin} → {s.destination}
+                  <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
+                    {s.origin} {"->"} {s.destination}
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="whitespace-nowrap py-2 pr-4">
                     <div className="flex items-center gap-2">
                       <Badge tone="zinc">{overallStatusLabel(s.overall_status)}</Badge>
                       <Badge tone={riskTone(s.risk)}>{riskLabel(s.risk)}</Badge>
                     </div>
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">
+                  <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
                     {new Date(s.last_update_at).toLocaleString()}
                   </td>
-                  <td className="py-2 pr-4 text-zinc-700">
-                    <span className="text-zinc-500">
-                      {s.etd ? new Date(s.etd).toLocaleDateString() : "—"}
-                    </span>{" "}
-                    /{" "}
-                    <span className="text-zinc-500">
-                      {s.eta ? new Date(s.eta).toLocaleDateString() : "—"}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
+                  <td className="whitespace-nowrap py-2 pr-4">
                     <Link
                       href={`/shipments/${s.id}`}
-                      className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                     >
                       Open
                     </Link>
                   </td>
                 </tr>
               ))}
-              {shipments.length === 0 ? (
+              {paginatedShipments.length === 0 ? (
                 <tr>
-                  <td className="py-6 text-sm text-zinc-500" colSpan={8}>
+                  <td className="py-6 text-sm text-zinc-500" colSpan={7}>
                     No shipments found.
                   </td>
                 </tr>
@@ -241,7 +285,57 @@ export default async function ShipmentsPage({
             </tbody>
           </table>
         </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-3">
+          <div className="text-xs text-zinc-600">
+            Showing {showingFrom}-{showingTo} of {totalRows} shipments
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href={buildShipmentsPageHref(Math.max(1, currentPage - 1))}
+              aria-disabled={currentPage <= 1}
+              className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${
+                currentPage <= 1
+                  ? "pointer-events-none border-zinc-100 bg-zinc-50 text-zinc-400"
+                  : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+              }`}
+            >
+              Previous
+            </Link>
+            {visiblePages.map((page, index) => {
+              const previous = visiblePages[index - 1];
+              const showGap = previous !== undefined && page - previous > 1;
+              return (
+                <span key={`page-slot-${page}`} className="inline-flex items-center gap-2">
+                  {showGap ? <span className="text-xs text-zinc-400">...</span> : null}
+                  <Link
+                    href={buildShipmentsPageHref(page)}
+                    className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${
+                      page === currentPage
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                    }`}
+                  >
+                    {page}
+                  </Link>
+                </span>
+              );
+            })}
+            <Link
+              href={buildShipmentsPageHref(Math.min(totalPages, currentPage + 1))}
+              aria-disabled={currentPage >= totalPages}
+              className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${
+                currentPage >= totalPages
+                  ? "pointer-events-none border-zinc-100 bg-zinc-50 text-zinc-400"
+                  : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+              }`}
+            >
+              Next
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
+

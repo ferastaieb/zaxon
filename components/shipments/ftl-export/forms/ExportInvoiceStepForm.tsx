@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
 import type { FtlDocumentMeta, FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue } from "../fieldNames";
@@ -155,7 +156,16 @@ export function ExportInvoiceStepForm({
                   Download latest invoice file
                 </a>
               ) : (
-                "No invoice file uploaded yet."
+                <div className="rounded-lg border border-dashed border-zinc-300 bg-white p-2 text-center">
+                  <AppIllustration
+                    name="empty-no-documents"
+                    alt="No documents uploaded"
+                    width={300}
+                    height={140}
+                    className="mx-auto h-20 w-full max-w-xs"
+                  />
+                  <div className="mt-1">No invoice file uploaded yet.</div>
+                </div>
               )}
             </div>
           </label>

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { FclImportCreateForm } from "@/components/shipments/fcl-import/FclImportCreateForm";
+import { AppIcon } from "@/components/ui/AppIcon";
 import { assertCanWrite, canWrite, requireUser } from "@/lib/auth";
 import { listParties } from "@/lib/data/parties";
 import { createShipment, listShipmentSteps } from "@/lib/data/shipments";
@@ -16,6 +17,8 @@ import {
   FTL_EXPORT_SERVICE_TYPE,
 } from "@/lib/ftlExport/constants";
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
+import { IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE } from "@/lib/importTransferOwnership/constants";
+import { ensureImportTransferOwnershipTemplate } from "@/lib/importTransferOwnership/template";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -77,7 +80,9 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       : [];
 
     const validServiceType =
-      serviceType === SERVICE_TYPE_FCL || serviceType === FTL_EXPORT_SERVICE_TYPE;
+      serviceType === SERVICE_TYPE_FCL ||
+      serviceType === FTL_EXPORT_SERVICE_TYPE ||
+      serviceType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE;
     if (
       !validServiceType ||
       customerPartyIds.length === 0 ||
@@ -88,7 +93,11 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       redirect("/shipments/new?error=invalid");
     }
 
-    if (serviceType === FTL_EXPORT_SERVICE_TYPE && customerPartyIds.length !== 1) {
+    if (
+      (serviceType === FTL_EXPORT_SERVICE_TYPE ||
+        serviceType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE) &&
+      customerPartyIds.length !== 1
+    ) {
       redirect("/shipments/new?error=invalid");
     }
 
@@ -136,7 +145,34 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       redirect(`/shipments/${created.shipmentId}`);
     }
 
-    const workflowTemplateId = await ensureFtlExportTemplate({
+    if (serviceType === FTL_EXPORT_SERVICE_TYPE) {
+      const workflowTemplateId = await ensureFtlExportTemplate({
+        createdByUserId: user.id,
+      });
+
+      const created = await createShipment({
+        customerPartyIds,
+        transportMode: "LAND",
+        origin,
+        destination,
+        shipmentType: "LAND",
+        cargoDescription: "FTL Export - Warehouse Operations",
+        jobIds: jobIds.length ? jobIds : undefined,
+        containerNumber: null,
+        workflowTemplateId,
+        createdByUserId: user.id,
+      });
+
+      await refreshShipmentDerivedState({
+        shipmentId: created.shipmentId,
+        actorUserId: user.id,
+        updateLastUpdate: true,
+      });
+
+      redirect(`/shipments/ftl-export/${created.shipmentId}`);
+    }
+
+    const workflowTemplateId = await ensureImportTransferOwnershipTemplate({
       createdByUserId: user.id,
     });
 
@@ -146,7 +182,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       origin,
       destination,
       shipmentType: "LAND",
-      cargoDescription: "FTL Export - Warehouse Operations",
+      cargoDescription: "Import Transfer of Ownership",
       jobIds: jobIds.length ? jobIds : undefined,
       containerNumber: null,
       workflowTemplateId,
@@ -159,14 +195,15 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       updateLastUpdate: true,
     });
 
-    redirect(`/shipments/ftl-export/${created.shipmentId}`);
+    redirect(`/shipments/import-transfer-ownership/${created.shipmentId}`);
   }
 
   return (
     <div className={`${bodyFont.className} mx-auto max-w-6xl space-y-6`}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-slate-500">
+          <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.25em] text-slate-500">
+            <AppIcon name="icon-shipment-create" size={26} />
             Shipment creation
           </div>
           <h1
@@ -175,8 +212,8 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
             Create shipment
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            Choose the service type to create either an FCL Import Clearance
-            shipment or an FTL Export warehouse workflow.
+            Choose the service type to create FCL Import Clearance, FTL Export
+            warehouse workflow, or Import Transfer of Ownership.
           </p>
         </div>
         <Link

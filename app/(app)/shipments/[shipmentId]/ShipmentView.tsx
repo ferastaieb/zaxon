@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
 import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
@@ -328,21 +329,28 @@ export default function ShipmentView(props: ShipmentViewProps) {
         const requested = searchParams.get("requested");
         if (!saved && !requested) return;
 
-        if (saved) {
-            setToast({ message: "Saved successfully.", tone: "success" });
-        } else if (requested) {
-            setToast({ message: "Request sent to customer.", tone: "info" });
-        }
+        const toastPayload = saved
+            ? { message: "Saved successfully.", tone: "success" as const }
+            : requested
+                ? { message: "Request sent to customer.", tone: "info" as const }
+                : null;
 
         const params = new URLSearchParams(searchParams.toString());
         params.delete("saved");
         params.delete("requested");
         const next = params.toString();
+        const showTimeout = setTimeout(() => {
+            if (!toastPayload) return;
+            setToast(toastPayload);
+        }, 0);
         const timeout = setTimeout(() => {
             setToast(null);
             router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
         }, 1800);
-        return () => clearTimeout(timeout);
+        return () => {
+            clearTimeout(showTimeout);
+            clearTimeout(timeout);
+        };
     }, [pathname, router, searchParams]);
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
@@ -735,21 +743,22 @@ export default function ShipmentView(props: ShipmentViewProps) {
                         {(
                             [
                                 { id: "overview", label: "Overview" },
-                                { id: "connections", label: "Connections", count: connectedShipments.length },
-                                { id: "tracking-steps", label: "Tracking", count: trackingStepsView.length },
-                                { id: "operations-steps", label: "Operations", count: operationsStepsView.length },
+                                { id: "connections", label: "Connections", count: connectedShipments.length, icon: "icon-allocation" as AppIconName },
+                                { id: "tracking-steps", label: "Tracking", count: trackingStepsView.length, icon: "icon-route" as AppIconName },
+                                { id: "operations-steps", label: "Operations", count: operationsStepsView.length, icon: "icon-calendar-trigger" as AppIconName },
                                 ...(showStockTab
-                                    ? [{ id: "stock-tracking", label: "Stock", count: stockRows.length }]
+                                    ? [{ id: "stock-tracking", label: "Stock", count: stockRows.length, icon: "icon-stock" as AppIconName }]
                                     : []),
-                                { id: "goods", label: "Goods", count: shipmentGoods.length },
+                                { id: "goods", label: "Goods", count: shipmentGoods.length, icon: "icon-allocation" as AppIconName },
                                 { id: "tasks", label: "Tasks", count: myTasks.length > 0 ? myTasks.length : undefined },
-                                { id: "documents", label: "Documents", count: docs.length },
-                                { id: "activity", label: "Activity" },
+                                { id: "documents", label: "Documents", count: docs.length, icon: "icon-doc-required" as AppIconName },
+                                { id: "activity", label: "Activity", icon: "icon-activity-log" as AppIconName },
                             ] as Array<{
                                 id: ShipmentTabId;
                                 label: string;
                                 count?: number;
                                 alert?: boolean;
+                                icon?: AppIconName;
                             }>
                         ).map((tab) => (
                             <button
@@ -760,6 +769,9 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
                                     }`}
                             >
+                                {tab.icon ? (
+                                    <AppIcon name={tab.icon} size={19} className="opacity-80" />
+                                ) : null}
                                 {tab.label}
                                 {tab.count !== undefined && (
                                     <span className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] ${tab.alert ? "bg-red-100 text-red-700" : "bg-zinc-200 text-zinc-600"
@@ -1977,7 +1989,10 @@ export default function ShipmentView(props: ShipmentViewProps) {
                             <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                     <div>
-                                        <h3 className="text-lg font-semibold text-zinc-900">Activity</h3>
+                                        <h3 className="inline-flex items-center gap-2 text-lg font-semibold text-zinc-900">
+                                            <AppIcon name="icon-activity-log" size={24} />
+                                            Activity
+                                        </h3>
                                         <p className="mt-1 text-sm text-zinc-500">
                                             Timeline of updates, document events, and comments.
                                         </p>

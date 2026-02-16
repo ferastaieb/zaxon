@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
+import { AppIcon } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { stepStatusLabel, type StepStatus } from "@/lib/domain";
 
@@ -82,7 +83,8 @@ export function SectionFrame({
       </div>
       {before ? <div className="mt-4">{before}</div> : null}
       {doneReadOnly ? (
-        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+          <AppIcon name="icon-locked" size={20} />
           This step is marked done and is read-only.
         </div>
       ) : null}

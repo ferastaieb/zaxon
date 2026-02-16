@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AppIllustration } from "@/components/ui/AppIllustration";
 import type { FtlStepData } from "../types";
 import { boolValue, fieldName } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
@@ -50,6 +51,21 @@ export function StockViewStepForm({
         isAdmin={isAdmin}
         saveLabel="Save stock snapshot"
       >
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-zinc-600">
+              Ledger-style view of imported, exported, and remaining balances.
+            </div>
+            <AppIllustration
+              name="stock-ledger"
+              alt="Stock ledger overview"
+              width={260}
+              height={140}
+              className="h-20 w-44"
+            />
+          </div>
+        </div>
+
         <div className="overflow-x-auto rounded-lg border border-zinc-200">
           <table className="min-w-full text-left text-xs">
             <thead className="bg-zinc-50 text-zinc-600">
@@ -77,8 +93,15 @@ export function StockViewStepForm({
               ))}
               {summaryRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-3 text-zinc-500">
-                    No import allocation rows yet.
+                  <td colSpan={7} className="px-3 py-4 text-center">
+                    <AppIllustration
+                      name="stock-ledger"
+                      alt="No stock rows yet"
+                      width={300}
+                      height={160}
+                      className="mx-auto h-24 w-full max-w-xs"
+                    />
+                    <div className="mt-1 text-zinc-500">No import allocation rows yet.</div>
                   </td>
                 </tr>
               ) : null}
