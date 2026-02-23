@@ -142,7 +142,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
         updateLastUpdate: true,
       });
 
-      redirect(`/shipments/${created.shipmentId}`);
+      redirect(`/shipments/${created.shipmentId}?created=1`);
     }
 
     if (serviceType === FTL_EXPORT_SERVICE_TYPE) {
@@ -169,7 +169,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
         updateLastUpdate: true,
       });
 
-      redirect(`/shipments/ftl-export/${created.shipmentId}`);
+      redirect(`/shipments/ftl-export/${created.shipmentId}?created=1`);
     }
 
     const workflowTemplateId = await ensureImportTransferOwnershipTemplate({
@@ -195,7 +195,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       updateLastUpdate: true,
     });
 
-    redirect(`/shipments/import-transfer-ownership/${created.shipmentId}`);
+    redirect(`/shipments/import-transfer-ownership/${created.shipmentId}?created=1`);
   }
 
   return (

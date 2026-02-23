@@ -10,6 +10,7 @@ import {
 } from "@/components/shipments/ftl-export/FtlExportWorkspace";
 import { requireUser } from "@/lib/auth";
 import { listDocumentRequests, listDocuments, type DocumentRow } from "@/lib/data/documents";
+import { listParties } from "@/lib/data/parties";
 import {
   getShipment,
   getTrackingTokenForShipment,
@@ -97,6 +98,9 @@ function errorMessage(error: string | null) {
   if (error === "invoice_truck_details_required") {
     return "Complete truck number, driver name, and driver contact for all active trucks before saving/finalizing the export invoice.";
   }
+  if (error === "invoice_required_fields") {
+    return "Invoice number, invoice date, and invoice file are required before finalization.";
+  }
   if (error === "truck_locked") {
     return "Truck details are locked because export invoice is finalized.";
   }
@@ -174,7 +178,7 @@ export default async function FtlExportShipmentPage({
     }
   }
 
-  const [docs, docRequests, trackingToken, importCandidates] = await Promise.all([
+  const [docs, docRequests, trackingToken, importCandidates, brokers] = await Promise.all([
     listDocuments(id),
     listDocumentRequests(id),
     getTrackingTokenForShipment(id),
@@ -183,6 +187,7 @@ export default async function FtlExportShipmentPage({
       role: user.role,
       currentShipmentId: id,
     }),
+    listParties({ type: "CUSTOMS_BROKER" }),
   ]);
 
   const stepData = steps.map((step) => ({
@@ -253,6 +258,7 @@ export default async function FtlExportShipmentPage({
         headingClassName={headingFont.className}
         shipment={shipment}
         steps={stepData}
+        brokers={brokers.map((broker) => ({ id: broker.id, name: broker.name }))}
         latestDocsByType={buildLatestDocMap(docs)}
         importCandidates={importCandidates}
         trackingToken={trackingToken}

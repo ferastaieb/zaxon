@@ -71,6 +71,9 @@ export default async function ShipmentDetailsPage({
 
   const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
+  if (shipment.shipment_kind === "MASTER") {
+    redirect(`/shipments/master/${id}`);
+  }
   const template = shipment.workflow_template_id
     ? await getWorkflowTemplate(shipment.workflow_template_id)
     : null;

@@ -2,18 +2,22 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Badge } from "@/components/ui/Badge";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { assertCanWrite, requireUser } from "@/lib/auth";
 import {
   ShipmentOverallStatuses,
   TransportModes,
   overallStatusLabel,
-  riskLabel,
   transportModeLabel,
   type ShipmentOverallStatus,
   type TransportMode,
 } from "@/lib/domain";
 import { listParties } from "@/lib/data/parties";
-import { listShipmentsForUser } from "@/lib/data/shipments";
+import {
+  ShipmentKinds,
+  type ShipmentKind,
+  listShipmentsForUser,
+} from "@/lib/data/shipments";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -22,12 +26,6 @@ function readParam(params: SearchParams, key: string): string | undefined {
   if (!value) return undefined;
   if (Array.isArray(value)) return value[0];
   return value;
-}
-
-function riskTone(risk: string) {
-  if (risk === "BLOCKED") return "red";
-  if (risk === "AT_RISK") return "yellow";
-  return "green";
 }
 
 function shipmentModeLabel(input: {
@@ -45,6 +43,12 @@ function positiveIntOrDefault(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value ?? "", 10);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return parsed;
+}
+
+function shipmentKindLabel(kind: ShipmentKind) {
+  if (kind === "MASTER") return "Master";
+  if (kind === "SUBSHIPMENT") return "Subshipment";
+  return "Standard";
 }
 
 export default async function ShipmentsPage({
@@ -68,6 +72,11 @@ export default async function ShipmentsPage({
   const status = ShipmentOverallStatuses.includes(statusRaw as ShipmentOverallStatus)
     ? (statusRaw as ShipmentOverallStatus)
     : undefined;
+  const kindRaw = readParam(resolved, "kind");
+  const kind = ShipmentKinds.includes(kindRaw as ShipmentKind)
+    ? (kindRaw as ShipmentKind)
+    : undefined;
+  const masterShipmentCode = readParam(resolved, "masterShipmentCode") ?? "";
   const pageRaw = readParam(resolved, "page");
 
   const customers = await listParties({ type: "CUSTOMER" });
@@ -78,6 +87,8 @@ export default async function ShipmentsPage({
     customerId: Number.isFinite(customerId) ? customerId : undefined,
     transportMode: mode,
     status,
+    kind,
+    masterShipmentCode: masterShipmentCode.trim() || undefined,
   });
 
   const pageSize = 10;
@@ -97,6 +108,8 @@ export default async function ShipmentsPage({
     if (customerIdRaw) params.set("customerId", customerIdRaw);
     if (modeRaw) params.set("mode", modeRaw);
     if (statusRaw) params.set("status", statusRaw);
+    if (kindRaw) params.set("kind", kindRaw);
+    if (masterShipmentCode.trim()) params.set("masterShipmentCode", masterShipmentCode.trim());
     if (page > 1) params.set("page", String(page));
     const query = params.toString();
     return query ? `/shipments?${query}` : "/shipments";
@@ -120,6 +133,13 @@ export default async function ShipmentsPage({
     redirect("/shipments/new");
   }
 
+  async function createMasterShipmentRedirectAction() {
+    "use server";
+    const user = await requireUser();
+    assertCanWrite(user);
+    redirect("/shipments/master/new");
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -131,19 +151,28 @@ export default async function ShipmentsPage({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <form action={createShipmentRedirectAction}>
-            <button
-              type="submit"
+            <SubmitButton
+              pendingLabel="Loading..."
               disabled={user.role === "FINANCE"}
               className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
             >
               Create shipment
-            </button>
+            </SubmitButton>
+          </form>
+          <form action={createMasterShipmentRedirectAction}>
+            <SubmitButton
+              pendingLabel="Loading..."
+              disabled={user.role === "FINANCE"}
+              className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+            >
+              Create master shipment
+            </SubmitButton>
           </form>
         </div>
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <form className="grid gap-3 lg:grid-cols-4" method="get">
+        <form className="grid gap-3 lg:grid-cols-6" method="get">
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Search</div>
             <input
@@ -204,7 +233,33 @@ export default async function ShipmentsPage({
             </select>
           </label>
 
-          <div className="flex items-end gap-2 lg:col-span-4">
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-zinc-600">Kind</div>
+            <select
+              name="kind"
+              defaultValue={kindRaw ?? ""}
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+            >
+              <option value="">All kinds</option>
+              {ShipmentKinds.map((entry) => (
+                <option key={entry} value={entry}>
+                  {shipmentKindLabel(entry)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <div className="mb-1 text-xs font-medium text-zinc-600">Master reference</div>
+            <input
+              name="masterShipmentCode"
+              defaultValue={masterShipmentCode}
+              placeholder="MSH-000001"
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+            />
+          </label>
+
+          <div className="flex items-end gap-2 lg:col-span-6">
             <button
               type="submit"
               className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
@@ -225,6 +280,7 @@ export default async function ShipmentsPage({
             <thead className="text-xs text-zinc-500">
               <tr>
                 <th className="whitespace-nowrap py-2 pr-4">Shipment ID</th>
+                <th className="whitespace-nowrap py-2 pr-4">Kind</th>
                 <th className="whitespace-nowrap py-2 pr-4">Customer</th>
                 <th className="whitespace-nowrap py-2 pr-4">Mode</th>
                 <th className="whitespace-nowrap py-2 pr-4">Route</th>
@@ -245,6 +301,14 @@ export default async function ShipmentsPage({
                     ) : null}
                   </td>
                   <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
+                    <div>{shipmentKindLabel(s.shipment_kind)}</div>
+                    {s.master_shipment_code ? (
+                      <div className="mt-0.5 text-xs text-zinc-500">
+                        Master: {s.master_shipment_code}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
                     {s.customer_names ?? "-"}
                   </td>
                   <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
@@ -257,27 +321,32 @@ export default async function ShipmentsPage({
                     {s.origin} {"->"} {s.destination}
                   </td>
                   <td className="whitespace-nowrap py-2 pr-4">
-                    <div className="flex items-center gap-2">
-                      <Badge tone="zinc">{overallStatusLabel(s.overall_status)}</Badge>
-                      <Badge tone={riskTone(s.risk)}>{riskLabel(s.risk)}</Badge>
-                    </div>
+                    <Badge tone="zinc">{overallStatusLabel(s.overall_status)}</Badge>
                   </td>
                   <td className="whitespace-nowrap py-2 pr-4 text-zinc-700">
                     {new Date(s.last_update_at).toLocaleString()}
                   </td>
                   <td className="whitespace-nowrap py-2 pr-4">
+                    {(() => {
+                      const href =
+                        s.shipment_kind === "SUBSHIPMENT" && s.master_shipment_id
+                          ? `/shipments/master/${s.master_shipment_id}`
+                          : `/shipments/${s.id}`;
+                      return (
                     <Link
-                      href={`/shipments/${s.id}`}
+                          href={href}
                       className="whitespace-nowrap rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                     >
                       Open
                     </Link>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}
               {paginatedShipments.length === 0 ? (
                 <tr>
-                  <td className="py-6 text-sm text-zinc-500" colSpan={7}>
+                  <td className="py-6 text-sm text-zinc-500" colSpan={8}>
                     No shipments found.
                   </td>
                 </tr>

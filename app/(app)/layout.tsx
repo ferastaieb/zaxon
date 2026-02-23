@@ -1,4 +1,5 @@
 import { NavLink } from "@/components/nav/NavLink";
+import { ShipmentFlashToast } from "@/components/ui/ShipmentFlashToast";
 import { requireUser } from "@/lib/auth";
 
 export default async function AppLayout({
@@ -56,6 +57,7 @@ export default async function AppLayout({
           </header>
 
           <main className="flex-1 p-6">{children}</main>
+          <ShipmentFlashToast />
         </div>
       </div>
     </div>

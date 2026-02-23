@@ -21,6 +21,7 @@ import {
 } from "@/lib/importTransferOwnership/constants";
 import { AppIcon } from "@/components/ui/AppIcon";
 import { AppIllustration } from "@/components/ui/AppIllustration";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { CanvasBackdrop } from "./CanvasBackdrop";
 
 type CreateFormProps = {
@@ -422,13 +423,13 @@ export function FclImportCreateForm({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="submit"
+            <SubmitButton
+              pendingLabel="Creating..."
               disabled={!canWrite}
               className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               Create shipment
-            </button>
+            </SubmitButton>
             <Link
               href="/shipments"
               className="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"

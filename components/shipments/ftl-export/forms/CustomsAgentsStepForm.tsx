@@ -12,6 +12,8 @@ type Props = {
   returnTo: string;
   canEdit: boolean;
   isAdmin: boolean;
+  brokers: Array<{ id: number; name: string }>;
+  naseebModeLock?: "ZAXON" | "CLIENT";
 };
 
 type BorderFieldKey =
@@ -31,6 +33,41 @@ type BorderNode = {
   fieldKey?: BorderFieldKey;
   staticValue?: string;
 };
+
+type BrokerOption = {
+  id: number;
+  name: string;
+};
+
+function normalizeBrokerOptions(input: BrokerOption[]) {
+  const byName = new Map<string, BrokerOption>();
+  for (const broker of input) {
+    const name = broker.name.trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (byName.has(key)) continue;
+    byName.set(key, {
+      id: broker.id,
+      name,
+    });
+  }
+  return Array.from(byName.values()).sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+}
+
+function brokerOptionsWithCurrent(
+  options: BrokerOption[],
+  currentValue: string,
+): BrokerOption[] {
+  const trimmed = currentValue.trim();
+  if (!trimmed) return options;
+  const exists = options.some(
+    (option) => option.name.toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (exists) return options;
+  return [{ id: -1, name: trimmed }, ...options];
+}
 
 const BASE_CHAIN: BorderNode[] = [
   {
@@ -82,6 +119,8 @@ export function CustomsAgentsStepForm({
   returnTo,
   canEdit,
   isAdmin,
+  brokers,
+  naseebModeLock,
 }: Props) {
   const [agents, setAgents] = useState<Record<BorderFieldKey, string>>({
     jebel_ali_agent_name: stringValue(step.values.jebel_ali_agent_name),
@@ -102,8 +141,25 @@ export function CustomsAgentsStepForm({
   const [clientFinalChoice, setClientFinalChoice] = useState(
     stringValue(step.values.naseeb_client_final_choice),
   );
+  const [brokerOptions, setBrokerOptions] = useState<BrokerOption[]>(() =>
+    normalizeBrokerOptions(brokers),
+  );
+  const [showBrokerModal, setShowBrokerModal] = useState(false);
+  const [brokerTargetKey, setBrokerTargetKey] = useState<BorderFieldKey | null>(
+    null,
+  );
+  const [brokerForm, setBrokerForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    address: "",
+    notes: "",
+  });
+  const [brokerError, setBrokerError] = useState<string | null>(null);
+  const [brokerSubmitting, setBrokerSubmitting] = useState(false);
   const [notes, setNotes] = useState(step.notes ?? "");
   const [activeNode, setActiveNode] = useState<ActiveNode>(null);
+  const effectiveNaseebMode = naseebModeLock ?? naseebMode;
 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const activeInputRef = useRef<HTMLInputElement | null>(null);
@@ -112,6 +168,7 @@ export function CustomsAgentsStepForm({
 
   useEffect(() => {
     if (!activeNode) return;
+    if (showBrokerModal) return;
     const focusTarget = activeInputRef.current ?? activeSelectRef.current;
     focusTarget?.focus();
 
@@ -123,39 +180,136 @@ export function CustomsAgentsStepForm({
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [activeNode]);
+  }, [activeNode, showBrokerModal]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (showBrokerModal) {
+          if (!brokerSubmitting) {
+            setShowBrokerModal(false);
+          }
+          return;
+        }
         setActiveNode(null);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [showBrokerModal, brokerSubmitting]);
 
   const setBorderAgent = (key: BorderFieldKey, value: string) => {
     setAgents((prev) => ({ ...prev, [key]: value }));
   };
 
-  const setNaseebAgent = (value: string) => {
-    setAgents((prev) => ({ ...prev, naseeb_agent_name: value }));
+  const openBrokerModal = (targetKey: BorderFieldKey) => {
+    if (!canEdit) return;
+    setBrokerTargetKey(targetKey);
+    setBrokerError(null);
+    setBrokerForm({
+      name: "",
+      phone: "",
+      email: "",
+      address: "",
+      notes: "",
+    });
+    setShowBrokerModal(true);
+  };
+
+  const closeBrokerModal = () => {
+    if (brokerSubmitting) return;
+    setShowBrokerModal(false);
+    setBrokerError(null);
+  };
+
+  const updateBrokerForm = (
+    key: keyof typeof brokerForm,
+    value: string,
+  ) => {
+    setBrokerForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const createBroker = async () => {
+    if (!canEdit || brokerSubmitting) return;
+    const name = brokerForm.name.trim();
+    if (!name) {
+      setBrokerError("Broker name is required.");
+      return;
+    }
+
+    setBrokerSubmitting(true);
+    setBrokerError(null);
+
+    try {
+      const response = await fetch("/api/parties", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "CUSTOMS_BROKER",
+          name,
+          phone: brokerForm.phone.trim() || null,
+          email: brokerForm.email.trim() || null,
+          address: brokerForm.address.trim() || null,
+          notes: brokerForm.notes.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setBrokerError("Session expired. Please sign in again.");
+        } else if (response.status === 403) {
+          setBrokerError("You do not have permission to create brokers.");
+        } else {
+          setBrokerError("Unable to create broker.");
+        }
+        return;
+      }
+
+      const payload = (await response.json()) as {
+        party?: { id: number; name: string };
+      };
+      const created = payload.party;
+      if (!created || !created.name.trim()) {
+        setBrokerError("Unable to create broker.");
+        return;
+      }
+
+      setBrokerOptions((prev) =>
+        normalizeBrokerOptions([
+          ...prev,
+          {
+            id: created.id,
+            name: created.name,
+          },
+        ]),
+      );
+
+      if (brokerTargetKey) {
+        setBorderAgent(brokerTargetKey, created.name.trim());
+      }
+
+      setShowBrokerModal(false);
+      setBrokerError(null);
+    } catch {
+      setBrokerError("Unable to create broker.");
+    } finally {
+      setBrokerSubmitting(false);
+    }
   };
 
   const isNaseebComplete =
-    naseebMode === "ZAXON"
+    effectiveNaseebMode === "ZAXON"
       ? !!agents.naseeb_agent_name.trim() &&
         !!syriaConsignee.trim() &&
         !!showConsignee.trim()
-      : naseebMode === "CLIENT"
+      : effectiveNaseebMode === "CLIENT"
         ? !!clientFinalChoice.trim()
         : false;
 
   const naseebSummary =
-    naseebMode === "ZAXON"
+    effectiveNaseebMode === "ZAXON"
       ? `Zaxon${agents.naseeb_agent_name.trim() ? ` | ${agents.naseeb_agent_name}` : " | Agent required"}`
-      : naseebMode === "CLIENT"
+      : effectiveNaseebMode === "CLIENT"
         ? `Client${clientFinalChoice.trim() ? ` | ${clientFinalChoice}` : " | Final choice required"}`
         : "Click to configure";
 
@@ -195,7 +349,7 @@ export function CustomsAgentsStepForm({
       />
       <input
         name={fieldName(["naseeb_clearance_mode"])}
-        value={naseebMode}
+        value={effectiveNaseebMode}
         readOnly
         hidden
       />
@@ -213,14 +367,14 @@ export function CustomsAgentsStepForm({
       />
       <input
         name={fieldName(["naseeb_client_final_choice"])}
-        value={clientFinalChoice}
+        value={effectiveNaseebMode === "CLIENT" ? clientFinalChoice : ""}
         readOnly
         hidden
       />
 
       <SectionFrame
         title="Customs Agents Allocation"
-        description="Assign clearing agents by clicking each border checkpoint on the journey map."
+        description="Assign clearing agents from customs brokers by clicking each border checkpoint on the journey map."
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
@@ -288,23 +442,45 @@ export function CustomsAgentsStepForm({
                           <div className="mb-2 text-xs font-medium text-zinc-600">
                             {node.label} agent
                           </div>
-                          <input
-                            ref={activeInputRef}
-                            type="text"
+                          <select
+                            ref={activeSelectRef}
                             value={agents[node.fieldKey]}
                             onChange={(event) =>
                               setBorderAgent(node.fieldKey!, event.target.value)
                             }
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                setActiveNode(null);
-                              }
-                            }}
                             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                            placeholder="Type agent name"
                             disabled={!canEdit}
-                          />
+                          >
+                            <option value="">Select broker</option>
+                            {brokerOptionsWithCurrent(
+                              brokerOptions,
+                              agents[node.fieldKey],
+                            ).map((broker) => (
+                              <option
+                                key={`${node.fieldKey}-${broker.id}-${broker.name}`}
+                                value={broker.name}
+                              >
+                                {broker.name}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-2 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openBrokerModal(node.fieldKey!)}
+                              disabled={!canEdit}
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                            >
+                              New broker
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveNode(null)}
+                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                            >
+                              Save
+                            </button>
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -346,7 +522,7 @@ export function CustomsAgentsStepForm({
                   onClick={() => setActiveNode(null)}
                   className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50"
                 >
-                  Close
+                  Save
                 </button>
               </div>
 
@@ -357,32 +533,61 @@ export function CustomsAgentsStepForm({
                   </div>
                   <select
                     ref={activeSelectRef}
-                    value={naseebMode}
+                    value={effectiveNaseebMode}
                     onChange={(event) => setNaseebMode(event.target.value)}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                    disabled={!canEdit}
+                    disabled={!canEdit || !!naseebModeLock}
                   >
-                    <option value="">Select mode</option>
-                    <option value="ZAXON">Zaxon</option>
-                    <option value="CLIENT">Client</option>
+                    {naseebModeLock ? (
+                      <option value={naseebModeLock}>
+                        {naseebModeLock === "ZAXON" ? "Zaxon" : "Client"}
+                      </option>
+                    ) : (
+                      <>
+                        <option value="">Select mode</option>
+                        <option value="ZAXON">Zaxon</option>
+                        <option value="CLIENT">Client</option>
+                      </>
+                    )}
                   </select>
                 </label>
 
-                {naseebMode === "ZAXON" ? (
+                {effectiveNaseebMode === "ZAXON" ? (
                   <>
                     <label className="block">
                       <div className="mb-1 text-[11px] font-medium text-zinc-500">
                         Clearing agent name *
                       </div>
-                      <input
-                        ref={activeInputRef}
-                        type="text"
+                      <select
+                        ref={activeSelectRef}
                         value={agents.naseeb_agent_name}
-                        onChange={(event) => setNaseebAgent(event.target.value)}
+                        onChange={(event) =>
+                          setBorderAgent("naseeb_agent_name", event.target.value)
+                        }
                         className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        placeholder="Type agent name"
                         disabled={!canEdit}
-                      />
+                      >
+                        <option value="">Select broker</option>
+                        {brokerOptionsWithCurrent(
+                          brokerOptions,
+                          agents.naseeb_agent_name,
+                        ).map((broker) => (
+                          <option
+                            key={`naseeb-${broker.id}-${broker.name}`}
+                            value={broker.name}
+                          >
+                            {broker.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => openBrokerModal("naseeb_agent_name")}
+                        disabled={!canEdit}
+                        className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                      >
+                        New broker
+                      </button>
                     </label>
                     <label className="block">
                       <div className="mb-1 text-[11px] font-medium text-zinc-500">
@@ -415,7 +620,7 @@ export function CustomsAgentsStepForm({
                   </>
                 ) : null}
 
-                {naseebMode === "CLIENT" ? (
+                {effectiveNaseebMode === "CLIENT" ? (
                   <label className="block">
                     <div className="mb-1 text-[11px] font-medium text-zinc-500">
                       Client final choice *
@@ -447,6 +652,126 @@ export function CustomsAgentsStepForm({
           />
         </label>
       </SectionFrame>
+
+      {showBrokerModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close broker modal"
+            onClick={closeBrokerModal}
+            className="absolute inset-0 bg-black/40"
+          />
+          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-[0.14em] text-zinc-500">
+                  Customs broker
+                </div>
+                <h4 className="mt-1 text-sm font-semibold text-zinc-900">
+                  Quick add
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={closeBrokerModal}
+                disabled={brokerSubmitting}
+                className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <div className="mb-1 text-[11px] font-medium text-zinc-500">
+                  Broker name *
+                </div>
+                <input
+                  value={brokerForm.name}
+                  onChange={(event) => updateBrokerForm("name", event.target.value)}
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  disabled={brokerSubmitting}
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <div className="mb-1 text-[11px] font-medium text-zinc-500">
+                    Phone
+                  </div>
+                  <input
+                    value={brokerForm.phone}
+                    onChange={(event) => updateBrokerForm("phone", event.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                    disabled={brokerSubmitting}
+                  />
+                </label>
+                <label className="block">
+                  <div className="mb-1 text-[11px] font-medium text-zinc-500">
+                    Email
+                  </div>
+                  <input
+                    value={brokerForm.email}
+                    onChange={(event) => updateBrokerForm("email", event.target.value)}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                    disabled={brokerSubmitting}
+                  />
+                </label>
+              </div>
+
+              <label className="block">
+                <div className="mb-1 text-[11px] font-medium text-zinc-500">
+                  Address
+                </div>
+                <input
+                  value={brokerForm.address}
+                  onChange={(event) => updateBrokerForm("address", event.target.value)}
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  disabled={brokerSubmitting}
+                />
+              </label>
+
+              <label className="block">
+                <div className="mb-1 text-[11px] font-medium text-zinc-500">
+                  Notes
+                </div>
+                <textarea
+                  value={brokerForm.notes}
+                  onChange={(event) => updateBrokerForm("notes", event.target.value)}
+                  rows={3}
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                  disabled={brokerSubmitting}
+                />
+              </label>
+
+              {brokerError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  {brokerError}
+                </div>
+              ) : null}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={createBroker}
+                  disabled={brokerSubmitting}
+                  className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+                >
+                  {brokerSubmitting ? "Creating..." : "Create broker"}
+                </button>
+                <button
+                  type="button"
+                  onClick={closeBrokerModal}
+                  disabled={brokerSubmitting}
+                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </form>
   );
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { AppIllustration } from "@/components/ui/AppIllustration";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { FTL_EXPORT_TRAILER_TYPES } from "@/lib/ftlExport/constants";
 import type { FtlStepData } from "../types";
 import { boolValue, fieldName, numberValue, stringValue, toGroupRows, toRecord } from "../fieldNames";
@@ -419,13 +420,13 @@ export function TrucksDetailsStepForm({
             )}
           </div>
 
-          <button
-            type="submit"
+          <SubmitButton
+            pendingLabel="Saving..."
             disabled={disableEdit}
             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
           >
             Save planning
-          </button>
+          </SubmitButton>
         </form>
       ) : null}
 
@@ -675,13 +676,13 @@ export function TrucksDetailsStepForm({
                 />
 
                 <div className="mt-3 flex justify-end">
-                  <button
-                    type="submit"
+                  <SubmitButton
+                    pendingLabel="Saving..."
                     disabled={disableEdit}
                     className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                   >
                     Save changes
-                  </button>
+                  </SubmitButton>
                 </div>
               </form>
             );

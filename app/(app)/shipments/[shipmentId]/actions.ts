@@ -1001,7 +1001,7 @@ export async function addShipmentJobIdsAction(
     });
   }
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?saved=jobIds`);
 }
 
 export async function removeShipmentJobIdAction(
@@ -1080,7 +1080,7 @@ export async function createShipmentLinkAction(
     updateLastUpdate: false,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=link`);
 }
 
 export async function deleteShipmentLinkAction(
@@ -1127,7 +1127,7 @@ export async function createGoodAction(
     unitType,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=good`);
 }
 
 export async function addShipmentGoodAction(
@@ -1177,7 +1177,7 @@ export async function addShipmentGoodAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=shipmentGood`);
 }
 
 export async function deleteShipmentGoodAction(
@@ -1274,7 +1274,7 @@ export async function createTaskAction(shipmentId: number, formData: FormData) {
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=task`);
 }
 
 export async function updateTaskStatusAction(
@@ -1325,7 +1325,7 @@ export async function updateTaskStatusAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?saved=taskStatus`);
 }
 
 export async function uploadDocumentAction(shipmentId: number, formData: FormData) {
@@ -1382,7 +1382,7 @@ export async function uploadDocumentAction(shipmentId: number, formData: FormDat
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=document`);
 }
 
 export async function updateDocumentFlagsAction(
@@ -1421,7 +1421,7 @@ export async function updateDocumentFlagsAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?saved=documentFlags`);
 }
 
 export async function reviewDocumentAction(
@@ -1485,7 +1485,7 @@ export async function reviewDocumentAction(
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?saved=documentReview`);
 }
 
 export async function requestDocumentAction(
@@ -1562,7 +1562,7 @@ export async function addCommentAction(shipmentId: number, formData: FormData) {
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=comment`);
 }
 
 export async function logExceptionAction(shipmentId: number, formData: FormData) {
@@ -1639,7 +1639,7 @@ export async function logExceptionAction(shipmentId: number, formData: FormData)
     updateLastUpdate: true,
   });
 
-  redirect(`/shipments/${shipmentId}`);
+  redirect(`/shipments/${shipmentId}?created=exception`);
 }
 
 export async function resolveExceptionAction(

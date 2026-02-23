@@ -181,7 +181,12 @@ function isOriginConfigured(row: LoadingTruckCard) {
   if (row.loading_origin === "ZAXON_WAREHOUSE") {
     return !!row.zaxon_actual_loading_date;
   }
-  return !!row.mixed_supplier_loading_date && !!row.mixed_zaxon_loading_date;
+  return (
+    !!row.supplier_name &&
+    !!row.external_loading_location &&
+    !!row.mixed_supplier_loading_date &&
+    !!row.mixed_zaxon_loading_date
+  );
 }
 
 function isMixedFullyLoaded(row: LoadingTruckCard) {
@@ -512,7 +517,33 @@ export function LoadingDetailsStepForm({
                     <div className="space-y-3">
                       <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
                         <div className="mb-2 text-sm font-semibold text-zinc-800">Supplier Side:</div>
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="block">
+                            <MiniLabel>Supplier name *</MiniLabel>
+                            <input
+                              name={fieldName(["trucks", String(index), "supplier_name"])}
+                              value={row.supplier_name}
+                              onChange={(event) =>
+                                updateRow(index, { supplier_name: event.target.value })
+                              }
+                              placeholder="Enter supplier name"
+                              disabled={disableEdit}
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                            />
+                          </label>
+                          <label className="block">
+                            <MiniLabel>Supplier location *</MiniLabel>
+                            <input
+                              name={fieldName(["trucks", String(index), "external_loading_location"])}
+                              value={row.external_loading_location}
+                              onChange={(event) =>
+                                updateRow(index, { external_loading_location: event.target.value })
+                              }
+                              placeholder="City/Area"
+                              disabled={disableEdit}
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                            />
+                          </label>
                           <label className="block">
                             <MiniLabel>Supplier loading date *</MiniLabel>
                             <input
@@ -583,7 +614,7 @@ export function LoadingDetailsStepForm({
                   >
                     {rowReady
                       ? "Configuration complete. Continue to Loading details."
-                      : "Select origin and required dates before continuing."}
+                      : "Select origin and complete required setup fields before continuing."}
                   </div>
                 </div>
               ) : (
@@ -613,22 +644,6 @@ export function LoadingDetailsStepForm({
                               />
                             </label>
                             <label className="block">
-                              <MiniLabel>Weight *</MiniLabel>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min={0}
-                                placeholder="Weight *"
-                                name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_weight"])}
-                                value={row.mixed_zaxon_cargo_weight}
-                                onChange={(event) =>
-                                  updateRow(index, { mixed_zaxon_cargo_weight: event.target.value })
-                                }
-                                disabled={disableEdit}
-                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                              />
-                            </label>
-                            <label className="block">
                               <MiniLabel>Unit type *</MiniLabel>
                               <select
                                 name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_unit_type"])}
@@ -646,6 +661,22 @@ export function LoadingDetailsStepForm({
                                   </option>
                                 ))}
                               </select>
+                            </label>
+                            <label className="block">
+                              <MiniLabel>Weight *</MiniLabel>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min={0}
+                                placeholder="Weight *"
+                                name={fieldName(["trucks", String(index), "mixed_zaxon_cargo_weight"])}
+                                value={row.mixed_zaxon_cargo_weight}
+                                onChange={(event) =>
+                                  updateRow(index, { mixed_zaxon_cargo_weight: event.target.value })
+                                }
+                                disabled={disableEdit}
+                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                              />
                             </label>
                             {row.mixed_zaxon_cargo_unit_type === "Other" ? (
                               <label className="block sm:col-span-3">
@@ -712,24 +743,6 @@ export function LoadingDetailsStepForm({
                               />
                             </label>
                             <label className="block">
-                              <MiniLabel>Weight *</MiniLabel>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min={0}
-                                placeholder="Weight *"
-                                name={fieldName(["trucks", String(index), "mixed_supplier_cargo_weight"])}
-                                value={row.mixed_supplier_cargo_weight}
-                                onChange={(event) =>
-                                  updateRow(index, {
-                                    mixed_supplier_cargo_weight: event.target.value,
-                                  })
-                                }
-                                disabled={disableEdit}
-                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                              />
-                            </label>
-                            <label className="block">
                               <MiniLabel>Unit type *</MiniLabel>
                               <select
                                 name={fieldName(["trucks", String(index), "mixed_supplier_cargo_unit_type"])}
@@ -749,6 +762,24 @@ export function LoadingDetailsStepForm({
                                   </option>
                                 ))}
                               </select>
+                            </label>
+                            <label className="block">
+                              <MiniLabel>Weight *</MiniLabel>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min={0}
+                                placeholder="Weight *"
+                                name={fieldName(["trucks", String(index), "mixed_supplier_cargo_weight"])}
+                                value={row.mixed_supplier_cargo_weight}
+                                onChange={(event) =>
+                                  updateRow(index, {
+                                    mixed_supplier_cargo_weight: event.target.value,
+                                  })
+                                }
+                                disabled={disableEdit}
+                                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                              />
                             </label>
                             {row.mixed_supplier_cargo_unit_type === "Other" ? (
                               <label className="block sm:col-span-3">
@@ -827,6 +858,23 @@ export function LoadingDetailsStepForm({
                           />
                         </label>
                         <label className="block">
+                          <MiniLabel>Unit type *</MiniLabel>
+                          <select
+                            name={fieldName(["trucks", String(index), "cargo_unit_type"])}
+                            value={row.cargo_unit_type}
+                            onChange={(event) => updateRow(index, { cargo_unit_type: event.target.value })}
+                            disabled={disableEdit}
+                            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+                          >
+                            <option value="">Unit type *</option>
+                            {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
+                              <option key={`${index}-${unit}`} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                          </select>
+                        </label>
+                        <label className="block">
                           <MiniLabel>Cargo weight *</MiniLabel>
                           <input
                             type="number"
@@ -839,23 +887,6 @@ export function LoadingDetailsStepForm({
                             disabled={disableEdit}
                             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                           />
-                        </label>
-                        <label className="block">
-                          <MiniLabel>Unit type *</MiniLabel>
-                          <select
-                            name={fieldName(["trucks", String(index), "cargo_unit_type"])}
-                            value={row.cargo_unit_type}
-                            onChange={(event) => updateRow(index, { cargo_unit_type: event.target.value })}
-                            disabled={disableEdit}
-                            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                          >
-                            <option value="">Unit type *</option>
-                            {FTL_EXPORT_CARGO_UNIT_TYPES.map((unit) => (
-                              <option key={`${index}-${unit}`} value={unit}>
-                                {unit}
-                              </option>
-                            ))}
-                          </select>
                         </label>
                         {row.cargo_unit_type === "Other" ? (
                           <label className="block sm:col-span-3">

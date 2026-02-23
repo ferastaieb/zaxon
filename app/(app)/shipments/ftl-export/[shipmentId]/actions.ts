@@ -253,6 +253,17 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
     docs.filter((doc) => doc.is_received).map((doc) => String(doc.document_type)),
   );
 
+  if (step.name === FTL_EXPORT_STEP_NAMES.exportInvoice && finalizeInvoice) {
+    const invoiceRecord = toRecord(mergedValues);
+    const invoiceNumber = getString(invoiceRecord.invoice_number);
+    const invoiceDate = getString(invoiceRecord.invoice_date);
+    const invoiceDocType = stepFieldDocType(stepId, encodeFieldPath(["invoice_upload"]));
+    const hasInvoiceFile = docTypes.has(invoiceDocType);
+    if (!invoiceNumber || !invoiceDate || !hasInvoiceFile) {
+      redirect(appendParam(returnBase, "error", "invoice_required_fields"));
+    }
+  }
+
   if (step.name === FTL_EXPORT_STEP_NAMES.exportInvoice) {
     const invoiceNumber = getString((mergedValues as Record<string, unknown>).invoice_number);
     if (invoiceNumber) {

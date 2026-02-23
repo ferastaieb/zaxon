@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AppIllustration } from "@/components/ui/AppIllustration";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
 import type { FtlDocumentMeta, FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue } from "../fieldNames";
@@ -46,6 +47,16 @@ export function ExportInvoiceStepForm({
     <form action={updateAction}>
       <input type="hidden" name="stepId" value={step.id} />
       <input type="hidden" name="returnTo" value={returnTo} />
+      <input
+        type="hidden"
+        name={fieldName(["invoice_number"])}
+        value={invoiceNumber}
+      />
+      <input
+        type="hidden"
+        name={fieldName(["invoice_date"])}
+        value={invoiceDate}
+      />
       <SectionFrame
         title="Export Invoice"
         description="This section is active only after loading is done, linked imports are available, and truck details are complete."
@@ -88,15 +99,16 @@ export function ExportInvoiceStepForm({
                 </span>
               ) : null}
               {!invoiceFinalized ? (
-                <button
+                <SubmitButton
                   type="submit"
                   name="finalizeInvoice"
                   value="1"
+                  pendingLabel="Finalizing..."
                   disabled={disableForm}
                   className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-red-700 hover:bg-red-100 disabled:bg-zinc-100 disabled:text-zinc-400"
                 >
                   Confirm & Finalize
-                </button>
+                </SubmitButton>
               ) : null}
               {invoiceFinalized && isAdmin ? (
                 <button
@@ -118,7 +130,6 @@ export function ExportInvoiceStepForm({
               </div>
               <input
                 type="text"
-                name={fieldName(["invoice_number"])}
                 value={invoiceNumber}
                 onChange={(event) => setInvoiceNumber(event.target.value)}
                 disabled={disableForm}
@@ -131,7 +142,6 @@ export function ExportInvoiceStepForm({
               </div>
               <input
                 type="date"
-                name={fieldName(["invoice_date"])}
                 value={invoiceDate}
                 onChange={(event) => setInvoiceDate(event.target.value)}
                 disabled={disableForm}

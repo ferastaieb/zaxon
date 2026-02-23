@@ -92,6 +92,9 @@ function isLoadingRowComplete(
     return false;
   }
   if (origin === "MIXED") {
+    if (!row.supplier_name || !row.external_loading_location) {
+      return false;
+    }
     if (!row.mixed_supplier_loading_date || !row.mixed_zaxon_loading_date) {
       return false;
     }

@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
+import { SubmitButton } from "@/components/ui/SubmitButton";
 import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
 import {
     overallStatusLabel,
@@ -297,9 +298,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
                 : tabParamRaw;
     const activeTab = isShipmentTab(tabParam) ? tabParam : "overview";
     const [isCompactHeader, setIsCompactHeader] = useState(false);
-    const [toast, setToast] = useState<{ message: string; tone: "success" | "info" } | null>(
-        null,
-    );
     const [timelinePreviewTab, setTimelinePreviewTab] = useState<
         "operations" | "tracking"
     >("operations");
@@ -323,35 +321,6 @@ export default function ShipmentView(props: ShipmentViewProps) {
         window.addEventListener("scroll", onScroll, { passive: true });
         return () => window.removeEventListener("scroll", onScroll);
     }, []);
-
-    useEffect(() => {
-        const saved = searchParams.get("saved");
-        const requested = searchParams.get("requested");
-        if (!saved && !requested) return;
-
-        const toastPayload = saved
-            ? { message: "Saved successfully.", tone: "success" as const }
-            : requested
-                ? { message: "Request sent to customer.", tone: "info" as const }
-                : null;
-
-        const params = new URLSearchParams(searchParams.toString());
-        params.delete("saved");
-        params.delete("requested");
-        const next = params.toString();
-        const showTimeout = setTimeout(() => {
-            if (!toastPayload) return;
-            setToast(toastPayload);
-        }, 0);
-        const timeout = setTimeout(() => {
-            setToast(null);
-            router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-        }, 1800);
-        return () => {
-            clearTimeout(showTimeout);
-            clearTimeout(timeout);
-        };
-    }, [pathname, router, searchParams]);
 
     const canEdit = ["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role);
     const canDelete = user.role === "ADMIN";
@@ -833,13 +802,13 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     ) : (
                                         <span />
                                     )}
-                                    <button
-                                        type="submit"
+                                    <SubmitButton
+                                        pendingLabel="Saving..."
                                         disabled={!canEdit}
                                         className="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                                     >
                                         Save dates
-                                    </button>
+                                    </SubmitButton>
                                 </div>
                             </form>
                         </details>
@@ -1146,7 +1115,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         <form action={addShipmentJobIdsAction.bind(null, shipment.id)} className="mt-4">
                                             <div className="flex gap-2">
                                                 <input name="jobIds" placeholder="Add ID..." className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm" />
-                                                <button type="submit" className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800">Add</button>
+                                                <SubmitButton
+                                                    pendingLabel="Adding..."
+                                                    className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
+                                                >
+                                                    Add
+                                                </SubmitButton>
                                             </div>
                                         </form>
                                     )}
@@ -1367,12 +1341,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             />
                                         </label>
                                         <div className="md:col-span-4">
-                                            <button
-                                                type="submit"
+                                            <SubmitButton
+                                                pendingLabel="Adding..."
                                                 className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                             >
                                                 Add connection
-                                            </button>
+                                            </SubmitButton>
                                         </div>
                                     </form>
                                 ) : null}
@@ -1724,12 +1698,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 />
                                                 Applies to all shipment customers
                                             </label>
-                                            <button
-                                                type="submit"
+                                            <SubmitButton
+                                                pendingLabel="Adding..."
                                                 className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                             >
                                                 Add line
-                                            </button>
+                                            </SubmitButton>
                                         </form>
                                     </div>
 
@@ -1757,12 +1731,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                 required
                                                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
                                             />
-                                            <button
-                                                type="submit"
+                                            <SubmitButton
+                                                pendingLabel="Creating..."
                                                 className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                             >
                                                 Create good
-                                            </button>
+                                            </SubmitButton>
                                         </form>
                                         <div className="mt-3 text-xs text-zinc-500">
                                             After creating, add it to this shipment from the left card.
@@ -1864,12 +1838,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                     />
                                                     Share with customer
                                                 </label>
-                                                <button
-                                                    type="submit"
+                                                <SubmitButton
+                                                    pendingLabel="Uploading..."
                                                     className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                                 >
                                                     Upload
-                                                </button>
+                                                </SubmitButton>
                                             </div>
                                         </form>
                                     </div>
@@ -1914,22 +1888,22 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                                                     <form action={reviewDocumentAction.bind(null, shipment.id)}>
                                                                         <input type="hidden" name="documentId" value={doc.id} />
                                                                         <input type="hidden" name="status" value="VERIFIED" />
-                                                                        <button
-                                                                            type="submit"
+                                                                        <SubmitButton
+                                                                            pendingLabel="Saving..."
                                                                             className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-100"
                                                                         >
                                                                             Verify
-                                                                        </button>
+                                                                        </SubmitButton>
                                                                     </form>
                                                                     <form action={reviewDocumentAction.bind(null, shipment.id)}>
                                                                         <input type="hidden" name="documentId" value={doc.id} />
                                                                         <input type="hidden" name="status" value="REJECTED" />
-                                                                        <button
-                                                                            type="submit"
+                                                                        <SubmitButton
+                                                                            pendingLabel="Saving..."
                                                                             className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700 hover:bg-red-100"
                                                                         >
                                                                             Reject
-                                                                        </button>
+                                                                        </SubmitButton>
                                                                     </form>
                                                                 </>
                                                             ) : null}
@@ -1958,12 +1932,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                     >
                                         <input name="documentType" placeholder="Document type" required className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
                                         <input name="message" placeholder="Optional message to customer" className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm" />
-                                        <button
-                                            type="submit"
+                                        <SubmitButton
+                                            pendingLabel="Requesting..."
                                             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                         >
                                             Request
-                                        </button>
+                                        </SubmitButton>
                                     </form>
                                     <div className="mt-4 flex flex-wrap gap-2">
                                         {docRequests.map((req) => (
@@ -2011,12 +1985,12 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                             required
                                             className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
                                         />
-                                        <button
-                                            type="submit"
+                                        <SubmitButton
+                                            pendingLabel="Creating..."
                                             className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
                                         >
                                             Post
-                                        </button>
+                                        </SubmitButton>
                                     </form>
                                 ) : null}
 
@@ -2311,8 +2285,8 @@ function StepFieldInputs({
                                     <span>No file uploaded</span>
                                 )}
                                 {!received && !requested && canEdit && !disabled ? (
-                                    <button
-                                        type="submit"
+                                    <SubmitButton
+                                        pendingLabel="Requesting..."
                                         formAction={requestDocumentAction.bind(
                                             null,
                                             shipmentId,
@@ -2321,7 +2295,7 @@ function StepFieldInputs({
                                         className="mt-2 inline-flex items-center rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50"
                                     >
                                         Request from customer
-                                    </button>
+                                    </SubmitButton>
                                 ) : null}
                             </div>
                         </div>
@@ -3049,12 +3023,12 @@ function StepCard({
                                                         name="documentType"
                                                         value={dt}
                                                     />
-                                                    <button
-                                                        type="submit"
+                                                    <SubmitButton
+                                                        pendingLabel="Requesting..."
                                                         className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100"
                                                     >
                                                         Request
-                                                    </button>
+                                                    </SubmitButton>
                                                 </form>
                                             ) : null}
                                         </div>
@@ -3329,13 +3303,13 @@ function StepCard({
                     </label>
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                    <button
-                        type="submit"
+                    <SubmitButton
+                        pendingLabel="Saving..."
                         disabled={!canEdit}
                         className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                     >
                         Save step
-                    </button>
+                    </SubmitButton>
                     {!canEdit ? (
                         <span className="text-xs text-zinc-500">
                             Finance role is view-only.

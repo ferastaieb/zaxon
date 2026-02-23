@@ -54,6 +54,7 @@ type WorkspaceProps = {
   headingClassName?: string;
   shipment: FtlShipmentMeta;
   steps: FtlStepData[];
+  brokers: Array<{ id: number; name: string }>;
   latestDocsByType: Record<string, FtlDocumentMeta>;
   importCandidates: FtlImportCandidate[];
   trackingToken: string | null;
@@ -122,6 +123,7 @@ export function FtlExportWorkspace({
   headingClassName = "",
   shipment,
   steps,
+  brokers,
   latestDocsByType,
   importCandidates,
   trackingToken,
@@ -488,6 +490,7 @@ export function FtlExportWorkspace({
             returnTo={returnTo("agents")}
             canEdit={canEdit}
             isAdmin={isAdmin}
+            brokers={brokers}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.customsAgentsAllocation} />

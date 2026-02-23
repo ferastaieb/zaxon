@@ -26,10 +26,15 @@ import {
   deleteItem,
 } from "@/lib/db";
 
+export const ShipmentKinds = ["STANDARD", "MASTER", "SUBSHIPMENT"] as const;
+export type ShipmentKind = (typeof ShipmentKinds)[number];
+
 export type ShipmentRow = {
   id: number;
   shipment_code: string;
-  customer_party_id: number;
+  customer_party_id: number | null;
+  shipment_kind?: ShipmentKind | null;
+  master_shipment_id?: number | null;
   transport_mode: TransportMode;
   origin: string;
   destination: string;
@@ -56,6 +61,9 @@ export type ShipmentRow = {
 export type ShipmentListRow = {
   id: number;
   shipment_code: string;
+  shipment_kind: ShipmentKind;
+  master_shipment_id: number | null;
+  master_shipment_code: string | null;
   job_ids: string | null;
   customer_names: string | null;
   transport_mode: TransportMode;
@@ -114,6 +122,13 @@ export type ShipmentJobIdRow = {
   created_by_name: string | null;
 };
 
+export type MasterSubshipmentRow = ShipmentRow & {
+  shipment_kind: ShipmentKind;
+  master_shipment_id: number;
+  customer_names: string | null;
+  job_ids: string | null;
+};
+
 const SHIPMENTS_TABLE = tableName("shipments");
 const SHIPMENT_CUSTOMERS_TABLE = tableName("shipment_customers");
 const SHIPMENT_ACCESS_TABLE = tableName("shipment_access");
@@ -123,6 +138,74 @@ const TRACKING_TOKENS_TABLE = tableName("tracking_tokens");
 const ACTIVITIES_TABLE = tableName("activities");
 const USERS_TABLE = tableName("users");
 const PARTIES_TABLE = tableName("parties");
+const COUNTERS_TABLE = tableName("counters");
+
+const SHIPMENT_CODE_COUNTER_STANDARD = "shipment_codes_standard";
+const SHIPMENT_CODE_COUNTER_MASTER = "shipment_codes_master";
+
+function normalizeShipmentKind(
+  value: unknown,
+  masterShipmentId: number | null | undefined,
+): ShipmentKind {
+  if (value === "MASTER") return "MASTER";
+  if (value === "SUBSHIPMENT") return "SUBSHIPMENT";
+  if (value === "STANDARD") return "STANDARD";
+  if (typeof masterShipmentId === "number" && Number.isFinite(masterShipmentId) && masterShipmentId > 0) {
+    return "SUBSHIPMENT";
+  }
+  return "STANDARD";
+}
+
+function parseShipmentCodeSequence(input: string, prefix: "SHP" | "MSH") {
+  const pattern = new RegExp(`^${prefix}-(\\d+)$`);
+  const match = pattern.exec((input ?? "").trim().toUpperCase());
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function finalShipmentCode(prefix: "SHP" | "MSH", sequence: number) {
+  return `${prefix}-${String(sequence).padStart(6, "0")}`;
+}
+
+async function ensureShipmentCodeCounterInitialized(kind: ShipmentKind) {
+  const isMaster = kind === "MASTER";
+  const entity = isMaster
+    ? SHIPMENT_CODE_COUNTER_MASTER
+    : SHIPMENT_CODE_COUNTER_STANDARD;
+  const existing = await getItem<{ entity: string; value?: number }>(
+    COUNTERS_TABLE,
+    { entity },
+  );
+  if (typeof existing?.value === "number") return;
+
+  const prefix: "SHP" | "MSH" = isMaster ? "MSH" : "SHP";
+  const shipments = await scanAll<{ shipment_code: string }>(SHIPMENTS_TABLE);
+  let maxSequence = 0;
+  for (const shipment of shipments) {
+    const sequence = parseShipmentCodeSequence(shipment.shipment_code, prefix);
+    if (!sequence) continue;
+    if (sequence > maxSequence) maxSequence = sequence;
+  }
+
+  await putItem(
+    COUNTERS_TABLE,
+    { entity, value: maxSequence },
+    { conditionExpression: "attribute_not_exists(entity)" },
+  );
+}
+
+async function allocateShipmentCode(kind: ShipmentKind) {
+  const isMaster = kind === "MASTER";
+  const prefix: "SHP" | "MSH" = isMaster ? "MSH" : "SHP";
+  const entity = isMaster
+    ? SHIPMENT_CODE_COUNTER_MASTER
+    : SHIPMENT_CODE_COUNTER_STANDARD;
+  await ensureShipmentCodeCounterInitialized(kind);
+  const sequence = await nextId(entity);
+  return finalShipmentCode(prefix, sequence);
+}
 
 export function parseRequiredFields(step: ShipmentStepRow): string[] {
   return jsonParse(step.required_fields_json, [] as string[]);
@@ -138,10 +221,6 @@ export function parseFieldValues(step: ShipmentStepRow): Record<string, unknown>
 
 export function parseChecklistGroups(step: ShipmentStepRow): ChecklistGroup[] {
   return parseChecklistGroupsJson(step.checklist_groups_json);
-}
-
-function finalShipmentCode(id: number) {
-  return `SHP-${String(id).padStart(6, "0")}`;
 }
 
 export async function createTrackingToken(shipmentId: number): Promise<string> {
@@ -185,6 +264,8 @@ export async function listShipmentsForUser(input: {
   customerId?: number;
   transportMode?: TransportMode;
   status?: ShipmentOverallStatus;
+  kind?: ShipmentKind;
+  masterShipmentCode?: string;
 }) {
   const [shipments, shipmentCustomers, parties, jobIds, accessRows] =
     await Promise.all([
@@ -224,6 +305,8 @@ export async function listShipmentsForUser(input: {
 
   const query = input.q?.trim();
   const queryLower = query?.toLowerCase();
+  const masterCodeQuery = input.masterShipmentCode?.trim().toUpperCase() ?? "";
+  const shipmentCodeById = new Map(shipments.map((shipment) => [shipment.id, shipment.shipment_code]));
 
   return shipments
     .filter((shipment) => (canAccessAll ? true : accessSet.has(shipment.id)))
@@ -236,6 +319,26 @@ export async function listShipmentsForUser(input: {
       input.transportMode ? shipment.transport_mode === input.transportMode : true,
     )
     .filter((shipment) => (input.status ? shipment.overall_status === input.status : true))
+    .filter((shipment) =>
+      input.kind
+        ? normalizeShipmentKind(
+            shipment.shipment_kind,
+            shipment.master_shipment_id ?? null,
+          ) === input.kind
+        : true,
+    )
+    .filter((shipment) => {
+      if (!masterCodeQuery) return true;
+      const masterShipmentId =
+        typeof shipment.master_shipment_id === "number" &&
+        Number.isFinite(shipment.master_shipment_id)
+          ? shipment.master_shipment_id
+          : null;
+      if (!masterShipmentId) return false;
+      const masterCode = shipmentCodeById.get(masterShipmentId);
+      if (!masterCode) return false;
+      return masterCode.toUpperCase().includes(masterCodeQuery);
+    })
     .filter((shipment) => {
       if (!query) return true;
       const customerNames = (customerMap.get(shipment.id) ?? [])
@@ -254,6 +357,15 @@ export async function listShipmentsForUser(input: {
       );
     })
     .map((shipment) => {
+      const shipmentKind = normalizeShipmentKind(
+        shipment.shipment_kind,
+        shipment.master_shipment_id ?? null,
+      );
+      const masterShipmentId =
+        typeof shipment.master_shipment_id === "number" &&
+        Number.isFinite(shipment.master_shipment_id)
+          ? shipment.master_shipment_id
+          : null;
       const customerNames = (customerMap.get(shipment.id) ?? [])
         .map((id) => partyNames.get(id))
         .filter((name): name is string => !!name);
@@ -261,6 +373,11 @@ export async function listShipmentsForUser(input: {
       return {
         id: shipment.id,
         shipment_code: shipment.shipment_code,
+        shipment_kind: shipmentKind,
+        master_shipment_id: masterShipmentId,
+        master_shipment_code: masterShipmentId
+          ? shipmentCodeById.get(masterShipmentId) ?? null
+          : null,
         job_ids: jobList.length ? jobList.join(", ") : null,
         customer_names: customerNames.length
           ? Array.from(new Set(customerNames)).join(", ")
@@ -350,6 +467,65 @@ export async function listConnectableShipments(input: {
     .slice(0, 500);
 }
 
+export async function listSubshipmentsForMaster(masterShipmentId: number) {
+  const [shipments, shipmentCustomers, parties, jobIds] = await Promise.all([
+    scanAll<ShipmentRow>(SHIPMENTS_TABLE),
+    scanAll<{ shipment_id: number; customer_party_id: number }>(
+      SHIPMENT_CUSTOMERS_TABLE,
+    ),
+    scanAll<{ id: number; name: string }>(PARTIES_TABLE),
+    scanAll<{ shipment_id: number; job_id: string }>(SHIPMENT_JOB_IDS_TABLE),
+  ]);
+
+  const customerMap = new Map<number, number[]>();
+  for (const row of shipmentCustomers) {
+    if (!customerMap.has(row.shipment_id)) {
+      customerMap.set(row.shipment_id, []);
+    }
+    customerMap.get(row.shipment_id)?.push(row.customer_party_id);
+  }
+
+  const partyNames = new Map(parties.map((party) => [party.id, party.name]));
+  const jobIdsByShipment = new Map<number, string[]>();
+  for (const row of jobIds) {
+    if (!jobIdsByShipment.has(row.shipment_id)) {
+      jobIdsByShipment.set(row.shipment_id, []);
+    }
+    jobIdsByShipment.get(row.shipment_id)?.push(row.job_id);
+  }
+
+  return shipments
+    .filter((shipment) => {
+      const shipmentKind = normalizeShipmentKind(
+        shipment.shipment_kind,
+        shipment.master_shipment_id ?? null,
+      );
+      if (shipmentKind !== "SUBSHIPMENT") return false;
+      const linkedMasterId =
+        typeof shipment.master_shipment_id === "number" &&
+        Number.isFinite(shipment.master_shipment_id)
+          ? shipment.master_shipment_id
+          : null;
+      return linkedMasterId === masterShipmentId;
+    })
+    .map((shipment) => {
+      const customerNames = (customerMap.get(shipment.id) ?? [])
+        .map((id) => partyNames.get(id))
+        .filter((name): name is string => !!name);
+      const jobList = jobIdsByShipment.get(shipment.id) ?? [];
+      return {
+        ...shipment,
+        shipment_kind: "SUBSHIPMENT",
+        master_shipment_id: masterShipmentId,
+        customer_names: customerNames.length
+          ? Array.from(new Set(customerNames)).join(", ")
+          : null,
+        job_ids: jobList.length ? jobList.join(", ") : null,
+      } as MasterSubshipmentRow;
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
 export async function getShipment(
   shipmentId: number,
 ): Promise<(ShipmentRow & { customer_names: string | null }) | null> {
@@ -370,6 +546,16 @@ export async function getShipment(
 
   return {
     ...shipment,
+    customer_party_id: shipment.customer_party_id ?? null,
+    shipment_kind: normalizeShipmentKind(
+      shipment.shipment_kind,
+      shipment.master_shipment_id ?? null,
+    ),
+    master_shipment_id:
+      typeof shipment.master_shipment_id === "number" &&
+      Number.isFinite(shipment.master_shipment_id)
+        ? shipment.master_shipment_id
+        : null,
     customer_names: customerNames.length
       ? Array.from(new Set(customerNames)).join(", ")
       : null,
@@ -467,7 +653,7 @@ export async function grantShipmentAccess(input: {
 }
 
 export async function createShipment(input: {
-  customerPartyIds: number[];
+  customerPartyIds?: number[];
   transportMode: TransportMode;
   origin: string;
   destination: string;
@@ -482,28 +668,51 @@ export async function createShipment(input: {
   blNumber?: string | null;
   jobIds?: string[];
   workflowTemplateId?: number | null;
+  shipmentKind?: ShipmentKind;
+  masterShipmentId?: number | null;
+  skipTrackingToken?: boolean;
   createdByUserId: number;
 }) {
   const ts = nowIso();
+  const shipmentKind = normalizeShipmentKind(
+    input.shipmentKind ?? "STANDARD",
+    input.masterShipmentId ?? null,
+  );
   const customerIds = Array.from(
     new Set(
-      input.customerPartyIds
+      (input.customerPartyIds ?? [])
         .map((id) => Number(id))
         .filter((id) => Number.isFinite(id) && id > 0),
     ),
   );
-  const primaryCustomerId = customerIds[0];
-  if (!primaryCustomerId) {
+  if (shipmentKind === "MASTER" && customerIds.length) {
+    throw new Error("Master shipment cannot have customers");
+  }
+  if (shipmentKind === "SUBSHIPMENT" && customerIds.length !== 1) {
+    throw new Error("Subshipment must have exactly one customer");
+  }
+  if (shipmentKind === "STANDARD" && customerIds.length < 1) {
     throw new Error("Shipment must have at least one customer");
+  }
+  const primaryCustomerId = shipmentKind === "MASTER" ? null : (customerIds[0] ?? null);
+
+  const masterShipmentId =
+    shipmentKind === "SUBSHIPMENT"
+      ? Number(input.masterShipmentId ?? 0)
+      : null;
+  if (shipmentKind === "SUBSHIPMENT" && (!Number.isFinite(masterShipmentId) || !masterShipmentId)) {
+    throw new Error("Subshipment must be linked to a master shipment");
   }
 
   const shipmentId = await nextId("shipments");
-  const shipmentCode = finalShipmentCode(shipmentId);
+  const shipmentCode = await allocateShipmentCode(shipmentKind);
 
   await putItem(SHIPMENTS_TABLE, {
     id: shipmentId,
     shipment_code: shipmentCode,
     customer_party_id: primaryCustomerId,
+    shipment_kind: shipmentKind,
+    master_shipment_id: masterShipmentId,
     transport_mode: input.transportMode,
     origin: input.origin,
     destination: input.destination,
@@ -526,20 +735,22 @@ export async function createShipment(input: {
     created_by_user_id: input.createdByUserId,
   });
 
-  for (const customerPartyId of customerIds) {
-    await putItem(
-      SHIPMENT_CUSTOMERS_TABLE,
-      {
-        shipment_id: shipmentId,
-        customer_party_id: customerPartyId,
-        created_at: ts,
-        created_by_user_id: input.createdByUserId,
-      },
-      {
-        conditionExpression:
-          "attribute_not_exists(shipment_id) AND attribute_not_exists(customer_party_id)",
-      },
-    );
+  if (customerIds.length) {
+    for (const customerPartyId of customerIds) {
+      await putItem(
+        SHIPMENT_CUSTOMERS_TABLE,
+        {
+          shipment_id: shipmentId,
+          customer_party_id: customerPartyId,
+          created_at: ts,
+          created_by_user_id: input.createdByUserId,
+        },
+        {
+          conditionExpression:
+            "attribute_not_exists(shipment_id) AND attribute_not_exists(customer_party_id)",
+        },
+      );
+    }
   }
 
   if (input.jobIds?.length) {
@@ -640,7 +851,10 @@ export async function createShipment(input: {
     }
   }
 
-  const trackingToken = await createTrackingToken(shipmentId);
+  const trackingToken =
+    input.skipTrackingToken || shipmentKind === "MASTER"
+      ? null
+      : await createTrackingToken(shipmentId);
 
   await putItem(ACTIVITIES_TABLE, {
     id: await nextId("activities"),
@@ -649,7 +863,11 @@ export async function createShipment(input: {
     message: `Shipment created (${shipmentCode})`,
     actor_user_id: input.createdByUserId,
     created_at: ts,
-    data_json: JSON.stringify({ workflowTemplateId: input.workflowTemplateId ?? null }),
+    data_json: JSON.stringify({
+      workflowTemplateId: input.workflowTemplateId ?? null,
+      shipmentKind,
+      masterShipmentId: masterShipmentId ?? null,
+    }),
   });
 
   return { shipmentId, shipmentCode, trackingToken };
