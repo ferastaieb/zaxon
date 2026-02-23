@@ -128,7 +128,7 @@ export default async function PartiesPage({
                   <td className="py-2 pr-4 text-zinc-700">{p.email ?? "—"}</td>
                   <td className="py-2 pr-4">
                     <Link
-                      href={`/parties/${p.id}`}
+                      href={`/parties/${p.id}?type=${type}`}
                       className="rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                     >
                       Open

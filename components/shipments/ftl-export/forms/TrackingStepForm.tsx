@@ -14,6 +14,7 @@ import {
   type TrackingRegion,
   type TrackingStageDefinition,
 } from "./trackingTimelineConfig";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 export type TrackingAgentGate = {
   jebelAliReady: boolean;
@@ -307,14 +308,14 @@ export function TrackingStepForm({
                     ) : null}
 
                     <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                      <input
-                        type="date"
+                      <DatePickerInput
+                        
                         name={fieldName([stage.dateKey])}
                         value={values[stage.dateKey] ?? ""}
                         onChange={(event) => setValue(stage.dateKey, event.target.value)}
                         disabled={stageDisabled}
                         className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                      />
+                       />
                       <button
                         type="button"
                         onClick={() => setValue(stage.dateKey, todayIso())}
@@ -507,14 +508,14 @@ export function TrackingStepForm({
                   ) : null}
 
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <input
-                      type="date"
+                    <DatePickerInput
+                      
                       name={fieldName([stage.dateKey])}
                       value={values[stage.dateKey] ?? ""}
                       onChange={(event) => setValue(stage.dateKey, event.target.value)}
                       disabled={stageDisabled}
                       className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                    />
+                     />
                     <button
                       type="button"
                       onClick={() => {
@@ -590,3 +591,4 @@ export function TrackingStepForm({
     </form>
   );
 }
+

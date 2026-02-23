@@ -12,6 +12,7 @@ import {
   type StepFieldValues,
 } from "@/lib/stepFields";
 import { FTL_EXPORT_CARGO_UNIT_TYPES } from "@/lib/ftlExport/constants";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 import type { FtlDocumentMeta } from "./types";
 
 type Props = {
@@ -134,8 +135,21 @@ export function StepFieldRenderer({
           );
         }
 
-        const inputType =
-          field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
+        if (field.type === "date") {
+          return (
+            <label key={fieldKey} className="block">
+              <div className="mb-1 text-xs font-medium text-zinc-600">{field.label}</div>
+              <DatePickerInput
+                name={fieldInputName(fieldPath)}
+                defaultValue={value}
+                disabled={!canEdit || disabled}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+              />
+            </label>
+          );
+        }
+
+        const inputType = field.type === "number" ? "number" : "text";
 
         return (
           <label key={fieldKey} className="block">

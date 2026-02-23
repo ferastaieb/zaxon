@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { fieldName, stringValue, toRecord } from "../fieldNames";
 import { SectionFrame } from "@/components/shipments/ftl-export/forms/SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type Props = {
   step: ImportTransferStepData;
@@ -171,12 +172,12 @@ export function DocumentsBoeStepForm({
               <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                 BOE date *
               </div>
-              <input
-                type="date"
+              <DatePickerInput
+                
                 name={fieldName(["boe_date"])}
                 defaultValue={stringValue(values.boe_date)}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-              />
+               />
             </label>
             <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-3 md:col-span-2">
               <div className="text-xs font-semibold uppercase tracking-[0.1em] text-zinc-500">
@@ -212,3 +213,4 @@ function FileMeta({ meta }: { meta?: ImportTransferDocumentMeta }) {
     </div>
   );
 }
+

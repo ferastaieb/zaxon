@@ -8,6 +8,7 @@ import { FTL_EXPORT_TRAILER_TYPES } from "@/lib/ftlExport/constants";
 import type { FtlStepData } from "../types";
 import { boolValue, fieldName, numberValue, stringValue, toGroupRows, toRecord } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type TruckCard = {
   truck_reference: string;
@@ -373,14 +374,14 @@ export function TrucksDetailsStepForm({
               <div className="mb-1 text-xs font-medium text-zinc-600">
                 Trucks booking required by
               </div>
-              <input
-                type="date"
+              <DatePickerInput
+                
                 value={bookingRequiredBy}
                 onChange={(event) => setBookingRequiredBy(event.target.value)}
                 name={fieldName(["trucks_booking_required_by"])}
                 disabled={disableEdit}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-              />
+               />
             </label>
           </div>
 
@@ -553,22 +554,22 @@ export function TrucksDetailsStepForm({
                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                   <label className="block">
                     <div className="mb-1 text-xs font-medium text-zinc-600">Booking date</div>
-                    <input
-                      type="date"
+                    <DatePickerInput
+                      
                       value={truck.booking_date}
                       onChange={(event) => updateTruck(index, { booking_date: event.target.value })}
                       name={fieldName(["trucks", String(index), "booking_date"])}
                       disabled={disableEdit || isCancelled || !isBooked}
                       className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                    />
+                     />
                   </label>
 
                   <label className="block">
                     <div className="mb-1 text-xs font-medium text-zinc-600">
                       Estimated loading date
                     </div>
-                    <input
-                      type="date"
+                    <DatePickerInput
+                      
                       value={truck.estimated_loading_date}
                       onChange={(event) =>
                         updateTruck(index, { estimated_loading_date: event.target.value })
@@ -576,7 +577,7 @@ export function TrucksDetailsStepForm({
                       name={fieldName(["trucks", String(index), "estimated_loading_date"])}
                       disabled={disableEdit || isCancelled}
                       className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                    />
+                     />
                   </label>
 
                   <label className="block">
@@ -692,3 +693,4 @@ export function TrucksDetailsStepForm({
     </SectionFrame>
   );
 }
+

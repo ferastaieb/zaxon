@@ -23,7 +23,8 @@ import {
   normalizeContainerRows,
 } from "@/lib/fclImport/helpers";
 import { encodeFieldPath, fieldInputName, stepFieldDocType } from "@/lib/stepFields";
-import { CanvasBackdrop } from "./CanvasBackdrop";
+import { CanvasBackdrop } from "./CanvasBackdrop";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type StepData = {
   id: number;
@@ -923,27 +924,27 @@ export function FclImportWorkspace({
                         <div className="mb-1 text-xs font-medium text-slate-600">
                           Estimated time of arrival
                         </div>
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["eta"])}
                           defaultValue={vesselEta}
                           min={orderReceivedDate || undefined}
                           disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                       <label className="block">
                         <div className="mb-1 text-xs font-medium text-slate-600">
                           Actual time of arrival
                         </div>
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["ata"])}
                           defaultValue={vesselAta}
                           min={orderReceivedDate || undefined}
                           disabled={!canEditStep(vesselStep) || trackingLocked}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                     </div>
                   </StepCard>
@@ -1060,8 +1061,8 @@ export function FclImportWorkspace({
                                   ])}
                                   value=""
                                 />
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -1073,7 +1074,7 @@ export function FclImportWorkspace({
                                     !canEditStep(dischargeStep) || trackingLocked || !toggle
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
@@ -1088,8 +1089,8 @@ export function FclImportWorkspace({
                                   ])}
                                   value=""
                                 />
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -1101,7 +1102,7 @@ export function FclImportWorkspace({
                                     !canEditStep(dischargeStep) || trackingLocked || !toggle
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                             </div>
 
@@ -1205,8 +1206,8 @@ export function FclImportWorkspace({
                                   ])}
                                   value=""
                                 />
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -1224,7 +1225,7 @@ export function FclImportWorkspace({
                                     !eligible
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
@@ -1505,8 +1506,8 @@ export function FclImportWorkspace({
                                   ])}
                                   value=""
                                 />
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -1520,7 +1521,7 @@ export function FclImportWorkspace({
                                     !delivered
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
@@ -1598,8 +1599,8 @@ export function FclImportWorkspace({
                                   ])}
                                   value=""
                                 />
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -1613,7 +1614,7 @@ export function FclImportWorkspace({
                                     !returned
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
@@ -2091,13 +2092,13 @@ export function FclImportWorkspace({
                           name={fieldInputName(["order_received_date"])}
                           value=""
                         />
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["order_received_date"])}
                           defaultValue={valueString(orderStep.values, "order_received_date")}
                           disabled={!canEditStep(orderStep) || !orderReceived}
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                     </div>
                     <div className="mt-3">
@@ -2442,8 +2443,8 @@ export function FclImportWorkspace({
                                 ])}
                                 value=""
                               />
-                              <input
-                                type="date"
+                              <DatePickerInput
+                                
                                 name={fieldInputName([
                                   "bl_type",
                                   "original",
@@ -2456,7 +2457,7 @@ export function FclImportWorkspace({
                                 required={originalSubmitted && canEditStep(blStep)}
                                 disabled={!canEditStep(blStep) || !originalSubmitted}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                              />
+                               />
                             </div>
                           </div>
 
@@ -2847,8 +2848,8 @@ export function FclImportWorkspace({
                           name={fieldInputName(["delivery_order_date"])}
                           value=""
                         />
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["delivery_order_date"])}
                           defaultValue={valueString(deliveryValues, "delivery_order_date")}
                           min={orderReceivedDate || undefined}
@@ -2859,7 +2860,7 @@ export function FclImportWorkspace({
                             !deliveryObtained
                           }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                     </div>
                     <div className="mt-3">
@@ -2891,8 +2892,8 @@ export function FclImportWorkspace({
                           name={fieldInputName(["delivery_order_validity"])}
                           value=""
                         />
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["delivery_order_validity"])}
                           defaultValue={valueString(
                             deliveryValues,
@@ -2905,7 +2906,7 @@ export function FclImportWorkspace({
                             !deliveryObtained
                           }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                       {allReturned ? (
                         <div className="mt-2 text-xs text-slate-500">
@@ -2960,8 +2961,8 @@ export function FclImportWorkspace({
                         <div className="mb-1 text-xs font-medium text-slate-600">
                           BOE date
                         </div>
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldInputName(["boe_date"])}
                           defaultValue={boeDate}
                           min={maxDate(orderReceivedDate, deliveryOrderDate)}
@@ -2971,7 +2972,7 @@ export function FclImportWorkspace({
                             (!invoiceDone && invoiceOption !== "COPY_20_DAYS")
                           }
                           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                        />
+                         />
                       </label>
                       <label className="block">
                         <div className="mb-1 text-xs font-medium text-slate-600">
@@ -3084,8 +3085,8 @@ export function FclImportWorkspace({
                                 <div className="mb-1 text-xs font-medium text-slate-600">
                                   Token date
                                 </div>
-                                <input
-                                  type="date"
+                                <DatePickerInput
+                                  
                                   name={fieldInputName([
                                     "containers",
                                     String(index),
@@ -3094,7 +3095,7 @@ export function FclImportWorkspace({
                                   defaultValue={row.token_date ?? ""}
                                   disabled={!canEditStep(tokenStep) || !eligible}
                                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                                />
+                                 />
                               </label>
                               <label className="block">
                                 <div className="mb-1 text-xs font-medium text-slate-600">
@@ -3182,8 +3183,8 @@ export function FclImportWorkspace({
                               <div className="mb-1 text-xs font-medium text-slate-600">
                                 Return token date
                               </div>
-                              <input
-                                type="date"
+                              <DatePickerInput
+                                
                                 name={fieldInputName([
                                   "containers",
                                   String(index),
@@ -3192,7 +3193,7 @@ export function FclImportWorkspace({
                                 defaultValue={row.return_token_date ?? ""}
                                 disabled={!canEditStep(returnTokenStep)}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
-                              />
+                               />
                             </label>
                             <label className="block">
                               <div className="mb-1 text-xs font-medium text-slate-600">
@@ -3319,3 +3320,4 @@ export function FclImportWorkspace({
     </div>
   );
 }
+

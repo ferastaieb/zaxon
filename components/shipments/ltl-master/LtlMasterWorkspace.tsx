@@ -26,6 +26,7 @@ import {
   type LtlSubshipmentHandoverMethod,
 } from "@/lib/ltlMasterJafzaSyria/constants";
 import { getNumber, getString, isTruthy, parseMasterWarehouse } from "@/lib/ltlMasterJafzaSyria/helpers";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 export type LtlMasterMainTab =
   | "creation"
@@ -750,13 +751,13 @@ function HandoverSubshipmentForm({
           </label>
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Collection date</div>
-            <input
-              type="date"
+            <DatePickerInput
+              
               name={fieldName(["collection_date"])}
               defaultValue={stringValue(sub.handover_values.collection_date)}
               disabled={!warehouseOffloaded}
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
+             />
           </label>
           <label className="mt-2 block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Receiver name/ID</div>
@@ -801,13 +802,13 @@ function HandoverSubshipmentForm({
           </label>
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Out for delivery date</div>
-            <input
-              type="date"
+            <DatePickerInput
+              
               name={fieldName(["out_for_delivery_date"])}
               defaultValue={stringValue(sub.handover_values.out_for_delivery_date)}
               disabled={!warehouseOffloaded}
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
+             />
           </label>
           <label className="mt-2 mb-2 flex items-center gap-2 text-sm">
             <input type="hidden" name={fieldName(["delivered"])} value="" />
@@ -822,13 +823,13 @@ function HandoverSubshipmentForm({
           </label>
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Delivery date</div>
-            <input
-              type="date"
+            <DatePickerInput
+              
               name={fieldName(["delivery_date"])}
               defaultValue={stringValue(sub.handover_values.delivery_date)}
               disabled={!warehouseOffloaded}
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
+             />
           </label>
         </div>
       ) : null}
@@ -1040,12 +1041,12 @@ export function LtlMasterWorkspace({
             </label>
             <label className="block">
               <div className="mb-1 text-xs font-medium text-zinc-600">Planned loading date</div>
-              <input
-                type="date"
+              <DatePickerInput
+                
                 name={fieldName(["planned_loading_date"])}
                 defaultValue={stringValue(creationValues.planned_loading_date)}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-              />
+               />
             </label>
             <label className="block">
               <div className="mb-1 text-xs font-medium text-zinc-600">Notes</div>
@@ -1479,12 +1480,12 @@ export function LtlMasterWorkspace({
                 </label>
                 <label className="block">
                   <div className="mb-1 text-xs font-medium text-zinc-600">Arrival date</div>
-                  <input
-                    type="date"
+                  <DatePickerInput
+                    
                     name={fieldName(["arrival_date"])}
                     defaultValue={stringValue(warehouseValues.arrival_date)}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  />
+                   />
                 </label>
                 <label className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
                   <input
@@ -1502,12 +1503,12 @@ export function LtlMasterWorkspace({
                 </label>
                 <label className="block">
                   <div className="mb-1 text-xs font-medium text-zinc-600">Offload date</div>
-                  <input
-                    type="date"
+                  <DatePickerInput
+                    
                     name={fieldName(["offload_date"])}
                     defaultValue={stringValue(warehouseValues.offload_date)}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  />
+                   />
                 </label>
               </div>
 
@@ -1555,3 +1556,4 @@ export function LtlMasterWorkspace({
     </div>
   );
 }
+

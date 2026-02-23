@@ -8,7 +8,8 @@ import type { TruckBookingRow } from "@/lib/ftlExport/helpers";
 import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
 import type { FtlDocumentMeta, FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue, toGroupRows, toRecord } from "../fieldNames";
-import { SectionFrame } from "./SectionFrame";
+import { SectionFrame } from "./SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type LoadingOrigin = "" | "ZAXON_WAREHOUSE" | "EXTERNAL_SUPPLIER" | "MIXED";
 
@@ -459,14 +460,14 @@ export function LoadingDetailsStepForm({
                       </label>
                       <label className="block">
                         <MiniLabel>Loading date *</MiniLabel>
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldName(["trucks", String(index), "external_loading_date"])}
                           value={row.external_loading_date}
                           onChange={(event) => updateRow(index, { external_loading_date: event.target.value })}
                           disabled={disableEdit}
                           className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
+                         />
                       </label>
                       <label className="block">
                         <MiniLabel>Loading location</MiniLabel>
@@ -488,14 +489,14 @@ export function LoadingDetailsStepForm({
                     <div className="grid gap-3 sm:grid-cols-3">
                       <label className="block">
                         <MiniLabel>Actual loading date *</MiniLabel>
-                        <input
-                          type="date"
+                        <DatePickerInput
+                          
                           name={fieldName(["trucks", String(index), "zaxon_actual_loading_date"])}
                           value={row.zaxon_actual_loading_date}
                           onChange={(event) => updateRow(index, { zaxon_actual_loading_date: event.target.value })}
                           disabled={disableEdit}
                           className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                        />
+                         />
                       </label>
                       <label className="block sm:col-span-2">
                         <MiniLabel>Warehouse remarks</MiniLabel>
@@ -546,8 +547,8 @@ export function LoadingDetailsStepForm({
                           </label>
                           <label className="block">
                             <MiniLabel>Supplier loading date *</MiniLabel>
-                            <input
-                              type="date"
+                            <DatePickerInput
+                              
                               name={fieldName(["trucks", String(index), "mixed_supplier_loading_date"])}
                               value={row.mixed_supplier_loading_date}
                               onChange={(event) =>
@@ -555,7 +556,7 @@ export function LoadingDetailsStepForm({
                               }
                               disabled={disableEdit}
                               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                            />
+                             />
                           </label>
                           <label className="block sm:col-span-2">
                             <MiniLabel>Supplier remarks</MiniLabel>
@@ -577,8 +578,8 @@ export function LoadingDetailsStepForm({
                         <div className="grid gap-3 sm:grid-cols-3">
                           <label className="block">
                             <MiniLabel>Zaxon loading date *</MiniLabel>
-                            <input
-                              type="date"
+                            <DatePickerInput
+                              
                               name={fieldName(["trucks", String(index), "mixed_zaxon_loading_date"])}
                               value={row.mixed_zaxon_loading_date}
                               onChange={(event) =>
@@ -586,7 +587,7 @@ export function LoadingDetailsStepForm({
                               }
                               disabled={disableEdit}
                               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-                            />
+                             />
                           </label>
                           <label className="block sm:col-span-2">
                             <MiniLabel>Zaxon remarks</MiniLabel>
@@ -1258,5 +1259,6 @@ export function LoadingDetailsStepForm({
     </form>
   );
 }
+
 
 

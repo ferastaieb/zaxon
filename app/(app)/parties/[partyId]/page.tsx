@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { assertCanWrite, requireUser } from "@/lib/auth";
 import {
+  PartyTypes,
   overallStatusLabel,
   riskLabel,
   transportModeLabel,
@@ -15,6 +16,15 @@ import {
 } from "@/lib/data/goods";
 import { getParty, updateParty } from "@/lib/data/parties";
 import { listShipmentsForUser } from "@/lib/data/shipments";
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+function readParam(params: SearchParams, key: string): string | undefined {
+  const value = params[key];
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
 
 function partyTypeLabel(type: PartyType) {
   switch (type) {
@@ -52,13 +62,23 @@ function parseShipmentRefs(refs: string | null) {
 
 export default async function PartyDetailsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ partyId: string }>;
+  searchParams?: SearchParams | Promise<SearchParams>;
 }) {
+  const resolvedSearchParams = searchParams
+    ? await Promise.resolve(searchParams)
+    : ({} as SearchParams);
   const user = await requireUser();
   const { partyId } = await params;
   const party = await getParty(Number(partyId));
   if (!party) redirect("/parties");
+  const contextTypeRaw = readParam(resolvedSearchParams, "type");
+  const contextType = PartyTypes.includes(contextTypeRaw as PartyType)
+    ? (contextTypeRaw as PartyType)
+    : party.type;
+  const partyTypeFallback = party.type;
   const isCustomer = party.type === "CUSTOMER";
   const canAccessAllShipments = user.role === "ADMIN" || user.role === "FINANCE";
 
@@ -98,10 +118,14 @@ export default async function PartyDetailsPage({
     const email = String(formData.get("email") ?? "").trim() || null;
     const address = String(formData.get("address") ?? "").trim() || null;
     const notes = String(formData.get("notes") ?? "").trim() || null;
+    const contextTypeRaw = String(formData.get("contextType") ?? "") as PartyType;
+    const contextType = PartyTypes.includes(contextTypeRaw)
+      ? contextTypeRaw
+      : partyTypeFallback;
 
-    if (!id || !name) redirect(`/parties/${id}?error=invalid`);
+    if (!id || !name) redirect(`/parties/${id}?type=${contextType}&error=invalid`);
     await updateParty(id, { name, phone, email, address, notes });
-    redirect(`/parties/${id}`);
+    redirect(`/parties/${id}?type=${contextType}`);
   }
 
   const canEdit = user.role !== "FINANCE";
@@ -110,7 +134,7 @@ export default async function PartyDetailsPage({
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <div className="text-sm text-zinc-500">
-          <Link href={`/parties?type=${party.type}`} className="hover:underline">
+          <Link href={`/parties?type=${contextType}`} className="hover:underline">
             Parties
           </Link>{" "}
           <span className="text-zinc-400">/</span>{" "}
@@ -124,6 +148,7 @@ export default async function PartyDetailsPage({
       <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
         <form action={updatePartyAction} className="space-y-4">
           <input type="hidden" name="id" value={party.id} />
+          <input type="hidden" name="contextType" value={contextType} />
           <label className="block">
             <div className="mb-1 text-sm font-medium text-zinc-800">Name</div>
             <input
@@ -183,7 +208,7 @@ export default async function PartyDetailsPage({
                 Save
               </button>
               <Link
-                href={`/parties?type=${party.type}`}
+                href={`/parties?type=${contextType}`}
                 className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
               >
                 Back

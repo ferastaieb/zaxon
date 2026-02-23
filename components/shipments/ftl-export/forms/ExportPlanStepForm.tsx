@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue, toRecord } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type Props = {
   step: FtlStepData;
@@ -85,18 +86,22 @@ export function ExportPlanStepForm({
               aria-checked={orderReceived}
               onClick={toggleMission}
               disabled={!canEdit || isDone}
-              className={`relative inline-flex h-11 w-28 items-center rounded-full border transition ${
+              className={`relative inline-flex h-11 w-32 items-center rounded-full border transition ${
                 orderReceived
                   ? "border-blue-500 bg-blue-600 text-white"
                   : "border-zinc-300 bg-white text-zinc-700"
               }`}
             >
               <span
-                className={`absolute left-1 h-9 w-12 rounded-full bg-white shadow-sm transition-transform ${
-                  orderReceived ? "translate-x-14" : "translate-x-0"
+                className={`absolute left-1 h-9 w-11 rounded-full bg-white shadow-sm transition-transform ${
+                  orderReceived ? "translate-x-19" : "translate-x-0"
                 }`}
               />
-              <span className="relative z-10 w-full text-center text-xs font-semibold uppercase tracking-[0.12em]">
+              <span
+                className={`relative z-10 w-full text-xs font-semibold uppercase tracking-[0.08em] ${
+                  orderReceived ? "pl-3 text-left" : "pr-3 text-right"
+                }`}
+              >
                 {orderReceived ? "Started" : "Start"}
               </span>
             </button>
@@ -112,14 +117,14 @@ export function ExportPlanStepForm({
             </div>
             <label className="block">
               <div className="mb-1 text-xs font-medium text-zinc-600">Order received date *</div>
-              <input
-                type="date"
+              <DatePickerInput
+                
                 name={fieldName(["order_received_date"])}
                 value={orderReceivedDate}
                 onChange={(event) => setOrderReceivedDate(event.target.value)}
                 disabled={!canEdit || !orderReceived || isDone}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-              />
+               />
             </label>
           </div>
         </div>
@@ -127,13 +132,13 @@ export function ExportPlanStepForm({
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Planned loading date</div>
-            <input
-              type="date"
+            <DatePickerInput
+              
               name={fieldName(["planned_loading_date"])}
               defaultValue={stringValue(values.planned_loading_date)}
               disabled={!canEdit}
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
-            />
+             />
           </label>
         </div>
 
@@ -151,3 +156,5 @@ export function ExportPlanStepForm({
     </form>
   );
 }
+
+

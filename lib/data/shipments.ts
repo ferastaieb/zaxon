@@ -28,6 +28,17 @@ import {
 
 export const ShipmentKinds = ["STANDARD", "MASTER", "SUBSHIPMENT"] as const;
 export type ShipmentKind = (typeof ShipmentKinds)[number];
+export const ShipmentListSortByValues = [
+  "last_update",
+  "shipment_code",
+  "status",
+  "kind",
+  "mode",
+  "customer",
+] as const;
+export type ShipmentListSortBy = (typeof ShipmentListSortByValues)[number];
+export const ShipmentListSortDirValues = ["asc", "desc"] as const;
+export type ShipmentListSortDir = (typeof ShipmentListSortDirValues)[number];
 
 export type ShipmentRow = {
   id: number;
@@ -156,6 +167,71 @@ function normalizeShipmentKind(
   return "STANDARD";
 }
 
+function shipmentStatusSortRank(status: ShipmentOverallStatus) {
+  switch (status) {
+    case "CREATED":
+      return 0;
+    case "IN_PROGRESS":
+      return 1;
+    case "COMPLETED":
+      return 2;
+    case "DELAYED":
+      return 3;
+  }
+}
+
+function shipmentKindSortRank(kind: ShipmentKind) {
+  switch (kind) {
+    case "MASTER":
+      return 0;
+    case "STANDARD":
+      return 1;
+    case "SUBSHIPMENT":
+      return 2;
+  }
+}
+
+function compareShipmentsWithSort(
+  left: ShipmentListRow,
+  right: ShipmentListRow,
+  sortBy: ShipmentListSortBy,
+  sortDir: ShipmentListSortDir,
+) {
+  const direction = sortDir === "asc" ? 1 : -1;
+  let base = 0;
+
+  switch (sortBy) {
+    case "last_update":
+      base = left.last_update_at.localeCompare(right.last_update_at);
+      break;
+    case "shipment_code":
+      base = left.shipment_code.localeCompare(right.shipment_code);
+      break;
+    case "status":
+      base =
+        shipmentStatusSortRank(left.overall_status) -
+        shipmentStatusSortRank(right.overall_status);
+      break;
+    case "kind":
+      base =
+        shipmentKindSortRank(left.shipment_kind) -
+        shipmentKindSortRank(right.shipment_kind);
+      break;
+    case "mode":
+      base = left.transport_mode.localeCompare(right.transport_mode);
+      break;
+    case "customer":
+      base = (left.customer_names ?? "").localeCompare(right.customer_names ?? "");
+      break;
+  }
+
+  if (base !== 0) return base * direction;
+
+  const tieByUpdate = right.last_update_at.localeCompare(left.last_update_at);
+  if (tieByUpdate !== 0) return tieByUpdate;
+  return right.id - left.id;
+}
+
 function parseShipmentCodeSequence(input: string, prefix: "SHP" | "MSH") {
   const pattern = new RegExp(`^${prefix}-(\\d+)$`);
   const match = pattern.exec((input ?? "").trim().toUpperCase());
@@ -266,6 +342,8 @@ export async function listShipmentsForUser(input: {
   status?: ShipmentOverallStatus;
   kind?: ShipmentKind;
   masterShipmentCode?: string;
+  sortBy?: ShipmentListSortBy;
+  sortDir?: ShipmentListSortDir;
 }) {
   const [shipments, shipmentCustomers, parties, jobIds, accessRows] =
     await Promise.all([
@@ -306,6 +384,14 @@ export async function listShipmentsForUser(input: {
   const query = input.q?.trim();
   const queryLower = query?.toLowerCase();
   const masterCodeQuery = input.masterShipmentCode?.trim().toUpperCase() ?? "";
+  const sortBy = ShipmentListSortByValues.includes(input.sortBy as ShipmentListSortBy)
+    ? (input.sortBy as ShipmentListSortBy)
+    : "last_update";
+  const sortDir = ShipmentListSortDirValues.includes(input.sortDir as ShipmentListSortDir)
+    ? (input.sortDir as ShipmentListSortDir)
+    : sortBy === "last_update"
+      ? "desc"
+      : "asc";
   const shipmentCodeById = new Map(shipments.map((shipment) => [shipment.id, shipment.shipment_code]));
 
   return shipments
@@ -394,7 +480,7 @@ export async function listShipmentsForUser(input: {
         eta: shipment.eta ?? null,
       } as ShipmentListRow;
     })
-    .sort((a, b) => b.last_update_at.localeCompare(a.last_update_at))
+    .sort((a, b) => compareShipmentsWithSort(a, b, sortBy, sortDir))
     .slice(0, 500);
 }
 

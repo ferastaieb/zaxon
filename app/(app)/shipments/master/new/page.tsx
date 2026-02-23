@@ -13,6 +13,7 @@ import {
 } from "@/lib/ltlMasterJafzaSyria/constants";
 import { ensureLtlMasterJafzaSyriaTemplate } from "@/lib/ltlMasterJafzaSyria/template";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -145,11 +146,11 @@ export default async function NewMasterShipmentPage({
         <div className="grid gap-4 md:grid-cols-2">
           <label className="block">
             <div className="mb-1 text-xs font-medium text-zinc-600">Planned loading date</div>
-            <input
-              type="date"
+            <DatePickerInput
+              
               name="plannedLoadingDate"
               className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-            />
+             />
           </label>
 
           <label className="block md:col-span-2">
@@ -173,3 +174,4 @@ export default async function NewMasterShipmentPage({
     </div>
   );
 }
+

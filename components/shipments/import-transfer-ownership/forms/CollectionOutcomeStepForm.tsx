@@ -18,6 +18,7 @@ import {
   toRecord,
 } from "../fieldNames";
 import { SectionFrame } from "@/components/shipments/ftl-export/forms/SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type Props = {
   step: ImportTransferStepData;
@@ -159,12 +160,12 @@ export function CollectionOutcomeStepForm({
                 <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                   Planned collection date
                 </div>
-                <input
-                  type="date"
+                <DatePickerInput
+                  
                   name={fieldName(["planned_collection_date"])}
                   defaultValue={stringValue(values.planned_collection_date)}
                   className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                />
+                 />
               </label>
               <label className="block">
                 <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
@@ -316,12 +317,12 @@ export function CollectionOutcomeStepForm({
                 <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                   Collected date
                 </div>
-                <input
-                  type="date"
+                <DatePickerInput
+                  
                   name={fieldName(["collected_date"])}
                   defaultValue={stringValue(values.collected_date)}
                   className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                />
+                 />
               </label>
             </div>
 
@@ -349,12 +350,12 @@ export function CollectionOutcomeStepForm({
                   <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                     Drop-off date
                   </div>
-                  <input
-                    type="date"
+                  <DatePickerInput
+                    
                     name={fieldName(["dropoff_date"])}
                     defaultValue={stringValue(values.dropoff_date)}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  />
+                   />
                 </label>
                 {!cargoDeliveredToZaxon ? (
                   <div className="grid gap-3 md:grid-cols-2">
@@ -373,12 +374,12 @@ export function CollectionOutcomeStepForm({
                       <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                         Expected collection date
                       </div>
-                      <input
-                        type="date"
+                      <DatePickerInput
+                        
                         name={fieldName(["expected_collection_date"])}
                         defaultValue={stringValue(values.expected_collection_date)}
                         className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                      />
+                       />
                     </label>
                     <div className="flex items-end rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                       Status: Pending Collection
@@ -412,12 +413,12 @@ export function CollectionOutcomeStepForm({
                   <div className="mb-1 text-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
                     Date
                   </div>
-                  <input
-                    type="date"
+                  <DatePickerInput
+                    
                     name={fieldName(["direct_export_date"])}
                     defaultValue={stringValue(values.direct_export_date)}
                     className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  />
+                   />
                 </label>
               </div>
             ) : null}
@@ -427,3 +428,4 @@ export function CollectionOutcomeStepForm({
     </form>
   );
 }
+

@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
 import {
@@ -90,8 +91,7 @@ import {
     updateDocumentFlagsAction,
     reviewDocumentAction,
     uploadDocumentAction,
-} from "./actions";
-
+} from "./actions";
 type ShipmentViewShipment = ShipmentRow & { customer_names: string | null };
 
 type ShipmentJobIdViewRow = ShipmentJobIdRow & { created_by_name: string | null };
@@ -785,13 +785,13 @@ export default function ShipmentView(props: ShipmentViewProps) {
                                         <div className="mb-1 text-[11px] font-medium text-zinc-600">
                                             {variable.label}
                                         </div>
-                                        <input
-                                            type="date"
+                                        <DatePickerInput
+                                            
                                             name={`global:${variable.id}`}
                                             defaultValue={workflowGlobalValues[variable.id] ?? ""}
                                             disabled={!canEdit}
                                             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs disabled:bg-zinc-100"
-                                        />
+                                         />
                                     </label>
                                 ))}
                                 <div className="flex items-center justify-between gap-3 sm:col-span-2 lg:col-span-3">
@@ -2100,7 +2100,7 @@ function StepFieldInputs({
             if (field.type === "text" || field.type === "number" || field.type === "date") {
                 const raw = fieldValues[field.id];
                 const value = typeof raw === "string" ? raw : "";
-                const inputType = field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
+                const inputType = field.type === "number" ? "number" : "text";
                 const globalLabel = field.linkToGlobal
                     ? globalLabelMap.get(field.linkToGlobal) ?? null
                     : null;
@@ -2127,15 +2127,26 @@ function StepFieldInputs({
                         <div className="mb-1 text-xs font-medium text-zinc-600">
                             {field.label}
                         </div>
-                        <input
-                            type={inputType}
-                            name={fieldInputName(fieldPath)}
-                            defaultValue={value}
-                            disabled={!canEdit || disabled}
-                            className={`w-full rounded-lg border bg-white px-3 py-2 text-sm disabled:bg-zinc-100 ${showMissing ? "border-red-300" : "border-zinc-300"
-                                }`}
-                            placeholder="Enter value..."
-                        />
+                        {field.type === "date" ? (
+                            <DatePickerInput
+                                name={fieldInputName(fieldPath)}
+                                defaultValue={value}
+                                disabled={!canEdit || disabled}
+                                className={`w-full rounded-lg border bg-white px-3 py-2 text-sm disabled:bg-zinc-100 ${showMissing ? "border-red-300" : "border-zinc-300"
+                                    }`}
+                                placeholder="Enter value..."
+                            />
+                        ) : (
+                            <input
+                                type={inputType}
+                                name={fieldInputName(fieldPath)}
+                                defaultValue={value}
+                                disabled={!canEdit || disabled}
+                                className={`w-full rounded-lg border bg-white px-3 py-2 text-sm disabled:bg-zinc-100 ${showMissing ? "border-red-300" : "border-zinc-300"
+                                    }`}
+                                placeholder="Enter value..."
+                            />
+                        )}
                         {field.type === "date" && globalLabel ? (
                             <div className="mt-1 text-[11px] text-zinc-500">
                                 Sets global date: {globalLabel}
@@ -3160,8 +3171,8 @@ function StepCard({
                                                                 <div className="mb-1 text-[11px] font-medium text-zinc-600">
                                                                     Received date
                                                                 </div>
-                                                                <input
-                                                                    type="date"
+                                                                <DatePickerInput
+                                                                    
                                                                     name={dateKey}
                                                                     defaultValue={dateValue}
                                                                     disabled={!canEdit || superseded}
@@ -3169,7 +3180,7 @@ function StepCard({
                                                                         ? "border-red-300"
                                                                         : "border-zinc-300"
                                                                         }`}
-                                                                />
+                                                                 />
                                                             </label>
                                                             <label className="block">
                                                                 <div className="mb-1 text-[11px] font-medium text-zinc-600">
@@ -3321,3 +3332,4 @@ function StepCard({
     </div>
     );
 }
+

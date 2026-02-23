@@ -8,6 +8,7 @@ import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
 import type { FtlDocumentMeta, FtlStepData } from "../types";
 import { boolValue, fieldName, stringValue } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
+import { DatePickerInput } from "@/components/ui/DatePickerInput";
 
 type Props = {
   step: FtlStepData;
@@ -140,13 +141,13 @@ export function ExportInvoiceStepForm({
               <div className="mb-1 text-xs font-medium text-zinc-600">
                 Invoice date * {invoiceFinalized ? "🔒 LOCKED" : ""}
               </div>
-              <input
-                type="date"
+              <DatePickerInput
+                
                 value={invoiceDate}
                 onChange={(event) => setInvoiceDate(event.target.value)}
                 disabled={disableForm}
                 className={`w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm disabled:bg-zinc-100 ${lockInputClass}`}
-              />
+               />
             </label>
           </div>
 
@@ -185,3 +186,4 @@ export function ExportInvoiceStepForm({
     </form>
   );
 }
+

@@ -53,17 +53,19 @@ export default async function NewPartyPage({
     const notes = String(formData.get("notes") ?? "").trim() || null;
     const type = String(formData.get("type") ?? "") as PartyType;
 
-    if (!name || !PartyTypes.includes(type)) redirect("/parties/new?error=invalid");
+    if (!name || !PartyTypes.includes(type)) {
+      redirect(`/parties/new?type=${type}&error=invalid`);
+    }
 
     const id = await createParty({ type, name, phone, email, address, notes });
-    redirect(`/parties/${id}`);
+    redirect(`/parties/${id}?type=${type}`);
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <div className="text-sm text-zinc-500">
-          <Link href="/parties" className="hover:underline">
+          <Link href={`/parties?type=${type}`} className="hover:underline">
             Parties
           </Link>{" "}
           <span className="text-zinc-400">/</span> New
