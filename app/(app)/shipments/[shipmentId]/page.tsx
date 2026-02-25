@@ -34,6 +34,10 @@ import { listTasks } from "@/lib/data/tasks";
 import { listActiveUsers } from "@/lib/data/users";
 import { getWorkflowTemplate } from "@/lib/data/workflows";
 import {
+  FCL_IMPORT_STEP_NAMES,
+  FCL_IMPORT_TEMPLATE_NAME,
+} from "@/lib/fclImport/constants";
+import {
   FTL_EXPORT_STEP_NAMES,
   FTL_EXPORT_TEMPLATE_NAME,
 } from "@/lib/ftlExport/constants";
@@ -93,6 +97,22 @@ export default async function ShipmentDetailsPage({
     hasFtlStepSignature
   ) {
     redirect(`/shipments/ftl-export/${id}`);
+  }
+  const hasFclStepSignature = [
+    FCL_IMPORT_STEP_NAMES.shipmentCreation,
+    FCL_IMPORT_STEP_NAMES.vesselTracking,
+    FCL_IMPORT_STEP_NAMES.containersDischarge,
+    FCL_IMPORT_STEP_NAMES.containerPullOut,
+    FCL_IMPORT_STEP_NAMES.containerDelivery,
+    FCL_IMPORT_STEP_NAMES.orderReceived,
+    FCL_IMPORT_STEP_NAMES.billOfLading,
+  ].every((name) => stepNameSet.has(name));
+  if (
+    (template?.name &&
+      template.name.toLowerCase() === FCL_IMPORT_TEMPLATE_NAME.toLowerCase()) ||
+    hasFclStepSignature
+  ) {
+    redirect(`/shipments/fcl-import/${id}`);
   }
   const hasImportTransferSignature = [
     IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview,

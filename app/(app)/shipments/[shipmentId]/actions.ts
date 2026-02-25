@@ -14,6 +14,7 @@ import { logActivity } from "@/lib/data/activities";
 import {
   addDocument,
   createDocumentRequest,
+  deleteDocument,
   getDocument,
   listDocumentRequests,
   listDocuments,
@@ -93,7 +94,7 @@ import {
   parseWorkflowGlobalVariables,
 } from "@/lib/workflowGlobals";
 import { jsonParse } from "@/lib/sql";
-import { removeShipmentUploads, saveUpload } from "@/lib/storage";
+import { removeShipmentUploads, removeUpload, saveUpload } from "@/lib/storage";
 
 function normalizeFieldLabel(label: string) {
   return label
@@ -132,6 +133,28 @@ function appendTabParam(url: string, tab: string | null) {
   if (!tab) return url;
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}tab=${encodeURIComponent(tab)}`;
+}
+
+function appendQueryParam(url: string, key: string, value: string) {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function normalizeShipmentReturnTo(
+  shipmentId: number,
+  value: FormDataEntryValue | null,
+): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const allowedPrefixes = [
+    `/shipments/${shipmentId}`,
+    `/shipments/fcl-import/${shipmentId}`,
+    `/shipments/ftl-export/${shipmentId}`,
+    `/shipments/master/${shipmentId}`,
+    `/shipments/import-transfer-ownership/${shipmentId}`,
+  ];
+  if (!allowedPrefixes.some((prefix) => trimmed.startsWith(prefix))) return null;
+  return trimmed;
 }
 
 async function resolveShipmentId(rawValue: string) {
@@ -1332,6 +1355,7 @@ export async function uploadDocumentAction(shipmentId: number, formData: FormDat
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
 
   const documentType = String(formData.get("documentType") ?? "") as DocumentType;
   const shareWithCustomer = String(formData.get("shareWithCustomer") ?? "") === "1";
@@ -1341,6 +1365,9 @@ export async function uploadDocumentAction(shipmentId: number, formData: FormDat
   const file = formData.get("file");
 
   if (!file || !(file instanceof File) || !documentType) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
@@ -1382,6 +1409,9 @@ export async function uploadDocumentAction(shipmentId: number, formData: FormDat
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "created", "document"));
+  }
   redirect(`/shipments/${shipmentId}?created=document`);
 }
 
@@ -1392,9 +1422,15 @@ export async function updateDocumentFlagsAction(
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
 
   const documentId = Number(formData.get("documentId") ?? 0);
-  if (!documentId) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!documentId) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
   const isRequired = String(formData.get("isRequired") ?? "") === "1";
   const shareWithCustomer = String(formData.get("shareWithCustomer") ?? "") === "1";
@@ -1421,6 +1457,9 @@ export async function updateDocumentFlagsAction(
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "saved", "documentFlags"));
+  }
   redirect(`/shipments/${shipmentId}?saved=documentFlags`);
 }
 
@@ -1431,16 +1470,25 @@ export async function reviewDocumentAction(
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
 
   const documentId = Number(formData.get("documentId") ?? 0);
   const status = String(formData.get("status") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim() || null;
   if (!documentId || (status !== "VERIFIED" && status !== "REJECTED")) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
   const doc = await getDocument(documentId);
-  if (!doc) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!doc) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
   await updateDocumentReview({
     documentId,
@@ -1485,7 +1533,64 @@ export async function reviewDocumentAction(
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "saved", "documentReview"));
+  }
   redirect(`/shipments/${shipmentId}?saved=documentReview`);
+}
+
+export async function deleteDocumentAction(
+  shipmentId: number,
+  formData: FormData,
+) {
+  const user = await requireUser();
+  assertCanWrite(user);
+  await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
+
+  const documentId = Number(formData.get("documentId") ?? 0);
+  if (!documentId) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  const doc = await getDocument(documentId);
+  if (!doc || doc.shipment_id !== shipmentId) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
+
+  const deleted = await deleteDocument(documentId);
+  if (deleted?.storage_path) {
+    try {
+      await removeUpload(String(deleted.storage_path));
+    } catch {
+      // best-effort storage cleanup
+    }
+  }
+
+  await logActivity({
+    shipmentId,
+    type: "DOCUMENT_DELETED",
+    message: `Document deleted: ${doc.document_type}`,
+    actorUserId: user.id,
+    data: { documentId, documentType: doc.document_type },
+  });
+
+  await refreshShipmentDerivedState({
+    shipmentId,
+    actorUserId: user.id,
+    updateLastUpdate: true,
+  });
+
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "saved", "documentDeleted"));
+  }
+  redirect(`/shipments/${shipmentId}?saved=documentDeleted`);
 }
 
 export async function requestDocumentAction(
@@ -1512,10 +1617,18 @@ export async function requestDocumentAction(
   const returnTab = formData
     ? normalizeShipmentTab(formData.get("tab"))
     : null;
+  const returnTo = formData
+    ? normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"))
+    : null;
   if (formData && !documentType) {
     documentType = String(formData.get("documentType") ?? "").trim();
   }
-  if (!documentType) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!documentType) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
   const requestId = await createDocumentRequest({
     shipmentId,
@@ -1538,6 +1651,9 @@ export async function requestDocumentAction(
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "requested", "1"));
+  }
   redirect(appendTabParam(`/shipments/${shipmentId}?requested=1`, returnTab));
 }
 

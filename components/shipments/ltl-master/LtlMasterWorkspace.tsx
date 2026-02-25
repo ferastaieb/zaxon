@@ -11,7 +11,10 @@ import { ExportInvoiceStepForm } from "@/components/shipments/ftl-export/forms/E
 import { SectionFrame } from "@/components/shipments/ftl-export/forms/SectionFrame";
 import { TrackingStepForm, type TrackingAgentGate } from "@/components/shipments/ftl-export/forms/TrackingStepForm";
 import { TrucksDetailsStepForm } from "@/components/shipments/ftl-export/forms/TrucksDetailsStepForm";
-import { TRACKING_REGION_FLOW } from "@/components/shipments/ftl-export/forms/trackingTimelineConfig";
+import {
+  trackingRegionFlowForRoute,
+  type TrackingRegion,
+} from "@/components/shipments/ftl-export/forms/trackingTimelineConfig";
 import { fieldName, stringValue } from "@/components/shipments/ftl-export/fieldNames";
 import type {
   FtlDocumentMeta,
@@ -21,12 +24,17 @@ import type {
 } from "@/components/shipments/ftl-export/types";
 import { overallStatusLabel, riskLabel, type StepStatus } from "@/lib/domain";
 import {
+  LTL_MASTER_SERVICE_TYPE_TO_ROUTE,
   LTL_MASTER_JAFZA_SYRIA_STEP_NAMES,
   LTL_SUBSHIPMENT_HANDOVER_METHODS,
   type LtlSubshipmentHandoverMethod,
 } from "@/lib/ltlMasterJafzaSyria/constants";
 import { getNumber, getString, isTruthy, parseMasterWarehouse } from "@/lib/ltlMasterJafzaSyria/helpers";
 import { DatePickerInput } from "@/components/ui/DatePickerInput";
+import {
+  jafzaRouteById,
+  resolveJafzaLandRoute,
+} from "@/lib/routes/jafzaLandRoutes";
 
 export type LtlMasterMainTab =
   | "creation"
@@ -38,7 +46,13 @@ export type LtlMasterMainTab =
   | "tracking"
   | "handover";
 
-export type LtlMasterTrackingTab = "uae" | "ksa" | "jordan" | "syria";
+export type LtlMasterTrackingTab =
+  | "uae"
+  | "ksa"
+  | "jordan"
+  | "syria"
+  | "mushtarakah"
+  | "lebanon";
 
 export type LtlMasterStatusView = {
   statuses: Record<string, StepStatus>;
@@ -135,7 +149,14 @@ function asMainTab(value: string | undefined): LtlMasterMainTab | undefined {
 
 function asTrackingTab(value: string | undefined): LtlMasterTrackingTab | undefined {
   if (!value) return undefined;
-  if (value === "uae" || value === "ksa" || value === "jordan" || value === "syria") {
+  if (
+    value === "uae" ||
+    value === "ksa" ||
+    value === "jordan" ||
+    value === "syria" ||
+    value === "mushtarakah" ||
+    value === "lebanon"
+  ) {
     return value;
   }
   return undefined;
@@ -221,6 +242,14 @@ function latestDateValue(values: Record<string, unknown>) {
     .filter(([key, value]) => key.endsWith("_date") && typeof value === "string" && !!value)
     .map(([, value]) => String(value));
   return dates.sort().at(-1) ?? "";
+}
+
+function MissingStep({ name }: { name: string }) {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      Step not found in this shipment: {name}
+    </div>
+  );
 }
 
 function PendingSubmitButton({
@@ -311,39 +340,39 @@ function AddCustomerShipmentForm({
     return rows.map((row) => {
       const candidate = candidateMap.get(row.sourceShipmentId);
       const importedWeight = candidate?.importedWeight ?? 0;
-      const importedVolume = candidate?.importedQuantity ?? 0;
+      const importedQuantity = candidate?.importedQuantity ?? 0;
       const allocatedWeight = toAmount(row.allocatedWeight);
-      const allocatedVolume = toAmount(row.allocatedQuantity);
+      const allocatedQuantity = toAmount(row.allocatedQuantity);
       const allocationHistory = candidate?.allocationHistory ?? [];
       const sortedHistory = [...allocationHistory].sort((left, right) =>
         (left.exportDate || "").localeCompare(right.exportDate || ""),
       );
 
       let runningBalanceWeight = importedWeight;
-      let runningBalanceVolume = importedVolume;
+      let runningBalanceQuantity = importedQuantity;
       for (const entry of sortedHistory) {
         runningBalanceWeight -= entry.allocatedWeight;
-        runningBalanceVolume -= entry.allocatedQuantity;
+        runningBalanceQuantity -= entry.allocatedQuantity;
       }
 
       const balanceBeforeCurrentWeight = runningBalanceWeight;
-      const balanceBeforeCurrentVolume = runningBalanceVolume;
+      const balanceBeforeCurrentQuantity = runningBalanceQuantity;
       const remainingWeight = balanceBeforeCurrentWeight - allocatedWeight;
-      const remainingVolume = balanceBeforeCurrentVolume - allocatedVolume;
+      const remainingQuantity = balanceBeforeCurrentQuantity - allocatedQuantity;
       const overallocated =
         allocatedWeight > balanceBeforeCurrentWeight + 0.0001 ||
-        allocatedVolume > balanceBeforeCurrentVolume + 0.0001;
-      const emptyAllocation = allocatedWeight <= 0 && allocatedVolume <= 0;
+        allocatedQuantity > balanceBeforeCurrentQuantity + 0.0001;
+      const emptyAllocation = allocatedWeight <= 0 && allocatedQuantity <= 0;
 
       let ledgerRunningWeight = importedWeight;
-      let ledgerRunningVolume = importedVolume;
+      let ledgerRunningQuantity = importedQuantity;
       const ledgerHistoryRows = sortedHistory.map((entry) => {
         ledgerRunningWeight -= entry.allocatedWeight;
-        ledgerRunningVolume -= entry.allocatedQuantity;
+        ledgerRunningQuantity -= entry.allocatedQuantity;
         return {
           ...entry,
           balanceWeight: ledgerRunningWeight,
-          balanceVolume: ledgerRunningVolume,
+          balanceQuantity: ledgerRunningQuantity,
         };
       });
 
@@ -351,13 +380,13 @@ function AddCustomerShipmentForm({
         row,
         candidate,
         importedWeight,
-        importedVolume,
+        importedQuantity,
         allocatedWeight,
-        allocatedVolume,
+        allocatedQuantity,
         balanceBeforeCurrentWeight,
-        balanceBeforeCurrentVolume,
+        balanceBeforeCurrentQuantity,
         remainingWeight,
-        remainingVolume,
+        remainingQuantity,
         overallocated,
         emptyAllocation,
         ledgerHistoryRows,
@@ -369,14 +398,14 @@ function AddCustomerShipmentForm({
     return analyzedRows.reduce(
       (acc, entry) => {
         acc.weight += entry.allocatedWeight;
-        acc.volume += entry.allocatedVolume;
+        acc.quantity += entry.allocatedQuantity;
         return acc;
       },
-      { weight: 0, volume: 0 },
+      { weight: 0, quantity: 0 },
     );
   }, [analyzedRows]);
   const totalCargoWeight = totalCargoWeightOverride ?? formatAmount(totals.weight);
-  const totalCargoVolume = totalCargoVolumeOverride ?? formatAmount(totals.volume);
+  const totalCargoVolume = totalCargoVolumeOverride ?? formatAmount(totals.quantity);
 
   const hasInvalidRows = analyzedRows.some(
     (entry) => !entry.candidate || entry.overallocated || entry.emptyAllocation,
@@ -386,7 +415,7 @@ function AddCustomerShipmentForm({
     canEdit &&
     !!customerPartyId &&
     rows.length > 0 &&
-    (totals.weight > 0 || totals.volume > 0) &&
+    (totals.weight > 0 || totals.quantity > 0) &&
     !hasInvalidRows;
 
   const rowsJson = JSON.stringify(
@@ -473,7 +502,7 @@ function AddCustomerShipmentForm({
             {availableCandidates.map((candidate) => (
               <option key={candidate.shipmentId} value={candidate.shipmentId}>
                 {candidate.shipmentCode} | {candidate.clientNumber || "-"} |{" "}
-                {candidate.importBoeNumber || "No BOE"} | Remaining {formatAmount(candidate.remainingQuantity)} vol /{" "}
+                {candidate.importBoeNumber || "No BOE"} | Remaining {formatAmount(candidate.remainingQuantity)} qty /{" "}
                 {formatAmount(candidate.remainingWeight)} wt
               </option>
             ))}
@@ -516,8 +545,11 @@ function AddCustomerShipmentForm({
 
                 <div className="mb-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-700">
                   <div className="font-medium text-zinc-900">{selectedSummary}</div>
+                  <div className="mt-1 text-zinc-600">
+                    Product: {candidate?.cargoDescription?.trim() || "N/A"}
+                  </div>
                   <div className="mt-1">
-                    Remaining before current: {formatAmount(entry.balanceBeforeCurrentVolume)} vol /{" "}
+                    Remaining before current: {formatAmount(entry.balanceBeforeCurrentQuantity)} qty /{" "}
                     {formatAmount(entry.balanceBeforeCurrentWeight)} wt
                   </div>
                 </div>
@@ -527,9 +559,10 @@ function AddCustomerShipmentForm({
                     <thead className="bg-zinc-50 text-xs uppercase tracking-[0.08em] text-zinc-600">
                       <tr>
                         <th className="px-3 py-2 text-left">Reference</th>
+                        <th className="px-3 py-2 text-left">Product description</th>
                         <th className="px-3 py-2 text-left">Transaction</th>
                         <th className="px-3 py-2 text-right">Weight</th>
-                        <th className="px-3 py-2 text-right">Volume</th>
+                        <th className="px-3 py-2 text-right">Quantity</th>
                         <th className="px-3 py-2 text-right">Balance</th>
                       </tr>
                     </thead>
@@ -538,15 +571,18 @@ function AddCustomerShipmentForm({
                         <td className="px-3 py-2 font-medium text-zinc-900">
                           Original import shipment
                         </td>
+                        <td className="px-3 py-2 text-zinc-700">
+                          {candidate?.cargoDescription?.trim() || "-"}
+                        </td>
                         <td className="px-3 py-2 text-zinc-700">IN</td>
                         <td className="px-3 py-2 text-right font-medium text-emerald-700">
                           +{formatAmount(entry.importedWeight)}
                         </td>
                         <td className="px-3 py-2 text-right font-medium text-emerald-700">
-                          +{formatAmount(entry.importedVolume)}
+                          +{formatAmount(entry.importedQuantity)}
                         </td>
                         <td className="px-3 py-2 text-right text-zinc-700">
-                          {formatAmount(entry.importedVolume)} vol / {formatAmount(entry.importedWeight)} wt
+                          {formatAmount(entry.importedQuantity)} qty / {formatAmount(entry.importedWeight)} wt
                         </td>
                       </tr>
 
@@ -560,6 +596,9 @@ function AddCustomerShipmentForm({
                               </span>
                             ) : null}
                           </td>
+                          <td className="px-3 py-2 text-zinc-700">
+                            {candidate?.cargoDescription?.trim() || "-"}
+                          </td>
                           <td className="px-3 py-2 text-zinc-700">OUT</td>
                           <td className="px-3 py-2 text-right font-medium text-red-700">
                             -{formatAmount(historyRow.allocatedWeight)}
@@ -568,7 +607,7 @@ function AddCustomerShipmentForm({
                             -{formatAmount(historyRow.allocatedQuantity)}
                           </td>
                           <td className="px-3 py-2 text-right text-zinc-700">
-                            {formatAmount(historyRow.balanceVolume)} vol /{" "}
+                            {formatAmount(historyRow.balanceQuantity)} qty /{" "}
                             {formatAmount(historyRow.balanceWeight)} wt
                           </td>
                         </tr>
@@ -576,6 +615,9 @@ function AddCustomerShipmentForm({
 
                       <tr className="border-t border-zinc-200 bg-blue-50/40">
                         <td className="px-3 py-2 font-medium text-zinc-900">Current take</td>
+                        <td className="px-3 py-2 text-zinc-700">
+                          {candidate?.cargoDescription?.trim() || "-"}
+                        </td>
                         <td className="px-3 py-2 text-zinc-700">OUT (Current)</td>
                         <td className="px-3 py-2 text-right">
                           <input
@@ -599,7 +641,7 @@ function AddCustomerShipmentForm({
                             type="number"
                             step="0.01"
                             min={0}
-                            max={Math.max(0, entry.balanceBeforeCurrentVolume)}
+                            max={Math.max(0, entry.balanceBeforeCurrentQuantity)}
                             value={row.allocatedQuantity}
                             onChange={(event) =>
                               updateRow(row.id, { allocatedQuantity: event.target.value })
@@ -614,12 +656,12 @@ function AddCustomerShipmentForm({
                         <td className="px-3 py-2 text-right text-zinc-700">
                           <span
                             className={
-                              entry.remainingVolume < -0.0001 || entry.remainingWeight < -0.0001
+                              entry.remainingQuantity < -0.0001 || entry.remainingWeight < -0.0001
                                 ? "text-red-700"
                                 : ""
                             }
                           >
-                            {formatAmount(entry.remainingVolume)} vol / {formatAmount(entry.remainingWeight)} wt
+                            {formatAmount(entry.remainingQuantity)} qty / {formatAmount(entry.remainingWeight)} wt
                           </span>
                         </td>
                       </tr>
@@ -634,7 +676,7 @@ function AddCustomerShipmentForm({
                 ) : null}
                 {entry.emptyAllocation ? (
                   <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-                    Enter weight, volume, or both for current take.
+                    Enter weight, quantity, or both for current take.
                   </div>
                 ) : null}
                 {!candidate ? (
@@ -873,10 +915,15 @@ export function LtlMasterWorkspace({
   initialTab,
   initialTrackingTab,
 }: WorkspaceProps) {
+  const fallbackRouteId = resolveJafzaLandRoute(shipment.origin, shipment.destination);
+  const fallbackRouteProfile = jafzaRouteById(fallbackRouteId);
   const [tab, setTab] = useState<LtlMasterMainTab>(asMainTab(initialTab) ?? "creation");
-  const [trackingTab, setTrackingTab] = useState<LtlMasterTrackingTab>(
-    asTrackingTab(initialTrackingTab) ?? "uae",
-  );
+  const [trackingTab, setTrackingTab] = useState<LtlMasterTrackingTab>(() => {
+    const first = (fallbackRouteProfile.trackingTabs[0] ?? "uae") as LtlMasterTrackingTab;
+    const parsed = asTrackingTab(initialTrackingTab);
+    if (!parsed) return first;
+    return fallbackRouteProfile.trackingTabs.includes(parsed) ? parsed : first;
+  });
 
   const stepByName = useMemo(() => new Map(steps.map((step) => [step.name, step])), [steps]);
 
@@ -893,6 +940,15 @@ export function LtlMasterWorkspace({
   );
 
   const creationValues = (creationStep?.values ?? {}) as Record<string, unknown>;
+  const creationServiceType = stringValue(creationValues.service_type);
+  const mappedRouteId =
+    creationServiceType &&
+    Object.prototype.hasOwnProperty.call(LTL_MASTER_SERVICE_TYPE_TO_ROUTE, creationServiceType)
+      ? LTL_MASTER_SERVICE_TYPE_TO_ROUTE[creationServiceType as keyof typeof LTL_MASTER_SERVICE_TYPE_TO_ROUTE]
+      : null;
+  const routeId = mappedRouteId ?? fallbackRouteId;
+  const routeProfile = jafzaRouteById(routeId);
+  const trackingFlow = trackingRegionFlowForRoute(routeId);
   const warehouseValues = (warehouseStep?.values ?? {}) as Record<string, unknown>;
   const warehouseState = parseMasterWarehouse(warehouseValues);
 
@@ -903,22 +959,53 @@ export function LtlMasterWorkspace({
   const baseUrl = `/shipments/master/${shipment.id}`;
 
   const gateValues = (agentsStep?.values ?? {}) as Record<string, unknown>;
+  const bathaMode = getString(gateValues.batha_clearance_mode).toUpperCase();
+  const bathaModeReady =
+    routeId !== "JAFZA_TO_KSA"
+      ? !!getString(gateValues.batha_agent_name)
+      : bathaMode === "ZAXON"
+        ? !!getString(gateValues.batha_agent_name) &&
+          !!getString(gateValues.batha_consignee_name) &&
+          !!getString(gateValues.show_batha_consignee_to_client)
+        : bathaMode === "CLIENT"
+          ? !!getString(gateValues.batha_client_final_choice)
+          : false;
+  const masnaaMode = getString(gateValues.masnaa_clearance_mode).toUpperCase();
+  const masnaaReady =
+    routeId !== "JAFZA_TO_MUSHTARAKAH"
+      ? true
+      : masnaaMode === "ZAXON"
+        ? !!getString(gateValues.masnaa_agent_name) &&
+          !!getString(gateValues.masnaa_consignee_name) &&
+          !!getString(gateValues.show_masnaa_consignee_to_client)
+        : masnaaMode === "CLIENT"
+          ? !!getString(gateValues.masnaa_client_final_choice)
+          : false;
   const trackingAgentGate: TrackingAgentGate = {
     jebelAliReady: !!getString(gateValues.jebel_ali_agent_name),
     silaReady: !!getString(gateValues.sila_agent_name),
     bathaReady: !!getString(gateValues.batha_agent_name),
+    bathaModeReady,
     omariReady: !!getString(gateValues.omari_agent_name),
-    naseebReady: !!getString(gateValues.naseeb_agent_name),
+    naseebReady:
+      getString(gateValues.naseeb_clearance_mode).toUpperCase() === "CLIENT"
+        ? !!getString(gateValues.naseeb_client_final_choice)
+        : !!getString(gateValues.naseeb_agent_name),
+    mushtarakahReady:
+      routeId !== "JAFZA_TO_MUSHTARAKAH"
+        ? true
+        : !!getString(gateValues.mushtarakah_agent_name) &&
+          !!getString(gateValues.mushtarakah_consignee_name),
+    masnaaReady,
   };
-  const trackingRegionStates = TRACKING_REGION_FLOW.map((regionEntry) => {
-    const step =
-      regionEntry.id === "uae"
-        ? trackingUaeStep
-        : regionEntry.id === "ksa"
-          ? trackingKsaStep
-          : regionEntry.id === "jordan"
-            ? trackingJordanStep
-            : trackingSyriaStep;
+  const stepForTrackingTab = (tabId: LtlMasterTrackingTab) => {
+    if (tabId === "uae") return trackingUaeStep;
+    if (tabId === "ksa") return trackingKsaStep;
+    if (tabId === "jordan") return trackingJordanStep;
+    return trackingSyriaStep;
+  };
+  const trackingRegionStates = trackingFlow.map((regionEntry) => {
+    const step = stepForTrackingTab(regionEntry.id as LtlMasterTrackingTab);
     const latestDate = latestDateValue((step?.values ?? {}) as Record<string, unknown>);
     const stalled =
       !!latestDate && step?.status !== "DONE" && daysSince(latestDate) >= 3;
@@ -939,10 +1026,7 @@ export function LtlMasterWorkspace({
     agents:
       masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation] === "DONE",
     tracking:
-      masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingUae] === "DONE" &&
-      masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingKsa] === "DONE" &&
-      masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan] === "DONE" &&
-      masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria] === "DONE",
+      routeProfile.trackingTabs.every((tabId) => stepForTrackingTab(tabId)?.status === "DONE"),
     handover:
       masterStatus.statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.syriaWarehouseFinalDelivery] ===
       "DONE",
@@ -957,7 +1041,7 @@ export function LtlMasterWorkspace({
       <header className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
         <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-zinc-500">
           <AppIcon name="icon-route" size={22} />
-          Consolidated LTL JAFZA to Syria
+          Consolidated LTL {routeProfile.origin} to {routeProfile.destination}
         </div>
         <h1 className={`${headingClassName} mt-2 text-2xl font-semibold text-zinc-900`}>
           {shipment.shipment_code}
@@ -1002,7 +1086,7 @@ export function LtlMasterWorkspace({
           { id: "invoice", label: "5. Export Invoice" },
           { id: "agents", label: "6. Customs Agents" },
           { id: "tracking", label: "7. Shipment Tracking" },
-          { id: "handover", label: "8. Syria Warehouse & Final Delivery" },
+          { id: "handover", label: `8. ${routeProfile.destination} Warehouse & Final Delivery` },
         ].map((entry) => (
           <button
             key={entry.id}
@@ -1035,7 +1119,15 @@ export function LtlMasterWorkspace({
               <input
                 name={fieldName(["service_type"])}
                 readOnly
-                value="LTL JAFZA -> Syria"
+                value={creationServiceType || "LTL_JAFZA_SYRIA_MASTER"}
+                className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
+              />
+            </label>
+            <label className="block">
+              <div className="mb-1 text-xs font-medium text-zinc-600">Route</div>
+              <input
+                readOnly
+                value={`${routeProfile.origin} -> ${routeProfile.destination}`}
                 className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
               />
             </label>
@@ -1288,7 +1380,9 @@ export function LtlMasterWorkspace({
           canEdit={canEdit}
           isAdmin={isAdmin}
           brokers={brokers}
-          naseebModeLock="ZAXON"
+          consigneeParties={customers}
+          routeId={routeId}
+          naseebModeLock={routeId === "JAFZA_TO_SYRIA" ? "ZAXON" : undefined}
         />
       ) : null}
 
@@ -1370,82 +1464,47 @@ export function LtlMasterWorkspace({
             </div>
           </div>
 
-          {trackingTab === "uae" && trackingUaeStep ? (
-            <TrackingStepForm
-              step={trackingUaeStep}
-              updateAction={updateMasterStepAction}
-              returnTo={returnTo(baseUrl, "tracking", "uae")}
-              canEdit={canEdit}
-              isAdmin={isAdmin}
-              latestDocsByType={latestDocsByType}
-              region="uae"
-              locked={!masterStatus.trackingUnlocked}
-              lockedMessage={
-                !masterStatus.trackingUnlocked
-                  ? "Tracking starts after loading and invoice are done."
-                  : undefined
-              }
-              agentGate={trackingAgentGate}
-            />
-          ) : null}
+          {(() => {
+            const activeStep = stepForTrackingTab(trackingTab);
+            const missingStepName =
+              trackingTab === "uae"
+                ? LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingUae
+                : trackingTab === "ksa"
+                  ? LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingKsa
+                  : trackingTab === "jordan"
+                    ? LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan
+                    : LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria;
+            if (!activeStep) {
+              return <MissingStep name={missingStepName} />;
+            }
 
-          {trackingTab === "ksa" && trackingKsaStep ? (
-            <TrackingStepForm
-              step={trackingKsaStep}
-              updateAction={updateMasterStepAction}
-              returnTo={returnTo(baseUrl, "tracking", "ksa")}
-              canEdit={canEdit}
-              isAdmin={isAdmin}
-              latestDocsByType={latestDocsByType}
-              region="ksa"
-              locked={!masterStatus.trackingUnlocked}
-              lockedMessage={
-                !masterStatus.trackingUnlocked
-                  ? "Tracking starts after loading and invoice are done."
-                  : undefined
-              }
-              agentGate={trackingAgentGate}
-            />
-          ) : null}
-
-          {trackingTab === "jordan" && trackingJordanStep ? (
-            <TrackingStepForm
-              step={trackingJordanStep}
-              updateAction={updateMasterStepAction}
-              returnTo={returnTo(baseUrl, "tracking", "jordan")}
-              canEdit={canEdit}
-              isAdmin={isAdmin}
-              latestDocsByType={latestDocsByType}
-              region="jordan"
-              locked={!masterStatus.trackingUnlocked}
-              lockedMessage={
-                !masterStatus.trackingUnlocked
-                  ? "Tracking starts after loading and invoice are done."
-                  : undefined
-              }
-              agentGate={trackingAgentGate}
-            />
-          ) : null}
-
-          {trackingTab === "syria" && trackingSyriaStep ? (
-            <TrackingStepForm
-              step={trackingSyriaStep}
-              updateAction={updateMasterStepAction}
-              returnTo={returnTo(baseUrl, "tracking", "syria")}
-              canEdit={canEdit}
-              isAdmin={isAdmin}
-              latestDocsByType={latestDocsByType}
-              region="syria"
-              locked={!masterStatus.trackingUnlocked}
-              lockedMessage={
-                !masterStatus.trackingUnlocked
-                  ? "Tracking starts after loading and invoice are done."
-                  : undefined
-              }
-              syriaClearanceMode="ZAXON"
-              agentGate={trackingAgentGate}
-            />
-          ) : null}
+            return (
+              <TrackingStepForm
+                step={activeStep}
+                updateAction={updateMasterStepAction}
+                returnTo={returnTo(baseUrl, "tracking", trackingTab)}
+                canEdit={canEdit}
+                isAdmin={isAdmin}
+                latestDocsByType={latestDocsByType}
+                region={trackingTab as TrackingRegion}
+                routeId={routeId}
+                locked={!masterStatus.trackingUnlocked}
+                lockedMessage={
+                  !masterStatus.trackingUnlocked
+                    ? "Tracking starts after loading and invoice are done."
+                    : undefined
+                }
+                syriaClearanceMode={
+                  routeId === "JAFZA_TO_SYRIA"
+                    ? "ZAXON"
+                    : getString(gateValues.naseeb_clearance_mode).toUpperCase() === "ZAXON"
+                      ? "ZAXON"
+                      : "CLIENT"
+                }
+                agentGate={trackingAgentGate}
+              />
+            );
+          })()}
         </div>
       ) : null}
 
@@ -1456,7 +1515,7 @@ export function LtlMasterWorkspace({
             <input type="hidden" name="stepId" value={warehouseStep.id} />
 
             <SectionFrame
-              title="Syria warehouse gate"
+              title={`${routeProfile.destination} warehouse gate`}
               description="Customer pickup or local delivery is enabled only after offload is completed."
               status={warehouseStep.status}
               canEdit={canEdit}
@@ -1476,7 +1535,7 @@ export function LtlMasterWorkspace({
                     value="1"
                     defaultChecked={isTruthy(warehouseValues.arrived_zaxon_syria_warehouse)}
                   />
-                  Arrived at Zaxon Syria warehouse
+                  Arrived at Zaxon {routeProfile.destination} warehouse
                 </label>
                 <label className="block">
                   <div className="mb-1 text-xs font-medium text-zinc-600">Arrival date</div>
@@ -1499,7 +1558,7 @@ export function LtlMasterWorkspace({
                     value="1"
                     defaultChecked={isTruthy(warehouseValues.offloaded_zaxon_syria_warehouse)}
                   />
-                  Offloaded at Zaxon Syria warehouse
+                  Offloaded at Zaxon {routeProfile.destination} warehouse
                 </label>
                 <label className="block">
                   <div className="mb-1 text-xs font-medium text-zinc-600">Offload date</div>

@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 import type { PartyRow } from "@/lib/data/parties";
 import {
   FCL_IMPORT_CONTAINER_STEPS,
+  FCL_IMPORT_DEFAULT_DESTINATION,
   FCL_IMPORT_OPERATIONS_STEPS,
   FCL_IMPORT_TRACKING_STEPS,
 } from "@/lib/fclImport/constants";
@@ -49,6 +50,7 @@ export function FclImportCreateForm({
   const [query, setQuery] = useState("");
   const [selectedCustomers, setSelectedCustomers] = useState<string[]>([]);
   const [containers, setContainers] = useState<string[]>([""]);
+  const [blNumber, setBlNumber] = useState("");
   const [jobIds, setJobIds] = useState("");
   const [serviceType, setServiceType] = useState(
     SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
@@ -61,7 +63,8 @@ export function FclImportCreateForm({
   const isFtlService = serviceType === FTL_EXPORT_SERVICE_TYPE;
   const isImportTransferService =
     serviceType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE;
-  const requiresSingleCustomer = isFtlService || isImportTransferService;
+  const requiresSingleCustomer =
+    isFclService || isFtlService || isImportTransferService;
   const selectedFtlRoute =
     FTL_EXPORT_ROUTES.find((route) => route.id === ftlRouteId) ??
     FTL_EXPORT_ROUTES[0] ??
@@ -157,6 +160,7 @@ export function FclImportCreateForm({
                     const nextType = event.target.value;
                     setServiceType(nextType);
                     if (
+                      nextType === "FCL_IMPORT_CLEARANCE" ||
                       nextType === FTL_EXPORT_SERVICE_TYPE ||
                       nextType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE
                     ) {
@@ -179,7 +183,35 @@ export function FclImportCreateForm({
                   ))}
                 </select>
               </label>
-              {isFtlService ? (
+              {isFclService ? (
+                <>
+                  <label className="block">
+                    <div className="mb-1 text-sm font-medium text-slate-700">
+                      Origin
+                    </div>
+                    <input
+                      name="origin"
+                      disabled={!canWrite}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                      placeholder="Origin port or city"
+                      required
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="mb-1 text-sm font-medium text-slate-700">
+                      Destination
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                      {FCL_IMPORT_DEFAULT_DESTINATION}
+                    </div>
+                    <input
+                      type="hidden"
+                      name="destination"
+                      value={FCL_IMPORT_DEFAULT_DESTINATION}
+                    />
+                  </label>
+                </>
+              ) : isFtlService ? (
                 <label className="block md:col-span-2">
                   <div className="mb-1 inline-flex items-center gap-2 text-sm font-medium text-slate-700">
                     <AppIcon name="icon-route" size={20} />
@@ -327,7 +359,9 @@ export function FclImportCreateForm({
             ) : (
               <div className="mt-3 text-xs text-slate-500">
                 {requiresSingleCustomer
-                  ? isFtlService
+                  ? isFclService
+                    ? "Select one customer for FCL Import Clearance."
+                    : isFtlService
                     ? "Select one customer for FTL Export."
                     : "Select one customer for Import Transfer of Ownership."
                   : "Select at least one customer to continue."}
@@ -340,10 +374,10 @@ export function FclImportCreateForm({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                    Containers
+                    Shipment details
                   </div>
                   <h2 className="mt-2 text-lg font-semibold text-slate-900">
-                    Container numbers
+                    Shipment details
                   </h2>
                 </div>
                 <button
@@ -355,6 +389,21 @@ export function FclImportCreateForm({
                   Add container
                 </button>
               </div>
+
+              <label className="mt-4 block">
+                <div className="mb-1 text-xs font-medium text-slate-600">
+                  B/L number (optional)
+                </div>
+                <input
+                  type="text"
+                  name="blNumber"
+                  value={blNumber}
+                  onChange={(event) => setBlNumber(event.target.value)}
+                  disabled={!canWrite}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                  placeholder="Enter B/L number"
+                />
+              </label>
 
               <div className="mt-4 space-y-3">
                 {containers.map((value, index) => (

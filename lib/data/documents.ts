@@ -1,7 +1,16 @@
 import "server-only";
 
 import type { DocumentType } from "@/lib/domain";
-import { getItem, nowIso, nextId, putItem, scanAll, tableName, updateItem } from "@/lib/db";
+import {
+  deleteItem,
+  getItem,
+  nowIso,
+  nextId,
+  putItem,
+  scanAll,
+  tableName,
+  updateItem,
+} from "@/lib/db";
 
 export type DocumentRow = {
   id: number;
@@ -48,6 +57,13 @@ export async function listDocuments(shipmentId: number): Promise<DocumentRow[]> 
 
 export async function getDocument(documentId: number): Promise<DocumentRow | null> {
   return await getItem<DocumentRow>(DOCUMENTS_TABLE, { id: documentId });
+}
+
+export async function deleteDocument(documentId: number): Promise<DocumentRow | null> {
+  const doc = await getDocument(documentId);
+  if (!doc) return null;
+  await deleteItem(DOCUMENTS_TABLE, { id: documentId });
+  return doc;
 }
 
 export async function updateDocumentFlags(input: {

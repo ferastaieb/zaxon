@@ -1,4 +1,5 @@
 export const FCL_IMPORT_TEMPLATE_NAME = "FCL Import Clearance";
+export const FCL_IMPORT_DEFAULT_DESTINATION = "Jebel ali port - Dubai";
 
 export const FCL_IMPORT_STEP_NAMES = {
   shipmentCreation: "Shipment creation",
@@ -14,6 +15,29 @@ export const FCL_IMPORT_STEP_NAMES = {
   tokenBooking: "Token booking",
   returnTokenBooking: "Return token booking",
 } as const;
+
+export const FCL_IMPORT_MAIN_TABS = [
+  "order-overview",
+  "tracking",
+  "customs-clearance",
+] as const;
+
+export const FCL_IMPORT_ORDER_TABS = [
+  "order-received",
+  "container-list",
+] as const;
+
+export const FCL_IMPORT_TRACKING_TABS = [
+  "vessel",
+  "container",
+] as const;
+
+export const FCL_IMPORT_CUSTOMS_TABS = [
+  "bl",
+  "delivery-order",
+  "commercial-invoice",
+  "bill-of-entry",
+] as const;
 
 export const FCL_IMPORT_TRACKING_STEPS = [
   FCL_IMPORT_STEP_NAMES.vesselTracking,

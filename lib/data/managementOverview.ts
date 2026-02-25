@@ -336,6 +336,8 @@ const BORDER_AGENT_FIELDS = [
   { border: "Batha", key: "batha_agent_name" },
   { border: "Omari", key: "omari_agent_name" },
   { border: "Naseeb", key: "naseeb_agent_name" },
+  { border: "Mushtarakah", key: "mushtarakah_agent_name" },
+  { border: "Masnaa", key: "masnaa_agent_name" },
 ] as const;
 
 function normalizeShipmentKind(

@@ -3,8 +3,13 @@ import { redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { ImportTransferOwnershipWorkspace, type ImportTransferTab } from "@/components/shipments/import-transfer-ownership/ImportTransferOwnershipWorkspace";
+import { WorkflowDocumentsHub } from "@/components/shipments/shared/WorkflowDocumentsHub";
 import { requireUser } from "@/lib/auth";
-import { listDocuments, type DocumentRow } from "@/lib/data/documents";
+import {
+  listDocumentRequests,
+  listDocuments,
+  type DocumentRow,
+} from "@/lib/data/documents";
 import {
   getShipment,
   listShipmentSteps,
@@ -17,7 +22,15 @@ import {
 import { ensureImportTransferOwnershipTemplate } from "@/lib/importTransferOwnership/template";
 import { requireShipmentAccess } from "@/lib/permissions";
 import { parseStepFieldSchema, parseStepFieldValues } from "@/lib/stepFields";
+import {
+  deleteDocumentAction,
+  requestDocumentAction,
+  reviewDocumentAction,
+  updateDocumentFlagsAction,
+  uploadDocumentAction,
+} from "../../[shipmentId]/actions";
 import { updateImportTransferStepAction } from "./actions";
+import { listShipmentDocumentTypeOptions } from "@/lib/shipments/documentTypeOptions";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -126,8 +139,9 @@ export default async function ImportTransferOwnershipShipmentPage({
     }
   }
 
-  const [docs, importCandidates] = await Promise.all([
+  const [docs, docRequests, importCandidates] = await Promise.all([
     listDocuments(id),
+    listDocumentRequests(id),
     listFtlImportCandidates({
       userId: user.id,
       role: user.role,
@@ -147,6 +161,7 @@ export default async function ImportTransferOwnershipShipmentPage({
   const hasTemplateSteps = IMPORT_TRANSFER_OWNERSHIP_OPERATIONS_STEPS.every((name) =>
     stepData.some((step) => step.name === name),
   );
+  const workflowDocumentTypeOptions = listShipmentDocumentTypeOptions(steps);
 
   if (!hasTemplateSteps) {
     return (
@@ -181,6 +196,9 @@ export default async function ImportTransferOwnershipShipmentPage({
   const resolved = searchParams ? await Promise.resolve(searchParams) : {};
   const error = typeof resolved.error === "string" ? resolved.error : null;
   const initialTab = asMainTab(typeof resolved.tab === "string" ? resolved.tab : undefined);
+  const docsReturnTo = `/shipments/import-transfer-ownership/${shipment.id}?tab=${
+    initialTab ?? "overview"
+  }`;
 
   return (
     <div className={`${bodyFont.className} min-h-screen space-y-4`}>
@@ -208,6 +226,33 @@ export default async function ImportTransferOwnershipShipmentPage({
           stockType: candidate?.nonPhysicalStock ? "OWNERSHIP_STOCK" : "WAREHOUSE_STOCK",
           allocationHistory: candidate?.allocationHistory ?? [],
         }}
+      />
+      <WorkflowDocumentsHub
+        shipmentId={shipment.id}
+        docs={docs.map((doc) => ({
+          id: doc.id,
+          document_type: String(doc.document_type),
+          file_name: doc.file_name,
+          uploaded_at: doc.uploaded_at,
+          source: doc.source,
+          is_required: doc.is_required,
+          is_received: doc.is_received,
+          share_with_customer: doc.share_with_customer,
+          review_status: doc.review_status,
+        }))}
+        docRequests={docRequests.map((request) => ({
+          id: request.id,
+          document_type: String(request.document_type),
+          status: request.status,
+        }))}
+        documentTypeOptions={workflowDocumentTypeOptions}
+        canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        returnTo={docsReturnTo}
+        uploadDocumentAction={uploadDocumentAction.bind(null, shipment.id)}
+        requestDocumentAction={requestDocumentAction.bind(null, shipment.id)}
+        reviewDocumentAction={reviewDocumentAction.bind(null, shipment.id)}
+        updateDocumentFlagsAction={updateDocumentFlagsAction.bind(null, shipment.id)}
+        deleteDocumentAction={deleteDocumentAction.bind(null, shipment.id)}
       />
     </div>
   );

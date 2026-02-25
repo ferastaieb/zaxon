@@ -15,13 +15,17 @@ import {
   type TrackingStageDefinition,
 } from "./trackingTimelineConfig";
 import { DatePickerInput } from "@/components/ui/DatePickerInput";
+import type { JafzaLandRouteId } from "@/lib/routes/jafzaLandRoutes";
 
 export type TrackingAgentGate = {
   jebelAliReady: boolean;
   silaReady: boolean;
   bathaReady: boolean;
+  bathaModeReady: boolean;
   omariReady: boolean;
   naseebReady: boolean;
+  mushtarakahReady: boolean;
+  masnaaReady: boolean;
 };
 
 type Props = {
@@ -36,6 +40,7 @@ type Props = {
   lockedMessage?: string;
   syriaClearanceMode?: SyriaClearanceMode;
   agentGate: TrackingAgentGate;
+  routeId?: JafzaLandRouteId;
 };
 
 const STALE_DAYS = 3;
@@ -66,7 +71,11 @@ type GateInfo = {
   message: string;
 };
 
-function gateForStage(stageId: string, gate: TrackingAgentGate): GateInfo | null {
+function gateForStage(
+  stageId: string,
+  gate: TrackingAgentGate,
+  routeId: JafzaLandRouteId,
+): GateInfo | null {
   if (stageId.startsWith("jebel_ali_")) {
     return {
       ready: gate.jebelAliReady,
@@ -82,10 +91,12 @@ function gateForStage(stageId: string, gate: TrackingAgentGate): GateInfo | null
     };
   }
   if (stageId.startsWith("batha_")) {
+    const needsMode = routeId === "JAFZA_TO_KSA";
     return {
-      ready: gate.bathaReady,
-      message:
-        "Assign Batha clearing agent in Customs Agents before updating this border.",
+      ready: needsMode ? gate.bathaModeReady : gate.bathaReady,
+      message: needsMode
+        ? "Complete Batha customs mode, consignee, and agent in Customs Agents before updating this border."
+        : "Assign Batha clearing agent in Customs Agents before updating this border.",
     };
   }
   if (stageId.startsWith("omari_")) {
@@ -100,6 +111,20 @@ function gateForStage(stageId: string, gate: TrackingAgentGate): GateInfo | null
       ready: gate.naseebReady,
       message:
         "Complete Naseeb clearance assignment in Customs Agents before updating Syria border.",
+    };
+  }
+  if (stageId.startsWith("mushtarakah_")) {
+    return {
+      ready: gate.mushtarakahReady,
+      message:
+        "Assign Mushtarakah agent and consignee in Customs Agents before updating this border.",
+    };
+  }
+  if (stageId.startsWith("masnaa_")) {
+    return {
+      ready: gate.masnaaReady,
+      message:
+        "Complete Masnaa customs mode, consignee, and agent in Customs Agents before updating this border.",
     };
   }
   return null;
@@ -143,6 +168,7 @@ export function TrackingStepForm({
   lockedMessage,
   syriaClearanceMode,
   agentGate,
+  routeId,
 }: Props) {
   const [values, setValues] = useState<Record<string, string>>(() => {
     const source = step.values as Record<string, unknown>;
@@ -156,6 +182,7 @@ export function TrackingStepForm({
   const [openStageId, setOpenStageId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<Record<string, boolean>>({});
   const disableForm = !canEdit || locked;
+  const effectiveRouteId = routeId ?? "JAFZA_TO_SYRIA";
 
   const setValue = (key: string, value: string) => {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -177,8 +204,13 @@ export function TrackingStepForm({
       : "CLIENT";
 
   const allStages = useMemo(
-    () => trackingStagesForRegion(region, effectiveSyriaMode),
-    [effectiveSyriaMode, region],
+    () =>
+      trackingStagesForRegion({
+        region,
+        routeId: effectiveRouteId,
+        syriaMode: effectiveSyriaMode,
+      }),
+    [effectiveRouteId, effectiveSyriaMode, region],
   );
   const customsStages = useMemo(
     () => allStages.filter((stage) => stage.type === "customs"),
@@ -202,10 +234,18 @@ export function TrackingStepForm({
         stage,
         done,
         dateValue,
-        gate: gateForStage(stage.id, agentGate),
+        gate: gateForStage(stage.id, agentGate, effectiveRouteId),
       };
     });
-  }, [agentGate, customsStages, latestDocsByType, pendingUploads, step.id, values]);
+  }, [
+    agentGate,
+    customsStages,
+    effectiveRouteId,
+    latestDocsByType,
+    pendingUploads,
+    step.id,
+    values,
+  ]);
 
   const trackingStates = useMemo<TrackingStageState[]>(() => {
     return trackingStages.map((stage) => {
@@ -217,11 +257,27 @@ export function TrackingStepForm({
         stage,
         done: checkpointDone,
         dateValue,
-        gate: gateForStage(stage.id, agentGate),
+        gate: gateForStage(stage.id, agentGate, effectiveRouteId),
       };
     });
-  }, [agentGate, trackingStages, values]);
+  }, [agentGate, effectiveRouteId, trackingStages, values]);
   const trackingCompletedCount = trackingStates.filter((entry) => entry.done).length;
+  const stageSequenceBlockedById = useMemo(() => {
+    const blockedById = new Map<string, boolean>();
+    for (let index = 0; index < trackingStates.length; index += 1) {
+      const current = trackingStates[index];
+      const currentDone = current.done;
+      if (currentDone) {
+        blockedById.set(current.stage.id, false);
+        continue;
+      }
+      const hasPreviousIncomplete = trackingStates
+        .slice(0, index)
+        .some((stage) => !stage.done);
+      blockedById.set(current.stage.id, hasPreviousIncomplete);
+    }
+    return blockedById;
+  }, [trackingStates]);
 
   const doneIndexes = trackingStates
     .map((entry, index) => (entry.done ? index : -1))
@@ -240,7 +296,7 @@ export function TrackingStepForm({
       ? trackingStages[latestDoneIndex + 1].id
       : null;
   const activeStage = trackingStages.find((stage) => stage.id === openStageId) ?? null;
-  const regionMeta = trackingRegionMeta(region);
+  const regionMeta = trackingRegionMeta(region, effectiveRouteId);
 
   return (
     <form action={updateAction}>
@@ -271,7 +327,9 @@ export function TrackingStepForm({
             <div className="space-y-3">
               {customsStates.map((entry) => {
                 const stage = entry.stage;
-                const stageBlocked = !!entry.gate && !entry.gate.ready;
+                const stageBlockedByAgent = !!entry.gate && !entry.gate.ready;
+                const stageBlockedBySequence = false;
+                const stageBlocked = stageBlockedByAgent || stageBlockedBySequence;
                 const stageDisabled = disableForm || stageBlocked;
                 const doc =
                   stage.fileKey && stage.type === "customs"
@@ -301,9 +359,14 @@ export function TrackingStepForm({
                       </span>
                     </div>
 
-                    {stageBlocked ? (
+                    {stageBlockedByAgent ? (
                       <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
                         {entry.gate?.message}
+                      </div>
+                    ) : null}
+                    {stageBlockedBySequence ? (
+                      <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                        Complete previous border checkpoints before this stage.
                       </div>
                     ) : null}
 
@@ -375,7 +438,9 @@ export function TrackingStepForm({
                   nextIndex,
                   stalledStageId,
                 });
-                const stageBlocked = !!entry.gate && !entry.gate.ready;
+                const stageBlockedByAgent = !!entry.gate && !entry.gate.ready;
+                const stageBlockedBySequence = stageSequenceBlockedById.get(entry.stage.id) ?? false;
+                const stageBlocked = stageBlockedByAgent || stageBlockedBySequence;
                 const buttonClass =
                   stageBlocked
                     ? "border-amber-300 bg-amber-50 text-amber-900"
@@ -413,7 +478,9 @@ export function TrackingStepForm({
                         {entry.done
                           ? "Completed"
                           : stageBlocked
-                            ? "Agent required"
+                            ? stageBlockedBySequence
+                              ? "Previous checkpoint required"
+                              : "Agent required"
                             : "Pending"}
                       </div>
                     </button>
@@ -448,7 +515,9 @@ export function TrackingStepForm({
           const stage = entry.stage;
           const flagChecked = stage.flagKey ? boolValue(values[stage.flagKey]) : false;
           const stageOpen = openStageId === stage.id;
-          const stageBlocked = !!entry.gate && !entry.gate.ready;
+          const stageBlockedByAgent = !!entry.gate && !entry.gate.ready;
+          const stageBlockedBySequence = stageSequenceBlockedById.get(stage.id) ?? false;
+          const stageBlocked = stageBlockedByAgent || stageBlockedBySequence;
           const stageDisabled = disableForm || stageBlocked;
 
           return (
@@ -478,9 +547,14 @@ export function TrackingStepForm({
                 </div>
 
                 <div className="mt-4 space-y-3">
-                  {stageBlocked ? (
+                  {stageBlockedByAgent ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                       {entry.gate?.message}
+                    </div>
+                  ) : null}
+                  {stageBlockedBySequence ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Complete previous border checkpoints before this stage.
                     </div>
                   ) : null}
 
@@ -573,7 +647,7 @@ export function TrackingStepForm({
                 className="mx-auto mb-2 h-28 w-full max-w-sm"
               />
             ) : null}
-            Click any tracking stage to update movement status and dates.
+            Tracking stages are sequential. Complete earlier checkpoints before later ones.
           </div>
         )}
 
@@ -591,4 +665,3 @@ export function TrackingStepForm({
     </form>
   );
 }
-

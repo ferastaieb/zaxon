@@ -1,5 +1,6 @@
 import type { StepStatus } from "@/lib/domain";
 import { encodeFieldPath, stepFieldDocType } from "@/lib/stepFields";
+import type { JafzaLandRouteId } from "@/lib/routes/jafzaLandRoutes";
 import { FTL_EXPORT_STEP_NAMES } from "./constants";
 import {
   allReferencedImportsAvailable,
@@ -27,6 +28,7 @@ type StepSnapshot = {
 type StatusInput = {
   stepsByName: Record<string, StepSnapshot | undefined>;
   docTypes: Set<string>;
+  routeId?: JafzaLandRouteId;
 };
 
 export type FtlExportStatusResult = {
@@ -133,6 +135,7 @@ function isLoadingRowComplete(
 }
 
 export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusResult {
+  const routeId = input.routeId ?? "JAFZA_TO_SYRIA";
   const statuses: Record<string, StepStatus> = {};
 
   const planStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.exportPlanOverview];
@@ -242,24 +245,54 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
 
   const customsStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.customsAgentsAllocation];
   const customsValues = toRecord(customsStep?.values ?? {});
-  const naseebMode = getString(customsValues.naseeb_clearance_mode).toUpperCase();
-  const coreDone =
+  const modeDone = (prefix: "batha" | "masnaa") => {
+    const mode = getString(customsValues[`${prefix}_clearance_mode`]).toUpperCase();
+    if (mode === "CLIENT") {
+      return !!getString(customsValues[`${prefix}_client_final_choice`]);
+    }
+    if (mode === "ZAXON") {
+      return (
+        !!getString(customsValues[`${prefix}_agent_name`]) &&
+        !!getString(customsValues[`${prefix}_consignee_name`]) &&
+        !!getString(customsValues[`show_${prefix}_consignee_to_client`])
+      );
+    }
+    return false;
+  };
+  const coreUaeDone =
     !!getString(customsValues.jebel_ali_agent_name) &&
-    !!getString(customsValues.sila_agent_name) &&
-    !!getString(customsValues.batha_agent_name) &&
-    !!getString(customsValues.omari_agent_name) &&
-    !!naseebMode;
-  const naseebDone =
-    naseebMode === "CLIENT"
-      ? !!getString(customsValues.naseeb_client_final_choice)
-      : naseebMode === "ZAXON"
-        ? !!getString(customsValues.naseeb_agent_name) &&
-          !!getString(customsValues.syria_consignee_name) &&
-          !!getString(customsValues.show_syria_consignee_to_client)
-        : false;
+    !!getString(customsValues.sila_agent_name);
+  const customsDone =
+    routeId === "JAFZA_TO_KSA"
+      ? coreUaeDone && modeDone("batha")
+      : routeId === "JAFZA_TO_MUSHTARAKAH"
+        ? coreUaeDone &&
+          !!getString(customsValues.batha_agent_name) &&
+          !!getString(customsValues.omari_agent_name) &&
+          !!getString(customsValues.mushtarakah_agent_name) &&
+          !!getString(customsValues.mushtarakah_consignee_name) &&
+          modeDone("masnaa")
+        : (() => {
+            const naseebMode = getString(customsValues.naseeb_clearance_mode).toUpperCase();
+            const naseebDone =
+              naseebMode === "CLIENT"
+                ? !!getString(customsValues.naseeb_client_final_choice)
+                : naseebMode === "ZAXON"
+                  ? !!getString(customsValues.naseeb_agent_name) &&
+                    !!getString(customsValues.syria_consignee_name) &&
+                    !!getString(customsValues.show_syria_consignee_to_client)
+                  : false;
+            return (
+              coreUaeDone &&
+              !!getString(customsValues.batha_agent_name) &&
+              !!getString(customsValues.omari_agent_name) &&
+              !!naseebMode &&
+              naseebDone
+            );
+          })();
   const customsTouched = hasAnyValue(customsValues);
   statuses[FTL_EXPORT_STEP_NAMES.customsAgentsAllocation] = statusByDoneAndTouched(
-    coreDone && naseebDone,
+    customsDone,
     customsTouched,
   );
 
@@ -274,7 +307,9 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
   const ksaStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.trackingKsa];
   const ksaValues = toRecord(ksaStep?.values ?? {});
   const ksaDone =
-    isTruthy(ksaValues.hadietha_exit) || !!getString(ksaValues.hadietha_exit_date);
+    routeId === "JAFZA_TO_KSA"
+      ? isTruthy(ksaValues.batha_delivered) || !!getString(ksaValues.batha_delivered_date)
+      : isTruthy(ksaValues.hadietha_exit) || !!getString(ksaValues.hadietha_exit_date);
   statuses[FTL_EXPORT_STEP_NAMES.trackingKsa] = statusByDoneAndTouched(
     ksaDone,
     hasAnyValue(ksaValues),
@@ -283,7 +318,9 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
   const jordanStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.trackingJordan];
   const jordanValues = toRecord(jordanStep?.values ?? {});
   const jordanDone =
-    isTruthy(jordanValues.jaber_exit) || !!getString(jordanValues.jaber_exit_date);
+    routeId === "JAFZA_TO_KSA"
+      ? true
+      : isTruthy(jordanValues.jaber_exit) || !!getString(jordanValues.jaber_exit_date);
   statuses[FTL_EXPORT_STEP_NAMES.trackingJordan] = statusByDoneAndTouched(
     jordanDone,
     hasAnyValue(jordanValues),
@@ -291,19 +328,38 @@ export function computeFtlExportStatuses(input: StatusInput): FtlExportStatusRes
 
   const syriaStep = input.stepsByName[FTL_EXPORT_STEP_NAMES.trackingSyria];
   const syriaValues = toRecord(syriaStep?.values ?? {});
-  const clearanceMode = getString(syriaValues.syria_clearance_mode).toUpperCase();
-  const delivered =
-    isTruthy(syriaValues.syria_delivered) || !!getString(syriaValues.syria_delivered_date);
-  const declarationDate = getString(syriaValues.syria_declaration_date);
-  const declarationFile = hasFile(
-    syriaStep,
-    ["syria_declaration_upload"],
-    input.docTypes,
-  );
-  const syriaDone =
-    clearanceMode === "ZAXON"
-      ? delivered && !!declarationDate && declarationFile
-      : delivered;
+  let syriaDone = false;
+  if (routeId === "JAFZA_TO_KSA") {
+    syriaDone = true;
+  } else if (routeId === "JAFZA_TO_MUSHTARAKAH") {
+    const chainDone =
+      (isTruthy(syriaValues.mushtarakah_entered) || !!getString(syriaValues.mushtarakah_entered_date)) &&
+      (isTruthy(syriaValues.mushtarakah_offloaded_warehouse) ||
+        !!getString(syriaValues.mushtarakah_offloaded_warehouse_date)) &&
+      (isTruthy(syriaValues.mushtarakah_loaded_syrian_trucks) ||
+        !!getString(syriaValues.mushtarakah_loaded_syrian_trucks_date)) &&
+      (isTruthy(syriaValues.mushtarakah_exit) || !!getString(syriaValues.mushtarakah_exit_date)) &&
+      (isTruthy(syriaValues.naseeb_arrived) || !!getString(syriaValues.naseeb_arrived_date)) &&
+      (isTruthy(syriaValues.naseeb_entered) || !!getString(syriaValues.naseeb_entered_date)) &&
+      (isTruthy(syriaValues.masnaa_arrived) || !!getString(syriaValues.masnaa_arrived_date)) &&
+      (isTruthy(syriaValues.masnaa_entered) || !!getString(syriaValues.masnaa_entered_date));
+    const delivered = isTruthy(syriaValues.masnaa_delivered) || !!getString(syriaValues.masnaa_delivered_date);
+    syriaDone = chainDone && delivered;
+  } else {
+    const clearanceMode = getString(syriaValues.syria_clearance_mode).toUpperCase();
+    const delivered =
+      isTruthy(syriaValues.syria_delivered) || !!getString(syriaValues.syria_delivered_date);
+    const declarationDate = getString(syriaValues.syria_declaration_date);
+    const declarationFile = hasFile(
+      syriaStep,
+      ["syria_declaration_upload"],
+      input.docTypes,
+    );
+    syriaDone =
+      clearanceMode === "ZAXON"
+        ? delivered && !!declarationDate && declarationFile
+        : delivered;
+  }
   statuses[FTL_EXPORT_STEP_NAMES.trackingSyria] = statusByDoneAndTouched(
     syriaDone,
     hasAnyValue(syriaValues),

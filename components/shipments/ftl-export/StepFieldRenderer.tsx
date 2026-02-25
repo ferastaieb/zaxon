@@ -41,7 +41,23 @@ const TEXT_SELECT_OPTIONS: Record<string, Array<{ value: string; label: string }
     { value: "ZAXON", label: "Zaxon" },
     { value: "CLIENT", label: "Client" },
   ],
+  batha_clearance_mode: [
+    { value: "ZAXON", label: "Zaxon" },
+    { value: "CLIENT", label: "Client" },
+  ],
+  masnaa_clearance_mode: [
+    { value: "ZAXON", label: "Zaxon" },
+    { value: "CLIENT", label: "Client" },
+  ],
   show_syria_consignee_to_client: [
+    { value: "YES", label: "Yes" },
+    { value: "NO", label: "No" },
+  ],
+  show_batha_consignee_to_client: [
+    { value: "YES", label: "Yes" },
+    { value: "NO", label: "No" },
+  ],
+  show_masnaa_consignee_to_client: [
     { value: "YES", label: "Yes" },
     { value: "NO", label: "No" },
   ],

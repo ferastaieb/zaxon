@@ -1,13 +1,27 @@
+import { JAFZA_LAND_ROUTES } from "@/lib/routes/jafzaLandRoutes";
+
 export const FTL_EXPORT_TEMPLATE_NAME = "FTL Export - Warehouse Operations";
 
 export const FTL_EXPORT_SERVICE_TYPE = "FTL_EXPORT_WAREHOUSE";
 
 export const FTL_EXPORT_ROUTES = [
   {
-    id: "JEBEL_ALI_DUBAI_TO_SYRIA",
-    label: "Jebel Ali, Dubai to Syria",
-    origin: "Jebel Ali, Dubai",
-    destination: "Syria",
+    id: "JAFZA_TO_SYRIA",
+    label: JAFZA_LAND_ROUTES.JAFZA_TO_SYRIA.label,
+    origin: JAFZA_LAND_ROUTES.JAFZA_TO_SYRIA.origin,
+    destination: JAFZA_LAND_ROUTES.JAFZA_TO_SYRIA.destination,
+  },
+  {
+    id: "JAFZA_TO_KSA",
+    label: JAFZA_LAND_ROUTES.JAFZA_TO_KSA.label,
+    origin: JAFZA_LAND_ROUTES.JAFZA_TO_KSA.origin,
+    destination: JAFZA_LAND_ROUTES.JAFZA_TO_KSA.destination,
+  },
+  {
+    id: "JAFZA_TO_MUSHTARAKAH",
+    label: JAFZA_LAND_ROUTES.JAFZA_TO_MUSHTARAKAH.label,
+    origin: JAFZA_LAND_ROUTES.JAFZA_TO_MUSHTARAKAH.origin,
+    destination: JAFZA_LAND_ROUTES.JAFZA_TO_MUSHTARAKAH.destination,
   },
 ] as const;
 

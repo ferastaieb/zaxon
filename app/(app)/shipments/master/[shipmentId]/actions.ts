@@ -22,7 +22,8 @@ import { nowIso } from "@/lib/db";
 import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import type { FtlImportCandidate } from "@/lib/ftlExport/importCandidateTypes";
 import {
-  LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+  LTL_MASTER_ROUTE_TO_SERVICE_TYPE,
+  LTL_MASTER_SERVICE_TYPE_TO_ROUTE,
   LTL_MASTER_JAFZA_SYRIA_STEP_NAMES,
   LTL_SUBSHIPMENT_HANDOVER_METHODS,
   LTL_SUBSHIPMENT_STEP_NAMES,
@@ -42,6 +43,7 @@ import {
 } from "@/lib/ltlMasterJafzaSyria/status";
 import { ensureLtlSubshipmentTemplate } from "@/lib/ltlMasterJafzaSyria/template";
 import { requireShipmentAccess } from "@/lib/permissions";
+import { resolveJafzaLandRoute } from "@/lib/routes/jafzaLandRoutes";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
 import {
@@ -143,13 +145,31 @@ function isTrackingStep(name: string) {
 }
 
 function hasTrackingAgentPrerequisite(
-  stepName: string,
-  agentsValues: Record<string, unknown>,
-  touchedFieldKeys: Set<string>,
+  input: {
+    stepName: string;
+    agentsValues: Record<string, unknown>;
+    touchedFieldKeys: Set<string>;
+    routeId: "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH";
+  },
 ) {
+  const { stepName, agentsValues, touchedFieldKeys, routeId } = input;
   const hasPrefix = (prefix: string) => {
     for (const key of touchedFieldKeys) {
       if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+  const modeDone = (prefix: "batha" | "masnaa") => {
+    const mode = getString(agentsValues[`${prefix}_clearance_mode`]).toUpperCase();
+    if (mode === "ZAXON") {
+      return (
+        !!getString(agentsValues[`${prefix}_agent_name`]) &&
+        !!getString(agentsValues[`${prefix}_consignee_name`]) &&
+        !!getString(agentsValues[`show_${prefix}_consignee_to_client`])
+      );
+    }
+    if (mode === "CLIENT") {
+      return !!getString(agentsValues[`${prefix}_client_final_choice`]);
     }
     return false;
   };
@@ -163,14 +183,32 @@ function hasTrackingAgentPrerequisite(
   }
   if (stepName === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingKsa) {
     const requiresBatha = hasPrefix("batha_");
-    return !requiresBatha || !!getString(agentsValues.batha_agent_name);
+    if (!requiresBatha) return true;
+    if (routeId === "JAFZA_TO_KSA") return modeDone("batha");
+    return !!getString(agentsValues.batha_agent_name);
   }
   if (stepName === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan) {
     const requiresOmari = hasPrefix("omari_");
     return !requiresOmari || !!getString(agentsValues.omari_agent_name);
   }
   if (stepName === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria) {
+    if (routeId === "JAFZA_TO_MUSHTARAKAH") {
+      const touchesMushtarakah = hasPrefix("mushtarakah_");
+      const touchesMasnaa = hasPrefix("masnaa_");
+      if (touchesMushtarakah) {
+        return (
+          !!getString(agentsValues.mushtarakah_agent_name) &&
+          !!getString(agentsValues.mushtarakah_consignee_name)
+        );
+      }
+      if (touchesMasnaa) {
+        return modeDone("masnaa");
+      }
+      return true;
+    }
     if (!hasPrefix("syria_")) return true;
+    const mode = getString(agentsValues.naseeb_clearance_mode).toUpperCase();
+    if (mode === "CLIENT") return !!getString(agentsValues.naseeb_client_final_choice);
     return !!getString(agentsValues.naseeb_agent_name);
   }
   return true;
@@ -323,9 +361,53 @@ function normalizeNaseebZaxonOnly(values: Record<string, unknown>) {
   };
 }
 
-function normalizeTrackingSyriaMode(values: Record<string, unknown>) {
+function resolveMasterRouteId(input: {
+  origin: string;
+  destination: string;
+  creationStepValues: Record<string, unknown> | null;
+}): "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH" {
+  const serviceType = getString(input.creationStepValues?.service_type ?? "");
+  if (
+    serviceType &&
+    Object.prototype.hasOwnProperty.call(LTL_MASTER_SERVICE_TYPE_TO_ROUTE, serviceType)
+  ) {
+    return LTL_MASTER_SERVICE_TYPE_TO_ROUTE[
+      serviceType as keyof typeof LTL_MASTER_SERVICE_TYPE_TO_ROUTE
+    ];
+  }
+  return resolveJafzaLandRoute(input.origin, input.destination);
+}
+
+function parseRouteId(
+  value: string,
+): "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH" | null {
+  if (value === "JAFZA_TO_SYRIA" || value === "JAFZA_TO_KSA" || value === "JAFZA_TO_MUSHTARAKAH") {
+    return value;
+  }
+  return null;
+}
+
+function normalizeCustomsByRoute(input: {
+  values: Record<string, unknown>;
+  routeId: "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH";
+}) {
+  if (input.routeId === "JAFZA_TO_SYRIA") {
+    return normalizeNaseebZaxonOnly(input.values);
+  }
   return {
-    ...values,
+    ...input.values,
+  };
+}
+
+function normalizeTrackingSyriaMode(input: {
+  values: Record<string, unknown>;
+  routeId: "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH";
+}) {
+  if (input.routeId !== "JAFZA_TO_SYRIA") {
+    return { ...input.values };
+  }
+  return {
+    ...input.values,
     syria_clearance_mode: "ZAXON",
   };
 }
@@ -477,19 +559,37 @@ export async function updateMasterStepAction(masterShipmentId: number, formData:
   mergedValues = applyStepFieldRemovals(mergedValues, fieldRemovals);
   let mergedRecord = toRecord(mergedValues);
 
+  const creationStep = steps.find(
+    (entry) => entry.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.shipmentCreation,
+  );
+  const creationStepValues =
+    creationStep?.id === stepId
+      ? mergedRecord
+      : creationStep
+        ? toRecord(parseStepFieldValues(creationStep.field_values_json))
+        : null;
+  const routeId = resolveMasterRouteId({
+    origin: master.origin,
+    destination: master.destination,
+    creationStepValues,
+  });
+
   if (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.shipmentCreation) {
+    const routeFromField = parseRouteId(getString(mergedRecord.route_id));
+    const creationRouteId = routeFromField ?? routeId;
     mergedRecord = {
       ...mergedRecord,
-      service_type: LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+      route_id: creationRouteId,
+      service_type: LTL_MASTER_ROUTE_TO_SERVICE_TYPE[creationRouteId],
     };
   }
 
   if (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation) {
-    mergedRecord = normalizeNaseebZaxonOnly(mergedRecord);
+    mergedRecord = normalizeCustomsByRoute({ values: mergedRecord, routeId });
   }
 
   if (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria) {
-    mergedRecord = normalizeTrackingSyriaMode(mergedRecord);
+    mergedRecord = normalizeTrackingSyriaMode({ values: mergedRecord, routeId });
   }
 
   const finalizeInvoice = String(formData.get("finalizeInvoice") ?? "").trim() === "1";
@@ -525,13 +625,22 @@ export async function updateMasterStepAction(masterShipmentId: number, formData:
     redirect(appendParam(returnBase, "error", "tracking_locked"));
   }
 
+  if (
+    isTrackingStep(step.name) &&
+    routeId === "JAFZA_TO_KSA" &&
+    (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan ||
+      step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria)
+  ) {
+    redirect(appendParam(returnBase, "error", "invalid"));
+  }
+
   if (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.exportInvoice && !computed.canFinalizeInvoice) {
     redirect(appendParam(returnBase, "error", "invoice_prereq"));
   }
 
   if (step.name === LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation) {
     const mode = getString(mergedRecord.naseeb_clearance_mode).toUpperCase();
-    if (mode !== "ZAXON") {
+    if (routeId === "JAFZA_TO_SYRIA" && mode !== "ZAXON") {
       redirect(appendParam(returnBase, "error", "customs_naseeb_locked"));
     }
   }
@@ -540,7 +649,14 @@ export async function updateMasterStepAction(masterShipmentId: number, formData:
     const agentsValues =
       runtime.masterStepByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation]?.values ??
       {};
-    if (!hasTrackingAgentPrerequisite(step.name, agentsValues, touchedFieldKeys)) {
+    if (
+      !hasTrackingAgentPrerequisite({
+        stepName: step.name,
+        agentsValues,
+        touchedFieldKeys,
+        routeId,
+      })
+    ) {
       redirect(appendParam(returnBase, "error", "tracking_agent_required"));
     }
   }

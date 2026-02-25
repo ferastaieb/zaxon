@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 
+import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
 import { CopyField } from "@/components/ui/CopyField";
 import {
@@ -16,7 +17,13 @@ import {
   type ShipmentRisk,
   type StepStatus,
 } from "@/lib/domain";
-import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
+import {
+  FCL_IMPORT_CUSTOMS_TABS,
+  FCL_IMPORT_MAIN_TABS,
+  FCL_IMPORT_ORDER_TABS,
+  FCL_IMPORT_STEP_NAMES,
+  FCL_IMPORT_TRACKING_TABS,
+} from "@/lib/fclImport/constants";
 import {
   extractContainerNumbers,
   isTruthy,
@@ -64,6 +71,10 @@ type ShipmentMeta = {
 };
 
 type WorkspaceMode = "full" | "tracking" | "operations" | "container-ops";
+export type FclMainTab = (typeof FCL_IMPORT_MAIN_TABS)[number];
+export type FclOrderTab = (typeof FCL_IMPORT_ORDER_TABS)[number];
+export type FclTrackingTab = (typeof FCL_IMPORT_TRACKING_TABS)[number];
+export type FclCustomsTab = (typeof FCL_IMPORT_CUSTOMS_TABS)[number];
 
 type WorkspaceProps = {
   headingClassName: string;
@@ -81,6 +92,10 @@ type WorkspaceProps = {
   requestDocumentAction?: (formData: FormData) => void;
   mode?: WorkspaceMode;
   returnTo?: string;
+  initialTab?: FclMainTab;
+  initialOrderTab?: FclOrderTab;
+  initialTrackingTab?: FclTrackingTab;
+  initialCustomsTab?: FclCustomsTab;
 };
 
 type ToggleMap = Record<number, boolean>;
@@ -102,6 +117,23 @@ function statusTone(status: StepStatus) {
   return "zinc";
 }
 
+function tabButtonClass(active: boolean, done: boolean) {
+  if (active) {
+    return done
+      ? "border border-emerald-300 bg-emerald-100 text-emerald-900"
+      : "border border-zinc-900 bg-zinc-900 text-white";
+  }
+  return done
+    ? "border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+    : "border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50";
+}
+
+function tabIconClass(active: boolean, done: boolean) {
+  if (active && !done) return "invert";
+  if (active && done) return "opacity-90";
+  return "opacity-80";
+}
+
 function daysUntil(dateRaw: string | undefined) {
   if (!dateRaw) return null;
   const date = new Date(dateRaw);
@@ -118,15 +150,6 @@ function maxDate(...dates: Array<string | undefined | null>) {
   if (!parsed.length) return undefined;
   const latest = parsed.reduce((acc, value) => (value > acc ? value : acc));
   return latest.toISOString().slice(0, 10);
-}
-
-function minDate(...dates: Array<string | undefined | null>) {
-  const parsed = dates
-    .map((value) => (value ? new Date(value) : null))
-    .filter((value): value is Date => !!value && !Number.isNaN(value.getTime()));
-  if (!parsed.length) return undefined;
-  const earliest = parsed.reduce((acc, value) => (value < acc ? value : acc));
-  return earliest.toISOString().slice(0, 10);
 }
 
 function valueString(values: Record<string, unknown>, key: string) {
@@ -151,6 +174,31 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function appendQueryParam(url: string, key: string, value: string) {
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function isMainTab(value: string | undefined): value is FclMainTab {
+  return (
+    value === "order-overview" ||
+    value === "tracking" ||
+    value === "customs-clearance"
+  );
+}
+
+function isOrderTab(value: string | undefined): value is FclOrderTab {
+  return value === "order-received" || value === "container-list";
+}
+
+function isTrackingTab(value: string | undefined): value is FclTrackingTab {
+  return value === "vessel" || value === "container";
+}
+
+function isCustomsTab(value: string | undefined): value is FclCustomsTab {
+  return (
+    value === "bl" ||
+    value === "delivery-order" ||
+    value === "commercial-invoice" ||
+    value === "bill-of-entry"
+  );
 }
 
 function hasAnyValue(value: unknown): boolean {
@@ -239,15 +287,55 @@ export function FclImportWorkspace({
   requestDocumentAction,
   mode = "full",
   returnTo,
+  initialTab,
+  initialOrderTab,
+  initialTrackingTab,
+  initialCustomsTab,
 }: WorkspaceProps) {
   const [showPalette, setShowPalette] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const trackingLink = trackingToken ? `/track/fcl/${trackingToken}` : "";
-  const showOverview = mode === "full";
-  const showTracking = mode === "full" || mode === "tracking";
-  const showOperations = mode === "full" || mode === "operations";
-  const showContainerOps = mode === "container-ops";
   const isFull = mode === "full";
+  const [mainTab, setMainTab] = useState<FclMainTab>(() =>
+    isFull && initialTab && isMainTab(initialTab) ? initialTab : "order-overview",
+  );
+  const [orderTab, setOrderTab] = useState<FclOrderTab>(() =>
+    isFull && initialOrderTab && isOrderTab(initialOrderTab)
+      ? initialOrderTab
+      : "order-received",
+  );
+  const [trackingTab, setTrackingTab] = useState<FclTrackingTab>(() =>
+    isFull && initialTrackingTab && isTrackingTab(initialTrackingTab)
+      ? initialTrackingTab
+      : "vessel",
+  );
+  const [customsTab, setCustomsTab] = useState<FclCustomsTab>(() =>
+    isFull && initialCustomsTab && isCustomsTab(initialCustomsTab)
+      ? initialCustomsTab
+      : "bl",
+  );
+  const showOverview = isFull ? mainTab === "order-overview" : false;
+  const showTracking = isFull ? mainTab === "tracking" : mode === "tracking";
+  const showOperations = isFull
+    ? mainTab === "order-overview" || mainTab === "customs-clearance"
+    : mode === "operations";
+  const showContainerOps = isFull
+    ? mainTab === "tracking" && trackingTab === "container"
+    : mode === "container-ops";
+  const showOrderReceivedStep =
+    !isFull || (mainTab === "order-overview" && orderTab === "order-received");
+  const showContainerListStep =
+    !isFull || (mainTab === "order-overview" && orderTab === "container-list");
+  const showVesselStep = !isFull || (mainTab === "tracking" && trackingTab === "vessel");
+  const showContainerTrackingSteps =
+    !isFull || (mainTab === "tracking" && trackingTab === "container");
+  const showBlStep = !isFull || (mainTab === "customs-clearance" && customsTab === "bl");
+  const showDeliveryOrderStep =
+    !isFull || (mainTab === "customs-clearance" && customsTab === "delivery-order");
+  const showCommercialInvoiceStep =
+    !isFull || (mainTab === "customs-clearance" && customsTab === "commercial-invoice");
+  const showBoeStep =
+    !isFull || (mainTab === "customs-clearance" && customsTab === "bill-of-entry");
   const openRequestSet = useMemo(
     () => new Set(openDocRequestTypes.map((type) => String(type))),
     [openDocRequestTypes],
@@ -290,16 +378,33 @@ export function FclImportWorkspace({
       setDirtyStep((current) => (current?.id === step.id ? null : current));
     },
   });
+  const fullReturnTo = isFull
+    ? (() => {
+        const params = new URLSearchParams();
+        params.set("tab", mainTab);
+        if (mainTab === "order-overview") {
+          params.set("orderTab", orderTab);
+        } else if (mainTab === "tracking") {
+          params.set("trackingTab", trackingTab);
+        } else {
+          params.set("customsTab", customsTab);
+        }
+        return `/shipments/fcl-import/${shipment.id}?${params.toString()}`;
+      })()
+    : "";
+  const effectiveReturnTo = returnTo || fullReturnTo;
   const renderReturnTo = () =>
-    returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
+    effectiveReturnTo ? (
+      <input type="hidden" name="returnTo" value={effectiveReturnTo} />
+    ) : null;
   const renderFileMeta = (stepId: number, path: string[]) => {
     const doc = getLatestDoc(stepId, path);
     const docType = buildDocKey(stepId, path);
     const step = stepsById.get(stepId);
     const requestLocked = !canEditStep(step);
     const isRequested = openRequestSet.has(docType);
-    const requestReturnTo = returnTo
-      ? appendQueryParam(returnTo, "requested", "1")
+    const requestReturnTo = effectiveReturnTo
+      ? appendQueryParam(effectiveReturnTo, "requested", "1")
       : "";
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
@@ -406,16 +511,10 @@ export function FclImportWorkspace({
     return () => window.removeEventListener("keydown", handler);
   }, [mode]);
 
-  const stepsByName = useMemo(() => {
-    const map = new Map<string, StepData>();
-    steps.forEach((step) => map.set(step.name, step));
-    return map;
-  }, [steps]);
-  const stepsById = useMemo(() => {
-    const map = new Map<number, StepData>();
-    steps.forEach((step) => map.set(step.id, step));
-    return map;
-  }, [steps]);
+  const stepsByName = new Map<string, StepData>();
+  steps.forEach((step) => stepsByName.set(step.name, step));
+  const stepsById = new Map<number, StepData>();
+  steps.forEach((step) => stepsById.set(step.id, step));
 
   const customerLabel = customers.length
     ? customers.map((customer) => customer.name).join(", ")
@@ -434,35 +533,19 @@ export function FclImportWorkspace({
   const tokenStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.tokenBooking);
   const returnTokenStep = stepsByName.get(FCL_IMPORT_STEP_NAMES.returnTokenBooking);
 
-  const dischargeRows = useMemo(
-    () => normalizeContainerRows(containerNumbers, dischargeStep?.values ?? {}),
-    [containerNumbers, dischargeStep],
-  );
-  const pullOutRows = useMemo(
-    () => normalizeContainerRows(containerNumbers, pullOutStep?.values ?? {}),
-    [containerNumbers, pullOutStep],
-  );
-  const deliveryRows = useMemo(
-    () => normalizeContainerRows(containerNumbers, deliveryStep?.values ?? {}),
-    [containerNumbers, deliveryStep],
-  );
-  const deliveryContainerMap = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>>();
-    const containers = asArray(deliveryStep?.values?.containers);
-    for (const entry of containers) {
-      const number = typeof entry.container_number === "string" ? entry.container_number : "";
-      if (number) map.set(number, entry);
+  const dischargeRows = normalizeContainerRows(containerNumbers, dischargeStep?.values ?? {});
+  const pullOutRows = normalizeContainerRows(containerNumbers, pullOutStep?.values ?? {});
+  const deliveryRows = normalizeContainerRows(containerNumbers, deliveryStep?.values ?? {});
+  const deliveryContainerMap = new Map<string, Record<string, unknown>>();
+  const deliveryContainers = asArray(deliveryStep?.values?.containers);
+  for (const entry of deliveryContainers) {
+    const number = typeof entry.container_number === "string" ? entry.container_number : "";
+    if (number) {
+      deliveryContainerMap.set(number, entry);
     }
-    return map;
-  }, [deliveryStep]);
-  const tokenRows = useMemo(
-    () => normalizeContainerRows(containerNumbers, tokenStep?.values ?? {}),
-    [containerNumbers, tokenStep],
-  );
-  const returnTokenRows = useMemo(
-    () => normalizeContainerRows(containerNumbers, returnTokenStep?.values ?? {}),
-    [containerNumbers, returnTokenStep],
-  );
+  }
+  const tokenRows = normalizeContainerRows(containerNumbers, tokenStep?.values ?? {});
+  const returnTokenRows = normalizeContainerRows(containerNumbers, returnTokenStep?.values ?? {});
 
   const dischargedFlags = dischargeRows.map(
     (row) => isTruthy(row.container_discharged) || !!row.container_discharged_date?.trim(),
@@ -484,7 +567,6 @@ export function FclImportWorkspace({
     const entry = deliveryContainerMap.get(row.container_number);
     return isTruthy(entry?.cargo_damage);
   });
-
   const totalContainers = containerNumbers.length;
   const dischargedCount = dischargedFlags.filter(Boolean).length;
   const pulledOutCount = pulledOutFlags.filter(Boolean).length;
@@ -495,7 +577,43 @@ export function FclImportWorkspace({
   const blDone = blStep?.status === "DONE";
   const invoiceDone = invoiceStep?.status === "DONE";
   const deliveryOrderDone = deliveryOrderStep?.status === "DONE";
+  const stepDone = (step?: StepData | null) => step?.status === "DONE";
+  const containerTrackingDone = [
+    dischargeStep,
+    pullOutStep,
+    deliveryStep,
+    tokenStep,
+    returnTokenStep,
+  ].every(stepDone);
+  const mainTabDone: Record<FclMainTab, boolean> = {
+    "order-overview": stepDone(orderStep) && stepDone(creationStep),
+    tracking: stepDone(vesselStep) && containerTrackingDone,
+    "customs-clearance":
+      stepDone(blStep) &&
+      stepDone(deliveryOrderStep) &&
+      stepDone(invoiceStep) &&
+      stepDone(boeStep),
+  };
+  const orderTabDone: Record<FclOrderTab, boolean> = {
+    "order-received": stepDone(orderStep),
+    "container-list": stepDone(creationStep),
+  };
+  const trackingTabDone: Record<FclTrackingTab, boolean> = {
+    vessel: stepDone(vesselStep),
+    container: containerTrackingDone,
+  };
+  const customsTabDone: Record<FclCustomsTab, boolean> = {
+    bl: stepDone(blStep),
+    "delivery-order": stepDone(deliveryOrderStep),
+    "commercial-invoice": stepDone(invoiceStep),
+    "bill-of-entry": stepDone(boeStep),
+  };
   const allReturned = totalContainers > 0 && returnedCount === totalContainers;
+  const tokenBookedFlags = tokenRows.map((row) => !!row.token_date?.trim());
+  const pullOutReadyFlags = dischargedFlags.map((flag) => boeDone && flag);
+  const deliveryReadyFlags = pulledOutFlags.map((flag) => flag);
+  const tokenReadyFlags = dischargedFlags.map((flag) => boeDone && flag);
+  const returnTokenReadyFlags = tokenBookedFlags.map((flag) => flag);
 
   const vesselEta = valueString(vesselStep?.values ?? {}, "eta");
   const vesselAta = valueString(vesselStep?.values ?? {}, "ata");
@@ -551,37 +669,6 @@ export function FclImportWorkspace({
   const [pullOutDestinations, setPullOutDestinations] = useState<string[]>(() =>
     pullOutRows.map((row) => row.pull_out_destination ?? ""),
   );
-
-  useEffect(() => {
-    setPullOutDestinations((prev) =>
-      pullOutRows.map(
-        (row, index) => prev[index] ?? row.pull_out_destination ?? "",
-      ),
-    );
-  }, [pullOutRows]);
-
-  useEffect(() => {
-    setOffloadPictureCounts((prev) => {
-      const next = { ...prev };
-      deliveryRows.forEach((row, index) => {
-        const entry = deliveryContainerMap.get(row.container_number);
-        const existing = asArray(entry?.offload_pictures).length;
-        const current = next[index] ?? 1;
-        next[index] = Math.max(current, existing || 1);
-      });
-      return next;
-    });
-    setDamagePictureCounts((prev) => {
-      const next = { ...prev };
-      deliveryRows.forEach((row, index) => {
-        const entry = deliveryContainerMap.get(row.container_number);
-        const existing = asArray(entry?.cargo_damage_pictures).length;
-        const current = next[index] ?? 1;
-        next[index] = Math.max(current, existing || 1);
-      });
-      return next;
-    });
-  }, [deliveryRows, deliveryContainerMap]);
 
   const blValues = (blStep?.values ?? {}) as Record<string, unknown>;
   const blChoice = (blValues.bl_type ?? {}) as Record<string, unknown>;
@@ -732,6 +819,175 @@ export function FclImportWorkspace({
               </Link>
             </div>
           </header>
+        ) : null}
+
+        {isFull ? (
+          <div className="mt-6 space-y-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex flex-nowrap gap-2 overflow-x-auto">
+              {[
+                {
+                  id: "order-overview",
+                  label: "1. Order Overview",
+                  icon: "icon-order-received" as AppIconName,
+                },
+                {
+                  id: "tracking",
+                  label: "2. Tracking",
+                  icon: "icon-route" as AppIconName,
+                },
+                {
+                  id: "customs-clearance",
+                  label: "3. Customs Clearance",
+                  icon: "icon-doc-required" as AppIconName,
+                },
+              ].map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  onClick={() => setMainTab(entry.id as FclMainTab)}
+                  className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${tabButtonClass(
+                    mainTab === entry.id,
+                    mainTabDone[entry.id as FclMainTab],
+                  )}`}
+                >
+                  <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                    <AppIcon
+                      name={entry.icon}
+                      size={20}
+                      className={tabIconClass(
+                        mainTab === entry.id,
+                        mainTabDone[entry.id as FclMainTab],
+                      )}
+                    />
+                    {entry.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {mainTab === "order-overview" ? (
+              <div className="flex flex-nowrap gap-2 overflow-x-auto">
+                {[
+                  {
+                    id: "order-received",
+                    label: "Order received",
+                    icon: "icon-order-received" as AppIconName,
+                  },
+                  {
+                    id: "container-list",
+                    label: "Container list",
+                    icon: "icon-shipment-create" as AppIconName,
+                  },
+                ].map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => setOrderTab(entry.id as FclOrderTab)}
+                    className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${tabButtonClass(
+                      orderTab === entry.id,
+                      orderTabDone[entry.id as FclOrderTab],
+                    )}`}
+                  >
+                    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                      <AppIcon
+                        name={entry.icon}
+                        size={18}
+                        className={tabIconClass(
+                          orderTab === entry.id,
+                          orderTabDone[entry.id as FclOrderTab],
+                        )}
+                      />
+                      {entry.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {mainTab === "tracking" ? (
+              <div className="flex flex-nowrap gap-2 overflow-x-auto">
+                {[
+                  {
+                    id: "vessel",
+                    label: "Vessel tracking",
+                    icon: "icon-route" as AppIconName,
+                  },
+                  {
+                    id: "container",
+                    label: "Container tracking",
+                    icon: "icon-shipment-create" as AppIconName,
+                  },
+                ].map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => setTrackingTab(entry.id as FclTrackingTab)}
+                    className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${tabButtonClass(
+                      trackingTab === entry.id,
+                      trackingTabDone[entry.id as FclTrackingTab],
+                    )}`}
+                  >
+                    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                      <AppIcon
+                        name={entry.icon}
+                        size={18}
+                        className={tabIconClass(
+                          trackingTab === entry.id,
+                          trackingTabDone[entry.id as FclTrackingTab],
+                        )}
+                      />
+                      {entry.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {mainTab === "customs-clearance" ? (
+              <div className="flex flex-nowrap gap-2 overflow-x-auto">
+                {[
+                  { id: "bl", label: "B/L", icon: "icon-doc-required" as AppIconName },
+                  {
+                    id: "delivery-order",
+                    label: "Delivery order",
+                    icon: "icon-doc-required" as AppIconName,
+                  },
+                  {
+                    id: "commercial-invoice",
+                    label: "Commercial invoice",
+                    icon: "icon-doc-required" as AppIconName,
+                  },
+                  {
+                    id: "bill-of-entry",
+                    label: "Bill of entry",
+                    icon: "icon-doc-required" as AppIconName,
+                  },
+                ].map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => setCustomsTab(entry.id as FclCustomsTab)}
+                    className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition ${tabButtonClass(
+                      customsTab === entry.id,
+                      customsTabDone[entry.id as FclCustomsTab],
+                    )}`}
+                  >
+                    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                      <AppIcon
+                        name={entry.icon}
+                        size={18}
+                        className={tabIconClass(
+                          customsTab === entry.id,
+                          customsTabDone[entry.id as FclCustomsTab],
+                        )}
+                      />
+                      {entry.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         <div
@@ -889,7 +1145,7 @@ export function FclImportWorkspace({
                 </div>
               ) : null}
 
-              {vesselStep ? (
+              {showVesselStep && vesselStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -950,7 +1206,7 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-              {dischargeStep ? (
+              {showContainerTrackingSteps && dischargeStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -1123,7 +1379,7 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
 
-              {pullOutStep ? (
+              {showContainerTrackingSteps && pullOutStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -1159,8 +1415,10 @@ export function FclImportWorkspace({
                   >
                     <div className="space-y-3">
                       {pullOutRows.map((row, index) => {
-                        const discharged = dischargedFlags[index];
-                        const eligible = boeDone && discharged;
+                        const eligible =
+                          pullOutReadyFlags[index] ||
+                          !!row.pull_out_token_date?.trim() ||
+                          !!row.pull_out_date?.trim();
                         const tokenDate = row.pull_out_token_date ?? row.pull_out_date ?? "";
                         const destValue = pullOutDestinations[index] ?? row.pull_out_destination ?? "";
                         const stockEnabled =
@@ -1377,7 +1635,7 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
 
-              {deliveryStep ? (
+              {showContainerTrackingSteps && deliveryStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -1415,6 +1673,8 @@ export function FclImportWorkspace({
                       {deliveryRows.map((row, index) => {
                         const delivered = deliveryToggles[index] ?? false;
                         const returned = returnToggles[index] ?? false;
+                        const deliveryStageUnlocked =
+                          deliveryReadyFlags[index] || delivered || returned;
                         const entry = deliveryContainerMap.get(row.container_number);
                         const stockEnabled = isTruthy(pullOutRows[index]?.stock_tracking_enabled);
                         const damageActive =
@@ -1475,7 +1735,11 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEditStep(deliveryStep) || trackingLocked}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !deliveryStageUnlocked
+                                  }
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Delivered or offloaded
@@ -1491,6 +1755,11 @@ export function FclImportWorkspace({
                               ])}
                               value={row.container_number}
                             />
+                            {!deliveryStageUnlocked ? (
+                              <div className="mt-2 text-xs text-slate-500">
+                                Complete pull-out for this container before delivery checkpoints.
+                              </div>
+                            ) : null}
 
                             <div className="mt-3 grid gap-3 md:grid-cols-2">
                               <label className="block">
@@ -1581,7 +1850,11 @@ export function FclImportWorkspace({
                                       [index]: event.target.checked,
                                     }))
                                   }
-                                  disabled={!canEditStep(deliveryStep) || trackingLocked}
+                                  disabled={
+                                    !canEditStep(deliveryStep) ||
+                                    trackingLocked ||
+                                    !deliveryStageUnlocked
+                                  }
                                   className="h-4 w-4 rounded border-slate-300"
                                 />
                                 Empty container returned to port
@@ -1963,7 +2236,7 @@ export function FclImportWorkspace({
                 </span>
               </div>
 
-              {creationStep ? (
+              {showContainerListStep && creationStep ? (
                 <form
                   action={updateAction}
                   className="space-y-3"
@@ -2040,7 +2313,7 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
 
-              {orderStep ? (
+              {showOrderReceivedStep && orderStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -2157,7 +2430,7 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-              {blStep ? (
+              {showBlStep && blStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -2548,7 +2821,7 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-              {invoiceStep ? (
+              {showCommercialInvoiceStep && invoiceStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -2781,7 +3054,7 @@ export function FclImportWorkspace({
                   </StepCard>
                 </form>
               ) : null}
-              {deliveryOrderStep ? (
+              {showDeliveryOrderStep && deliveryOrderStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -2919,7 +3192,7 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
 
-              {boeStep ? (
+              {showBoeStep && boeStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -3030,7 +3303,7 @@ export function FclImportWorkspace({
                 </span>
               </div>
 
-              {tokenStep ? (
+              {showContainerTrackingSteps && tokenStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -3062,7 +3335,7 @@ export function FclImportWorkspace({
                   >
                     <div className="space-y-3">
                       {tokenRows.map((row, index) => {
-                        const eligible = boeDone && dischargedFlags[index];
+                        const eligible = tokenReadyFlags[index] || !!row.token_date?.trim();
                         return (
                           <div
                             key={`token-${row.container_number}-${index}`}
@@ -3131,7 +3404,7 @@ export function FclImportWorkspace({
                 </form>
               ) : null}
 
-              {returnTokenStep ? (
+              {showContainerTrackingSteps && returnTokenStep ? (
                 <form
                   action={updateAction}
                   encType="multipart/form-data"
@@ -3161,11 +3434,15 @@ export function FclImportWorkspace({
                     }
                   >
                     <div className="space-y-3">
-                      {returnTokenRows.map((row, index) => (
-                        <div
-                          key={`return-${row.container_number}-${index}`}
-                          className="rounded-2xl border border-slate-200 bg-white p-4"
-                        >
+                      {returnTokenRows.map((row, index) => {
+                        const eligible =
+                          returnTokenReadyFlags[index] ||
+                          !!row.return_token_date?.trim();
+                        return (
+                          <div
+                            key={`return-${row.container_number}-${index}`}
+                            className="rounded-2xl border border-slate-200 bg-white p-4"
+                          >
                           <div className="text-sm font-semibold text-slate-900">
                             {row.container_number || `#${index + 1}`}
                           </div>
@@ -3191,7 +3468,7 @@ export function FclImportWorkspace({
                                   "return_token_date",
                                 ])}
                                 defaultValue={row.return_token_date ?? ""}
-                                disabled={!canEditStep(returnTokenStep)}
+                                disabled={!canEditStep(returnTokenStep) || !eligible}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                                />
                             </label>
@@ -3206,7 +3483,7 @@ export function FclImportWorkspace({
                                   String(index),
                                   "return_token_file",
                                 ])}
-                                disabled={!canEditStep(returnTokenStep)}
+                                disabled={!canEditStep(returnTokenStep) || !eligible}
                                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm disabled:bg-slate-100"
                               />
                               {renderFileMeta(returnTokenStep.id, [
@@ -3216,8 +3493,14 @@ export function FclImportWorkspace({
                               ])}
                             </label>
                           </div>
+                          {!eligible ? (
+                            <div className="mt-2 text-xs text-slate-500">
+                              Complete token booking first for this container.
+                            </div>
+                          ) : null}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </StepCard>
                 </form>

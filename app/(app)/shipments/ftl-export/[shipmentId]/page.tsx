@@ -8,6 +8,8 @@ import {
   type FtlMainTab,
   type FtlTrackingTab,
 } from "@/components/shipments/ftl-export/FtlExportWorkspace";
+import { OpenDocRequestsNotice } from "@/components/shipments/shared/OpenDocRequestsNotice";
+import { WorkflowDocumentsHub } from "@/components/shipments/shared/WorkflowDocumentsHub";
 import { requireUser } from "@/lib/auth";
 import { listDocumentRequests, listDocuments, type DocumentRow } from "@/lib/data/documents";
 import { listParties } from "@/lib/data/parties";
@@ -25,7 +27,15 @@ import {
 } from "@/lib/ftlExport/constants";
 import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
+import {
+  deleteDocumentAction,
+  requestDocumentAction,
+  reviewDocumentAction,
+  updateDocumentFlagsAction,
+  uploadDocumentAction,
+} from "../../[shipmentId]/actions";
 import { updateFtlStepAction } from "./actions";
+import { listShipmentDocumentTypeOptions } from "@/lib/shipments/documentTypeOptions";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -46,7 +56,14 @@ const MAIN_TABS: readonly FtlMainTab[] = [
   "tracking",
 ];
 const INVOICE_TABS: readonly FtlInvoiceTab[] = ["imports", "invoice", "stock"];
-const TRACKING_TABS: readonly FtlTrackingTab[] = ["uae", "ksa", "jordan", "syria"];
+const TRACKING_TABS: readonly FtlTrackingTab[] = [
+  "uae",
+  "ksa",
+  "jordan",
+  "syria",
+  "mushtarakah",
+  "lebanon",
+];
 
 type ShipmentPageProps = {
   params: Promise<{ shipmentId: string }>;
@@ -178,7 +195,7 @@ export default async function FtlExportShipmentPage({
     }
   }
 
-  const [docs, docRequests, trackingToken, importCandidates, brokers] = await Promise.all([
+  const [docs, docRequests, trackingToken, importCandidates, brokers, customers] = await Promise.all([
     listDocuments(id),
     listDocumentRequests(id),
     getTrackingTokenForShipment(id),
@@ -188,6 +205,7 @@ export default async function FtlExportShipmentPage({
       currentShipmentId: id,
     }),
     listParties({ type: "CUSTOMS_BROKER" }),
+    listParties({ type: "CUSTOMER" }),
   ]);
 
   const stepData = steps.map((step) => ({
@@ -202,6 +220,7 @@ export default async function FtlExportShipmentPage({
   const hasTemplateSteps = requiredSteps.every((name) =>
     stepData.some((step) => step.name === name),
   );
+  const workflowDocumentTypeOptions = listShipmentDocumentTypeOptions(steps);
 
   if (!hasTemplateSteps) {
     return (
@@ -237,6 +256,15 @@ export default async function FtlExportShipmentPage({
   const initialTrackingTab = asTrackingTab(
     typeof resolved.tracking === "string" ? resolved.tracking : undefined,
   );
+  const activeMainTab = initialTab ?? "plan";
+  const docsParams = new URLSearchParams();
+  docsParams.set("tab", activeMainTab);
+  if (activeMainTab === "invoice") {
+    docsParams.set("invoice", initialInvoiceTab ?? "imports");
+  } else if (activeMainTab === "tracking") {
+    docsParams.set("tracking", initialTrackingTab ?? "uae");
+  }
+  const docsReturnTo = `/shipments/ftl-export/${shipment.id}?${docsParams.toString()}`;
 
   const openDocRequestTypes = docRequests
     .filter((request) => request.status === "OPEN")
@@ -249,16 +277,13 @@ export default async function FtlExportShipmentPage({
           {errorMessage(error)}
         </div>
       ) : null}
-      {openDocRequestTypes.length ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-          Open customer document requests: {openDocRequestTypes.join(", ")}
-        </div>
-      ) : null}
+      <OpenDocRequestsNotice shipmentId={shipment.id} requestTypes={openDocRequestTypes} />
       <FtlExportWorkspace
         headingClassName={headingFont.className}
         shipment={shipment}
         steps={stepData}
         brokers={brokers.map((broker) => ({ id: broker.id, name: broker.name }))}
+        customers={customers.map((customer) => ({ id: customer.id, name: customer.name }))}
         latestDocsByType={buildLatestDocMap(docs)}
         importCandidates={importCandidates}
         trackingToken={trackingToken}
@@ -268,6 +293,33 @@ export default async function FtlExportShipmentPage({
         initialTab={initialTab}
         initialInvoiceTab={initialInvoiceTab}
         initialTrackingTab={initialTrackingTab}
+      />
+      <WorkflowDocumentsHub
+        shipmentId={shipment.id}
+        docs={docs.map((doc) => ({
+          id: doc.id,
+          document_type: String(doc.document_type),
+          file_name: doc.file_name,
+          uploaded_at: doc.uploaded_at,
+          source: doc.source,
+          is_required: doc.is_required,
+          is_received: doc.is_received,
+          share_with_customer: doc.share_with_customer,
+          review_status: doc.review_status,
+        }))}
+        docRequests={docRequests.map((request) => ({
+          id: request.id,
+          document_type: String(request.document_type),
+          status: request.status,
+        }))}
+        documentTypeOptions={workflowDocumentTypeOptions}
+        canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        returnTo={docsReturnTo}
+        uploadDocumentAction={uploadDocumentAction.bind(null, shipment.id)}
+        requestDocumentAction={requestDocumentAction.bind(null, shipment.id)}
+        reviewDocumentAction={reviewDocumentAction.bind(null, shipment.id)}
+        updateDocumentFlagsAction={updateDocumentFlagsAction.bind(null, shipment.id)}
+        deleteDocumentAction={deleteDocumentAction.bind(null, shipment.id)}
       />
     </div>
   );

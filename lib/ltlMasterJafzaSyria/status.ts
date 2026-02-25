@@ -5,7 +5,7 @@ import {
   parseTruckBookingRows,
 } from "@/lib/ftlExport/helpers";
 import {
-  LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+  LTL_MASTER_SERVICE_TYPE_TO_ROUTE,
   LTL_MASTER_JAFZA_SYRIA_STEP_NAMES,
   LTL_SUBSHIPMENT_STEP_NAMES,
 } from "./constants";
@@ -137,8 +137,23 @@ export function computeLtlMasterStatuses(input: {
   const creationStep = input.stepsByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.shipmentCreation];
   const creationValues = toRecord(creationStep?.values ?? {});
   const serviceType = getString(creationValues.service_type);
+  const routeIdRaw = getString(creationValues.route_id);
+  const routeId =
+    routeIdRaw === "JAFZA_TO_SYRIA" ||
+    routeIdRaw === "JAFZA_TO_KSA" ||
+    routeIdRaw === "JAFZA_TO_MUSHTARAKAH"
+      ? routeIdRaw
+      : serviceType &&
+        Object.prototype.hasOwnProperty.call(LTL_MASTER_SERVICE_TYPE_TO_ROUTE, serviceType)
+        ? LTL_MASTER_SERVICE_TYPE_TO_ROUTE[
+            serviceType as keyof typeof LTL_MASTER_SERVICE_TYPE_TO_ROUTE
+          ]
+        : "JAFZA_TO_SYRIA";
+  const validServiceType =
+    !!serviceType &&
+    Object.prototype.hasOwnProperty.call(LTL_MASTER_SERVICE_TYPE_TO_ROUTE, serviceType);
   statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.shipmentCreation] = statusByDoneAndTouched(
-    serviceType === LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+    validServiceType,
     hasAnyValue(creationValues),
   );
 
@@ -195,14 +210,39 @@ export function computeLtlMasterStatuses(input: {
   const customsStep =
     input.stepsByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation];
   const customsValues = toRecord(customsStep?.values ?? {});
-  const customsDone =
+  const modeDone = (prefix: "batha" | "masnaa") => {
+    const mode = getString(customsValues[`${prefix}_clearance_mode`]).toUpperCase();
+    if (mode === "CLIENT") {
+      return !!getString(customsValues[`${prefix}_client_final_choice`]);
+    }
+    if (mode === "ZAXON") {
+      return (
+        !!getString(customsValues[`${prefix}_agent_name`]) &&
+        !!getString(customsValues[`${prefix}_consignee_name`]) &&
+        !!getString(customsValues[`show_${prefix}_consignee_to_client`])
+      );
+    }
+    return false;
+  };
+  const coreUaeDone =
     !!getString(customsValues.jebel_ali_agent_name) &&
-    !!getString(customsValues.sila_agent_name) &&
-    !!getString(customsValues.batha_agent_name) &&
-    !!getString(customsValues.omari_agent_name) &&
-    getString(customsValues.naseeb_clearance_mode).toUpperCase() === "ZAXON" &&
-    !!getString(customsValues.naseeb_agent_name) &&
-    !!getString(customsValues.syria_consignee_name);
+    !!getString(customsValues.sila_agent_name);
+  const customsDone =
+    routeId === "JAFZA_TO_KSA"
+      ? coreUaeDone && modeDone("batha")
+      : routeId === "JAFZA_TO_MUSHTARAKAH"
+        ? coreUaeDone &&
+          !!getString(customsValues.batha_agent_name) &&
+          !!getString(customsValues.omari_agent_name) &&
+          !!getString(customsValues.mushtarakah_agent_name) &&
+          !!getString(customsValues.mushtarakah_consignee_name) &&
+          modeDone("masnaa")
+        : coreUaeDone &&
+          !!getString(customsValues.batha_agent_name) &&
+          !!getString(customsValues.omari_agent_name) &&
+          getString(customsValues.naseeb_clearance_mode).toUpperCase() === "ZAXON" &&
+          !!getString(customsValues.naseeb_agent_name) &&
+          !!getString(customsValues.syria_consignee_name);
   statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.customsAgentsAllocation] = statusByDoneAndTouched(
     customsDone,
     hasAnyValue(customsValues),
@@ -222,22 +262,46 @@ export function computeLtlMasterStatuses(input: {
   const ksaStep = input.stepsByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingKsa];
   const ksaValues = toRecord(ksaStep?.values ?? {});
   statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingKsa] = statusByDoneAndTouched(
-    checkpointDone(ksaValues, "hadietha_exit", "hadietha_exit_date"),
+    routeId === "JAFZA_TO_KSA"
+      ? checkpointDone(ksaValues, "batha_delivered", "batha_delivered_date")
+      : checkpointDone(ksaValues, "hadietha_exit", "hadietha_exit_date"),
     hasAnyValue(ksaValues),
   );
 
   const jordanStep = input.stepsByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan];
   const jordanValues = toRecord(jordanStep?.values ?? {});
   statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingJordan] = statusByDoneAndTouched(
-    checkpointDone(jordanValues, "jaber_exit", "jaber_exit_date"),
+    routeId === "JAFZA_TO_KSA"
+      ? true
+      : checkpointDone(jordanValues, "jaber_exit", "jaber_exit_date"),
     hasAnyValue(jordanValues),
   );
 
   const syriaStep = input.stepsByName[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria];
   const syriaValues = toRecord(syriaStep?.values ?? {});
   const syriaDone =
-    checkpointDone(syriaValues, "syria_delivered", "syria_delivered_date") &&
-    getString(syriaValues.syria_clearance_mode).toUpperCase() === "ZAXON";
+    routeId === "JAFZA_TO_KSA"
+      ? true
+      : routeId === "JAFZA_TO_MUSHTARAKAH"
+        ? checkpointDone(syriaValues, "mushtarakah_entered", "mushtarakah_entered_date") &&
+          checkpointDone(
+            syriaValues,
+            "mushtarakah_offloaded_warehouse",
+            "mushtarakah_offloaded_warehouse_date",
+          ) &&
+          checkpointDone(
+            syriaValues,
+            "mushtarakah_loaded_syrian_trucks",
+            "mushtarakah_loaded_syrian_trucks_date",
+          ) &&
+          checkpointDone(syriaValues, "mushtarakah_exit", "mushtarakah_exit_date") &&
+          checkpointDone(syriaValues, "naseeb_arrived", "naseeb_arrived_date") &&
+          checkpointDone(syriaValues, "naseeb_entered", "naseeb_entered_date") &&
+          checkpointDone(syriaValues, "masnaa_arrived", "masnaa_arrived_date") &&
+          checkpointDone(syriaValues, "masnaa_entered", "masnaa_entered_date") &&
+          checkpointDone(syriaValues, "masnaa_delivered", "masnaa_delivered_date")
+        : checkpointDone(syriaValues, "syria_delivered", "syria_delivered_date") &&
+          getString(syriaValues.syria_clearance_mode).toUpperCase() === "ZAXON";
   statuses[LTL_MASTER_JAFZA_SYRIA_STEP_NAMES.trackingSyria] = statusByDoneAndTouched(
     syriaDone,
     hasAnyValue(syriaValues),

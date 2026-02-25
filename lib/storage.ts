@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   DeleteObjectsCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
@@ -277,5 +278,29 @@ export async function removeShipmentUploads(shipmentId: number) {
   const folder = path.join(uploadsRoot, String(shipmentId));
   if (fs.existsSync(folder)) {
     fs.rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+export async function removeUpload(storagePath: string) {
+  const target = storagePath.trim();
+  if (!target) return;
+  await ensureUploadsConfigLoaded();
+
+  if (shouldUseS3()) {
+    try {
+      await getS3Client().send(
+        new DeleteObjectCommand({
+          Bucket: getUploadsBucket(),
+          Key: target,
+        }),
+      );
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    return;
+  }
+
+  if (fs.existsSync(target)) {
+    fs.rmSync(target, { force: true });
   }
 }

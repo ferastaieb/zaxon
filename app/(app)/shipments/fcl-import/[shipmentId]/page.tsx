@@ -2,9 +2,23 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
-import { FclImportWorkspace } from "@/components/shipments/fcl-import/FclImportWorkspace";
+import {
+  FclImportWorkspace,
+  type FclCustomsTab,
+  type FclMainTab,
+  type FclOrderTab,
+  type FclTrackingTab,
+} from "@/components/shipments/fcl-import/FclImportWorkspace";
+import { WorkflowDocumentsHub } from "@/components/shipments/shared/WorkflowDocumentsHub";
 import { requireUser } from "@/lib/auth";
 import { listDocumentRequests, listDocuments } from "@/lib/data/documents";
+import {
+  deleteDocumentAction,
+  requestDocumentAction,
+  reviewDocumentAction,
+  updateDocumentFlagsAction,
+  uploadDocumentAction,
+} from "../../[shipmentId]/actions";
 import {
   getShipment,
   getTrackingTokenForShipment,
@@ -23,6 +37,7 @@ import {
 import { ensureFclImportTemplate } from "@/lib/fclImport/template";
 import type { DocumentRow } from "@/lib/data/documents";
 import { requestFclDocumentAction, updateFclStepAction } from "./actions";
+import { listShipmentDocumentTypeOptions } from "@/lib/shipments/documentTypeOptions";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -36,6 +51,7 @@ const bodyFont = IBM_Plex_Sans({
 
 type ShipmentPageProps = {
   params: Promise<{ shipmentId: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function buildLatestDocMap(docs: DocumentRow[]) {
@@ -68,7 +84,68 @@ function buildLatestDocMap(docs: DocumentRow[]) {
   return latest;
 }
 
-export default async function FclImportShipmentPage({ params }: ShipmentPageProps) {
+function readParam(
+  params: Record<string, string | string[] | undefined>,
+  key: string,
+) {
+  const value = params[key];
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function asMainTab(value: string | undefined): FclMainTab | undefined {
+  if (!value) return undefined;
+  if (value === "order-overview" || value === "tracking" || value === "customs-clearance") {
+    return value;
+  }
+  return undefined;
+}
+
+function asOrderTab(value: string | undefined): FclOrderTab | undefined {
+  if (!value) return undefined;
+  if (value === "order-received" || value === "container-list") {
+    return value;
+  }
+  return undefined;
+}
+
+function asTrackingTab(value: string | undefined): FclTrackingTab | undefined {
+  if (!value) return undefined;
+  if (value === "vessel" || value === "container") {
+    return value;
+  }
+  return undefined;
+}
+
+function asCustomsTab(value: string | undefined): FclCustomsTab | undefined {
+  if (!value) return undefined;
+  if (
+    value === "bl" ||
+    value === "delivery-order" ||
+    value === "commercial-invoice" ||
+    value === "bill-of-entry"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function errorMessage(error: string | undefined) {
+  if (!error) return null;
+  if (error === "tracking_sequence") {
+    return "Tracking is sequential. Complete the previous checkpoint for each container first.";
+  }
+  if (error === "invalid") {
+    return "Invalid request data.";
+  }
+  return "Could not save changes.";
+}
+
+export default async function FclImportShipmentPage({
+  params,
+  searchParams,
+}: ShipmentPageProps) {
   const user = await requireUser();
   const { shipmentId } = await params;
   const id = Number(shipmentId);
@@ -135,6 +212,7 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
   const hasTemplateSteps = requiredSteps.every((name) =>
     stepData.some((step) => step.name === name),
   );
+  const workflowDocumentTypeOptions = listShipmentDocumentTypeOptions(steps);
 
   if (!hasTemplateSteps) {
     return (
@@ -160,8 +238,31 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
     );
   }
 
+  const resolved = searchParams ? await Promise.resolve(searchParams) : {};
+  const initialTab = asMainTab(readParam(resolved, "tab"));
+  const initialOrderTab = asOrderTab(readParam(resolved, "orderTab"));
+  const initialTrackingTab = asTrackingTab(readParam(resolved, "trackingTab"));
+  const initialCustomsTab = asCustomsTab(readParam(resolved, "customsTab"));
+  const error = readParam(resolved, "error");
+  const activeMainTab = initialTab ?? "order-overview";
+  const docsParams = new URLSearchParams();
+  docsParams.set("tab", activeMainTab);
+  if (activeMainTab === "order-overview") {
+    docsParams.set("orderTab", initialOrderTab ?? "order-received");
+  } else if (activeMainTab === "tracking") {
+    docsParams.set("trackingTab", initialTrackingTab ?? "vessel");
+  } else {
+    docsParams.set("customsTab", initialCustomsTab ?? "bl");
+  }
+  const docsReturnTo = `/shipments/fcl-import/${shipment.id}?${docsParams.toString()}`;
+
   return (
-    <div className={`${bodyFont.className} min-h-screen`}>
+    <div className={`${bodyFont.className} min-h-screen space-y-4`}>
+      {errorMessage(error) ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          {errorMessage(error)}
+        </div>
+      ) : null}
       <FclImportWorkspace
         headingClassName={headingFont.className}
         shipment={shipment}
@@ -176,6 +277,37 @@ export default async function FclImportShipmentPage({ params }: ShipmentPageProp
         canAdminEdit={user.role === "ADMIN"}
         updateAction={updateFclStepAction.bind(null, shipment.id)}
         requestDocumentAction={requestFclDocumentAction.bind(null, shipment.id)}
+        initialTab={initialTab}
+        initialOrderTab={initialOrderTab}
+        initialTrackingTab={initialTrackingTab}
+        initialCustomsTab={initialCustomsTab}
+      />
+      <WorkflowDocumentsHub
+        shipmentId={shipment.id}
+        docs={docs.map((doc) => ({
+          id: doc.id,
+          document_type: String(doc.document_type),
+          file_name: doc.file_name,
+          uploaded_at: doc.uploaded_at,
+          source: doc.source,
+          is_required: doc.is_required,
+          is_received: doc.is_received,
+          share_with_customer: doc.share_with_customer,
+          review_status: doc.review_status,
+        }))}
+        docRequests={docRequests.map((request) => ({
+          id: request.id,
+          document_type: String(request.document_type),
+          status: request.status,
+        }))}
+        documentTypeOptions={workflowDocumentTypeOptions}
+        canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        returnTo={docsReturnTo}
+        uploadDocumentAction={uploadDocumentAction.bind(null, shipment.id)}
+        requestDocumentAction={requestDocumentAction.bind(null, shipment.id)}
+        reviewDocumentAction={reviewDocumentAction.bind(null, shipment.id)}
+        updateDocumentFlagsAction={updateDocumentFlagsAction.bind(null, shipment.id)}
+        deleteDocumentAction={deleteDocumentAction.bind(null, shipment.id)}
       />
     </div>
   );

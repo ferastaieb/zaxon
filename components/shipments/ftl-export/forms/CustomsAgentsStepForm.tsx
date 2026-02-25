@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
+import {
+  jafzaRouteById,
+  type JafzaCustomsBorderNode,
+  type JafzaLandRouteId,
+} from "@/lib/routes/jafzaLandRoutes";
 import type { FtlStepData } from "../types";
 import { fieldName, stringValue } from "../fieldNames";
 import { SectionFrame } from "./SectionFrame";
@@ -13,105 +18,111 @@ type Props = {
   canEdit: boolean;
   isAdmin: boolean;
   brokers: Array<{ id: number; name: string }>;
+  consigneeParties: Array<{ id: number; name: string }>;
+  routeId?: JafzaLandRouteId;
   naseebModeLock?: "ZAXON" | "CLIENT";
 };
 
-type BorderFieldKey =
-  | "jebel_ali_agent_name"
-  | "sila_agent_name"
-  | "batha_agent_name"
-  | "omari_agent_name"
-  | "naseeb_agent_name";
+type BrokerOption = { id: number; name: string };
+type ConsigneeOption = { id: number; name: string };
 
-type ActiveNode = BorderFieldKey | "naseeb" | null;
-
-type BorderNode = {
-  id: string;
-  label: string;
-  country: string;
-  kind: "static" | "agent" | "naseeb";
-  fieldKey?: BorderFieldKey;
-  staticValue?: string;
+type AddPartyState = {
+  open: boolean;
+  type: "CUSTOMS_BROKER" | "CUSTOMER";
+  targetField?: string;
+  targetPartyIdField?: string;
+  targetNameField?: string;
 };
 
-type BrokerOption = {
-  id: number;
-  name: string;
-};
+const ALL_FIELDS = [
+  "jebel_ali_agent_name",
+  "sila_agent_name",
+  "batha_agent_name",
+  "omari_agent_name",
+  "naseeb_agent_name",
+  "naseeb_clearance_mode",
+  "syria_consignee_party_id",
+  "syria_consignee_name",
+  "show_syria_consignee_to_client",
+  "naseeb_client_final_choice",
+  "batha_clearance_mode",
+  "batha_consignee_party_id",
+  "batha_consignee_name",
+  "show_batha_consignee_to_client",
+  "batha_client_final_choice",
+  "mushtarakah_agent_name",
+  "mushtarakah_consignee_party_id",
+  "mushtarakah_consignee_name",
+  "masnaa_clearance_mode",
+  "masnaa_agent_name",
+  "masnaa_consignee_party_id",
+  "masnaa_consignee_name",
+  "show_masnaa_consignee_to_client",
+  "masnaa_client_final_choice",
+] as const;
 
-function normalizeBrokerOptions(input: BrokerOption[]) {
-  const byName = new Map<string, BrokerOption>();
-  for (const broker of input) {
-    const name = broker.name.trim();
+function dedupeByName<T extends { id: number; name: string }>(items: T[]) {
+  const byName = new Map<string, T>();
+  for (const item of items) {
+    const name = item.name.trim();
     if (!name) continue;
     const key = name.toLowerCase();
     if (byName.has(key)) continue;
-    byName.set(key, {
-      id: broker.id,
-      name,
-    });
+    byName.set(key, { ...item, name } as T);
   }
-  return Array.from(byName.values()).sort((left, right) =>
-    left.name.localeCompare(right.name),
-  );
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function brokerOptionsWithCurrent(
-  options: BrokerOption[],
-  currentValue: string,
-): BrokerOption[] {
+function withCurrent(options: BrokerOption[], currentValue: string): BrokerOption[] {
   const trimmed = currentValue.trim();
   if (!trimmed) return options;
-  const exists = options.some(
-    (option) => option.name.toLowerCase() === trimmed.toLowerCase(),
-  );
+  const exists = options.some((option) => option.name.toLowerCase() === trimmed.toLowerCase());
   if (exists) return options;
   return [{ id: -1, name: trimmed }, ...options];
 }
 
-const BASE_CHAIN: BorderNode[] = [
-  {
-    id: "warehouse",
-    label: "Dubai Warehouse",
-    country: "AE",
-    kind: "static",
-    staticValue: "Origin",
-  },
-  {
-    id: "jebel_ali",
-    label: "Jebel Ali FZ",
-    country: "AE",
-    kind: "agent",
-    fieldKey: "jebel_ali_agent_name",
-  },
-  {
-    id: "sila",
-    label: "Sila Border",
-    country: "AE",
-    kind: "agent",
-    fieldKey: "sila_agent_name",
-  },
-  {
-    id: "batha",
-    label: "Batha Border",
-    country: "SA",
-    kind: "agent",
-    fieldKey: "batha_agent_name",
-  },
-  {
-    id: "omari",
-    label: "Omari Border",
-    country: "JO",
-    kind: "agent",
-    fieldKey: "omari_agent_name",
-  },
-  {
-    id: "naseeb",
-    label: "Naseeb Border",
-    country: "SY",
-    kind: "naseeb",
-  },
-];
+function nodeMode(values: Record<string, string>, node: JafzaCustomsBorderNode) {
+  if (!node.clearanceModeField) return "";
+  return (values[node.clearanceModeField] ?? "").toUpperCase();
+}
+
+function nodeSummary(values: Record<string, string>, node: JafzaCustomsBorderNode) {
+  if (node.kind === "agent") {
+    const agent = node.agentField ? values[node.agentField] ?? "" : "";
+    const consignee = node.consigneeNameField ? values[node.consigneeNameField] ?? "" : "";
+    if (agent && consignee) return `${agent} | ${consignee}`;
+    if (agent) return agent;
+    if (consignee) return consignee;
+    return "Click to configure";
+  }
+  const mode = nodeMode(values, node);
+  if (!mode) return "Click to configure";
+  if (mode === "CLIENT") {
+    const finalChoice = node.clientFinalChoiceField ? values[node.clientFinalChoiceField] ?? "" : "";
+    return `Client${finalChoice ? ` | ${finalChoice}` : " | Final choice required"}`;
+  }
+  const agent = node.agentField ? values[node.agentField] ?? "" : "";
+  return `Zaxon${agent ? ` | ${agent}` : " | Agent required"}`;
+}
+
+function nodeDone(values: Record<string, string>, node: JafzaCustomsBorderNode) {
+  if (node.kind === "agent") {
+    const agent = !!(node.agentField ? values[node.agentField]?.trim() : "");
+    const consignee = node.consigneeNameField ? !!values[node.consigneeNameField]?.trim() : true;
+    return agent && consignee;
+  }
+  const mode = nodeMode(values, node);
+  if (mode === "CLIENT") {
+    return !!(node.clientFinalChoiceField ? values[node.clientFinalChoiceField]?.trim() : "");
+  }
+  if (mode === "ZAXON") {
+    const agent = !!(node.agentField ? values[node.agentField]?.trim() : "");
+    const consignee = !!(node.consigneeNameField ? values[node.consigneeNameField]?.trim() : "");
+    const show = !!(node.showConsigneeField ? values[node.showConsigneeField]?.trim() : "");
+    return agent && consignee && show;
+  }
+  return false;
+}
 
 export function CustomsAgentsStepForm({
   step,
@@ -120,261 +131,143 @@ export function CustomsAgentsStepForm({
   canEdit,
   isAdmin,
   brokers,
+  consigneeParties,
+  routeId = "JAFZA_TO_SYRIA",
   naseebModeLock,
 }: Props) {
-  const [agents, setAgents] = useState<Record<BorderFieldKey, string>>({
-    jebel_ali_agent_name: stringValue(step.values.jebel_ali_agent_name),
-    sila_agent_name: stringValue(step.values.sila_agent_name),
-    batha_agent_name: stringValue(step.values.batha_agent_name),
-    omari_agent_name: stringValue(step.values.omari_agent_name),
-    naseeb_agent_name: stringValue(step.values.naseeb_agent_name),
+  const route = jafzaRouteById(routeId);
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const next: Record<string, string> = {};
+    for (const key of ALL_FIELDS) next[key] = stringValue(step.values[key]);
+    if (naseebModeLock) next.naseeb_clearance_mode = naseebModeLock;
+    return next;
   });
-  const [naseebMode, setNaseebMode] = useState(
-    stringValue(step.values.naseeb_clearance_mode).toUpperCase(),
-  );
-  const [syriaConsignee, setSyriaConsignee] = useState(
-    stringValue(step.values.syria_consignee_name),
-  );
-  const [showConsignee, setShowConsignee] = useState(
-    stringValue(step.values.show_syria_consignee_to_client).toUpperCase(),
-  );
-  const [clientFinalChoice, setClientFinalChoice] = useState(
-    stringValue(step.values.naseeb_client_final_choice),
-  );
-  const [brokerOptions, setBrokerOptions] = useState<BrokerOption[]>(() =>
-    normalizeBrokerOptions(brokers),
-  );
-  const [showBrokerModal, setShowBrokerModal] = useState(false);
-  const [brokerTargetKey, setBrokerTargetKey] = useState<BorderFieldKey | null>(
-    null,
-  );
-  const [brokerForm, setBrokerForm] = useState({
-    name: "",
-    phone: "",
-    email: "",
-    address: "",
-    notes: "",
-  });
-  const [brokerError, setBrokerError] = useState<string | null>(null);
-  const [brokerSubmitting, setBrokerSubmitting] = useState(false);
   const [notes, setNotes] = useState(step.notes ?? "");
-  const [activeNode, setActiveNode] = useState<ActiveNode>(null);
-  const effectiveNaseebMode = naseebModeLock ?? naseebMode;
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [brokersList, setBrokersList] = useState<BrokerOption[]>(() => dedupeByName(brokers));
+  const [consigneesList, setConsigneesList] = useState<ConsigneeOption[]>(() =>
+    dedupeByName(consigneeParties),
+  );
 
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const activeInputRef = useRef<HTMLInputElement | null>(null);
-  const activeSelectRef = useRef<HTMLSelectElement | null>(null);
-  const chain = useMemo<BorderNode[]>(() => BASE_CHAIN, []);
+  const [addParty, setAddParty] = useState<AddPartyState>({
+    open: false,
+    type: "CUSTOMS_BROKER",
+  });
+  const [partyName, setPartyName] = useState("");
+  const [partyError, setPartyError] = useState<string | null>(null);
+  const [partySubmitting, setPartySubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!activeNode) return;
-    if (showBrokerModal) return;
-    const focusTarget = activeInputRef.current ?? activeSelectRef.current;
-    focusTarget?.focus();
+  const chain = useMemo(
+    () => [
+      { id: "warehouse", label: "Dubai Warehouse", country: "AE", kind: "static" as const },
+      ...route.customsChain,
+    ],
+    [route.customsChain],
+  );
 
-    const onMouseDown = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (panelRef.current?.contains(target)) return;
-      setActiveNode(null);
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [activeNode, showBrokerModal]);
+  const activeNode = route.customsChain.find((node) => node.id === activeNodeId) ?? null;
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (showBrokerModal) {
-          if (!brokerSubmitting) {
-            setShowBrokerModal(false);
-          }
-          return;
-        }
-        setActiveNode(null);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showBrokerModal, brokerSubmitting]);
-
-  const setBorderAgent = (key: BorderFieldKey, value: string) => {
-    setAgents((prev) => ({ ...prev, [key]: value }));
+  const setField = (key: string, value: string) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
   };
 
-  const openBrokerModal = (targetKey: BorderFieldKey) => {
+  const pickConsignee = (partyIdField: string, nameField: string, partyId: string) => {
+    const id = Number(partyId);
+    const party = consigneesList.find((option) => option.id === id);
+    setValues((prev) => ({
+      ...prev,
+      [partyIdField]: partyId,
+      [nameField]: party?.name ?? "",
+    }));
+  };
+
+  const openAddBroker = (targetField: string) => {
     if (!canEdit) return;
-    setBrokerTargetKey(targetKey);
-    setBrokerError(null);
-    setBrokerForm({
-      name: "",
-      phone: "",
-      email: "",
-      address: "",
-      notes: "",
+    setPartyName("");
+    setPartyError(null);
+    setAddParty({ open: true, type: "CUSTOMS_BROKER", targetField });
+  };
+
+  const openAddConsignee = (targetPartyIdField: string, targetNameField: string) => {
+    if (!canEdit) return;
+    setPartyName("");
+    setPartyError(null);
+    setAddParty({
+      open: true,
+      type: "CUSTOMER",
+      targetPartyIdField,
+      targetNameField,
     });
-    setShowBrokerModal(true);
   };
 
-  const closeBrokerModal = () => {
-    if (brokerSubmitting) return;
-    setShowBrokerModal(false);
-    setBrokerError(null);
-  };
-
-  const updateBrokerForm = (
-    key: keyof typeof brokerForm,
-    value: string,
-  ) => {
-    setBrokerForm((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const createBroker = async () => {
-    if (!canEdit || brokerSubmitting) return;
-    const name = brokerForm.name.trim();
-    if (!name) {
-      setBrokerError("Broker name is required.");
+  const createParty = async () => {
+    const name = partyName.trim();
+    if (!name || partySubmitting) {
+      if (!name) setPartyError("Name is required.");
       return;
     }
-
-    setBrokerSubmitting(true);
-    setBrokerError(null);
+    setPartySubmitting(true);
+    setPartyError(null);
 
     try {
       const response = await fetch("/api/parties", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          type: "CUSTOMS_BROKER",
+          type: addParty.type,
           name,
-          phone: brokerForm.phone.trim() || null,
-          email: brokerForm.email.trim() || null,
-          address: brokerForm.address.trim() || null,
-          notes: brokerForm.notes.trim() || null,
         }),
       });
-
       if (!response.ok) {
-        if (response.status === 401) {
-          setBrokerError("Session expired. Please sign in again.");
-        } else if (response.status === 403) {
-          setBrokerError("You do not have permission to create brokers.");
-        } else {
-          setBrokerError("Unable to create broker.");
-        }
+        setPartyError("Unable to create party.");
         return;
       }
-
-      const payload = (await response.json()) as {
-        party?: { id: number; name: string };
-      };
+      const payload = (await response.json()) as { party?: { id: number; name: string } };
       const created = payload.party;
-      if (!created || !created.name.trim()) {
-        setBrokerError("Unable to create broker.");
+      if (!created?.name) {
+        setPartyError("Unable to create party.");
         return;
       }
 
-      setBrokerOptions((prev) =>
-        normalizeBrokerOptions([
-          ...prev,
-          {
-            id: created.id,
-            name: created.name,
-          },
-        ]),
-      );
-
-      if (brokerTargetKey) {
-        setBorderAgent(brokerTargetKey, created.name.trim());
+      if (addParty.type === "CUSTOMS_BROKER") {
+        setBrokersList((prev) => dedupeByName([...prev, { id: created.id, name: created.name }]));
+        if (addParty.targetField) setField(addParty.targetField, created.name.trim());
+      } else {
+        setConsigneesList((prev) => dedupeByName([...prev, { id: created.id, name: created.name }]));
+        if (addParty.targetPartyIdField && addParty.targetNameField) {
+          setValues((prev) => ({
+            ...prev,
+            [addParty.targetPartyIdField!]: String(created.id),
+            [addParty.targetNameField!]: created.name.trim(),
+          }));
+        }
       }
 
-      setShowBrokerModal(false);
-      setBrokerError(null);
+      setAddParty((prev) => ({ ...prev, open: false }));
     } catch {
-      setBrokerError("Unable to create broker.");
+      setPartyError("Unable to create party.");
     } finally {
-      setBrokerSubmitting(false);
+      setPartySubmitting(false);
     }
   };
-
-  const isNaseebComplete =
-    effectiveNaseebMode === "ZAXON"
-      ? !!agents.naseeb_agent_name.trim() &&
-        !!syriaConsignee.trim() &&
-        !!showConsignee.trim()
-      : effectiveNaseebMode === "CLIENT"
-        ? !!clientFinalChoice.trim()
-        : false;
-
-  const naseebSummary =
-    effectiveNaseebMode === "ZAXON"
-      ? `Zaxon${agents.naseeb_agent_name.trim() ? ` | ${agents.naseeb_agent_name}` : " | Agent required"}`
-      : effectiveNaseebMode === "CLIENT"
-        ? `Client${clientFinalChoice.trim() ? ` | ${clientFinalChoice}` : " | Final choice required"}`
-        : "Click to configure";
 
   return (
     <form action={updateAction}>
       <input type="hidden" name="stepId" value={step.id} />
       <input type="hidden" name="returnTo" value={returnTo} />
-      <input
-        name={fieldName(["jebel_ali_agent_name"])}
-        value={agents.jebel_ali_agent_name}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["sila_agent_name"])}
-        value={agents.sila_agent_name}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["batha_agent_name"])}
-        value={agents.batha_agent_name}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["omari_agent_name"])}
-        value={agents.omari_agent_name}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["naseeb_agent_name"])}
-        value={agents.naseeb_agent_name}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["naseeb_clearance_mode"])}
-        value={effectiveNaseebMode}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["syria_consignee_name"])}
-        value={syriaConsignee}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["show_syria_consignee_to_client"])}
-        value={showConsignee}
-        readOnly
-        hidden
-      />
-      <input
-        name={fieldName(["naseeb_client_final_choice"])}
-        value={effectiveNaseebMode === "CLIENT" ? clientFinalChoice : ""}
-        readOnly
-        hidden
-      />
+      {ALL_FIELDS.map((fieldKey) => (
+        <input
+          key={`hidden-${fieldKey}`}
+          name={fieldName([fieldKey])}
+          value={values[fieldKey] ?? ""}
+          readOnly
+          hidden
+        />
+      ))}
 
       <SectionFrame
         title="Customs Agents Allocation"
-        description="Assign clearing agents from customs brokers by clicking each border checkpoint on the journey map."
+        description="Assign route-specific customs points by selecting each border checkpoint."
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
@@ -386,107 +279,36 @@ export function CustomsAgentsStepForm({
             Border chain
           </div>
           <div className="w-full overflow-x-auto overflow-y-visible pb-1">
-            <div className="inline-flex w-max min-w-full flex-nowrap items-end gap-1 px-1 pr-2 pt-24">
+            <div className="inline-flex w-max min-w-full flex-nowrap items-end gap-1 px-1 pr-2 pt-8">
               {chain.map((node, index) => {
-                const isEditable = node.kind !== "static";
-                const agentName =
-                  node.kind === "agent" && node.fieldKey
-                    ? agents[node.fieldKey]
-                    : node.kind === "naseeb"
-                      ? naseebSummary
-                      : node.staticValue || "";
-                const complete =
-                  node.kind === "naseeb" ? isNaseebComplete : !!agentName.trim();
-                const isAgentActive =
-                  node.kind === "agent" &&
-                  !!node.fieldKey &&
-                  activeNode === node.fieldKey;
-
+                const isStatic = node.kind === "static";
+                const summary = isStatic ? "Origin" : nodeSummary(values, node as JafzaCustomsBorderNode);
+                const done = isStatic ? true : nodeDone(values, node as JafzaCustomsBorderNode);
                 return (
                   <div key={node.id} className="relative flex shrink-0 items-center gap-1">
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (node.kind === "agent" && node.fieldKey) {
-                            setActiveNode(node.fieldKey);
-                            return;
-                          }
-                          if (node.kind === "naseeb") {
-                            setActiveNode("naseeb");
-                          }
-                        }}
-                        disabled={!canEdit || !isEditable}
-                        className={`w-32 shrink-0 rounded-lg border px-3 py-2 text-left transition ${
-                          complete
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                            : "border-zinc-300 bg-white text-zinc-700"
-                        } ${!isEditable ? "cursor-default" : ""} disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500`}
-                      >
-                        <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.14em] opacity-80">
-                          {node.country}
-                        </div>
-                        <div className="mt-1 whitespace-nowrap text-xs font-semibold">
-                          {node.label}
-                        </div>
-                        <div className="mt-1 min-h-4 truncate whitespace-nowrap text-[11px]">
-                          {agentName || (isEditable ? "Click to assign agent" : " ")}
-                        </div>
-                      </button>
-
-                      {isAgentActive && node.fieldKey ? (
-                        <div
-                          ref={panelRef}
-                          className="absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl"
-                        >
-                          <div className="mb-2 text-xs font-medium text-zinc-600">
-                            {node.label} agent
-                          </div>
-                          <select
-                            ref={activeSelectRef}
-                            value={agents[node.fieldKey]}
-                            onChange={(event) =>
-                              setBorderAgent(node.fieldKey!, event.target.value)
-                            }
-                            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                            disabled={!canEdit}
-                          >
-                            <option value="">Select broker</option>
-                            {brokerOptionsWithCurrent(
-                              brokerOptions,
-                              agents[node.fieldKey],
-                            ).map((broker) => (
-                              <option
-                                key={`${node.fieldKey}-${broker.id}-${broker.name}`}
-                                value={broker.name}
-                              >
-                                {broker.name}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="mt-2 flex items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openBrokerModal(node.fieldKey!)}
-                              disabled={!canEdit}
-                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
-                            >
-                              New broker
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveNode(null)}
-                              className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    {index < chain.length - 1 ? (
-                      <div className="h-[3px] w-5 rounded-full bg-zinc-300" />
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!isStatic && canEdit) setActiveNodeId(node.id);
+                      }}
+                      disabled={isStatic || !canEdit}
+                      className={`w-36 shrink-0 rounded-lg border px-3 py-2 text-left transition ${
+                        done
+                          ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                          : "border-zinc-300 bg-white text-zinc-700"
+                      } ${
+                        isStatic
+                          ? "cursor-default opacity-90"
+                          : "disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500"
+                      }`}
+                    >
+                      <div className="whitespace-nowrap text-[11px] uppercase tracking-[0.14em] opacity-80">
+                        {node.country}
+                      </div>
+                      <div className="mt-1 whitespace-nowrap text-xs font-semibold">{node.label}</div>
+                      <div className="mt-1 min-h-4 truncate whitespace-nowrap text-[11px]">{summary}</div>
+                    </button>
+                    {index < chain.length - 1 ? <div className="h-[3px] w-5 rounded-full bg-zinc-300" /> : null}
                   </div>
                 );
               })}
@@ -494,32 +316,27 @@ export function CustomsAgentsStepForm({
           </div>
         </div>
 
-        {activeNode === "naseeb" ? (
+        {activeNode ? (
           <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
             <button
               type="button"
-              aria-label="Close Naseeb modal"
-              onClick={() => setActiveNode(null)}
+              aria-label="Close border modal"
+              onClick={() => setActiveNodeId(null)}
               className="absolute inset-0 bg-black/40"
             />
             <div
-              ref={panelRef}
               role="dialog"
               aria-modal="true"
               className="relative z-10 w-full max-w-xl rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl"
             >
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.14em] text-zinc-500">
-                    Naseeb Border
-                  </div>
-                  <h4 className="mt-1 text-sm font-semibold text-zinc-900">
-                    Border details
-                  </h4>
+                  <div className="text-xs uppercase tracking-[0.14em] text-zinc-500">{activeNode.label}</div>
+                  <h4 className="mt-1 text-sm font-semibold text-zinc-900">Border details</h4>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setActiveNode(null)}
+                  onClick={() => setActiveNodeId(null)}
                   className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50"
                 >
                   Save
@@ -527,115 +344,194 @@ export function CustomsAgentsStepForm({
               </div>
 
               <div className="space-y-3">
-                <label className="block">
-                  <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                    Clearance mode *
-                  </div>
-                  <select
-                    ref={activeSelectRef}
-                    value={effectiveNaseebMode}
-                    onChange={(event) => setNaseebMode(event.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                    disabled={!canEdit || !!naseebModeLock}
-                  >
-                    {naseebModeLock ? (
-                      <option value={naseebModeLock}>
-                        {naseebModeLock === "ZAXON" ? "Zaxon" : "Client"}
-                      </option>
-                    ) : (
-                      <>
-                        <option value="">Select mode</option>
-                        <option value="ZAXON">Zaxon</option>
-                        <option value="CLIENT">Client</option>
-                      </>
-                    )}
-                  </select>
-                </label>
-
-                {effectiveNaseebMode === "ZAXON" ? (
+                {activeNode.kind === "clearance_mode" ? (
                   <>
                     <label className="block">
-                      <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                        Clearing agent name *
-                      </div>
+                      <div className="mb-1 text-[11px] font-medium text-zinc-500">Clearance mode *</div>
                       <select
-                        ref={activeSelectRef}
-                        value={agents.naseeb_agent_name}
-                        onChange={(event) =>
-                          setBorderAgent("naseeb_agent_name", event.target.value)
-                        }
+                        value={activeNode.clearanceModeField ? values[activeNode.clearanceModeField] ?? "" : ""}
+                        onChange={(event) => {
+                          if (!activeNode.clearanceModeField) return;
+                          if (
+                            activeNode.id === "naseeb" &&
+                            naseebModeLock &&
+                            event.target.value !== naseebModeLock
+                          ) {
+                            return;
+                          }
+                          setField(activeNode.clearanceModeField, event.target.value);
+                        }}
                         className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        disabled={!canEdit}
+                        disabled={!canEdit || (activeNode.id === "naseeb" && !!naseebModeLock)}
                       >
-                        <option value="">Select broker</option>
-                        {brokerOptionsWithCurrent(
-                          brokerOptions,
-                          agents.naseeb_agent_name,
-                        ).map((broker) => (
-                          <option
-                            key={`naseeb-${broker.id}-${broker.name}`}
-                            value={broker.name}
-                          >
-                            {broker.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => openBrokerModal("naseeb_agent_name")}
-                        disabled={!canEdit}
-                        className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
-                      >
-                        New broker
-                      </button>
-                    </label>
-                    <label className="block">
-                      <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                        Syria consignee name *
-                      </div>
-                      <input
-                        type="text"
-                        value={syriaConsignee}
-                        onChange={(event) => setSyriaConsignee(event.target.value)}
-                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        placeholder="Type consignee name"
-                        disabled={!canEdit}
-                      />
-                    </label>
-                    <label className="block">
-                      <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                        Show consignee to client? *
-                      </div>
-                      <select
-                        value={showConsignee}
-                        onChange={(event) => setShowConsignee(event.target.value)}
-                        className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        disabled={!canEdit}
-                      >
-                        <option value="">Select option</option>
-                        <option value="YES">Yes</option>
-                        <option value="NO">No</option>
+                        <option value="">Select mode</option>
+                        {activeNode.id === "naseeb" && naseebModeLock ? (
+                          <option value={naseebModeLock}>{naseebModeLock === "ZAXON" ? "Zaxon" : "Client"}</option>
+                        ) : (
+                          <>
+                            <option value="ZAXON">Zaxon</option>
+                            <option value="CLIENT">Client</option>
+                          </>
+                        )}
                       </select>
                     </label>
-                  </>
-                ) : null}
 
-                {effectiveNaseebMode === "CLIENT" ? (
-                  <label className="block">
-                    <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                      Client final choice *
-                    </div>
-                    <input
-                      ref={activeInputRef}
-                      type="text"
-                      value={clientFinalChoice}
-                      onChange={(event) => setClientFinalChoice(event.target.value)}
-                      className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                      placeholder="Type final choice"
-                      disabled={!canEdit}
-                    />
-                  </label>
-                ) : null}
+                    {nodeMode(values, activeNode) === "ZAXON" ? (
+                      <>
+                        {activeNode.agentField ? (
+                          <label className="block">
+                            <div className="mb-1 text-[11px] font-medium text-zinc-500">Clearing agent *</div>
+                            <select
+                              value={values[activeNode.agentField] ?? ""}
+                              onChange={(event) => setField(activeNode.agentField!, event.target.value)}
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                              disabled={!canEdit}
+                            >
+                              <option value="">Select broker</option>
+                              {withCurrent(brokersList, values[activeNode.agentField] ?? "").map((option) => (
+                                <option key={`${activeNode.id}-${option.id}-${option.name}`} value={option.name}>
+                                  {option.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => openAddBroker(activeNode.agentField!)}
+                              disabled={!canEdit}
+                              className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                            >
+                              New broker
+                            </button>
+                          </label>
+                        ) : null}
+
+                        {activeNode.consigneePartyIdField && activeNode.consigneeNameField ? (
+                          <label className="block">
+                            <div className="mb-1 text-[11px] font-medium text-zinc-500">Consignee *</div>
+                            <select
+                              value={values[activeNode.consigneePartyIdField] ?? ""}
+                              onChange={(event) =>
+                                pickConsignee(
+                                  activeNode.consigneePartyIdField!,
+                                  activeNode.consigneeNameField!,
+                                  event.target.value,
+                                )
+                              }
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                              disabled={!canEdit}
+                            >
+                              <option value="">Select consignee</option>
+                              {consigneesList.map((option) => (
+                                <option key={option.id} value={String(option.id)}>
+                                  {option.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => openAddConsignee(activeNode.consigneePartyIdField!, activeNode.consigneeNameField!)}
+                              disabled={!canEdit}
+                              className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                            >
+                              New consignee
+                            </button>
+                          </label>
+                        ) : null}
+
+                        {activeNode.showConsigneeField ? (
+                          <label className="block">
+                            <div className="mb-1 text-[11px] font-medium text-zinc-500">Show consignee to client *</div>
+                            <select
+                              value={values[activeNode.showConsigneeField] ?? ""}
+                              onChange={(event) => setField(activeNode.showConsigneeField!, event.target.value)}
+                              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                              disabled={!canEdit}
+                            >
+                              <option value="">Select option</option>
+                              <option value="YES">Yes</option>
+                              <option value="NO">No</option>
+                            </select>
+                          </label>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {nodeMode(values, activeNode) === "CLIENT" && activeNode.clientFinalChoiceField ? (
+                      <label className="block">
+                        <div className="mb-1 text-[11px] font-medium text-zinc-500">Client final choice *</div>
+                        <input
+                          type="text"
+                          value={values[activeNode.clientFinalChoiceField] ?? ""}
+                          onChange={(event) => setField(activeNode.clientFinalChoiceField!, event.target.value)}
+                          className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                          disabled={!canEdit}
+                        />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {activeNode.agentField ? (
+                      <label className="block">
+                        <div className="mb-1 text-[11px] font-medium text-zinc-500">Clearing agent *</div>
+                        <select
+                          value={values[activeNode.agentField] ?? ""}
+                          onChange={(event) => setField(activeNode.agentField!, event.target.value)}
+                          className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                          disabled={!canEdit}
+                        >
+                          <option value="">Select broker</option>
+                          {withCurrent(brokersList, values[activeNode.agentField] ?? "").map((option) => (
+                            <option key={`${activeNode.id}-${option.id}-${option.name}`} value={option.name}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => openAddBroker(activeNode.agentField!)}
+                          disabled={!canEdit}
+                          className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                        >
+                          New broker
+                        </button>
+                      </label>
+                    ) : null}
+
+                    {activeNode.consigneePartyIdField && activeNode.consigneeNameField ? (
+                      <label className="block">
+                        <div className="mb-1 text-[11px] font-medium text-zinc-500">Consignee *</div>
+                        <select
+                          value={values[activeNode.consigneePartyIdField] ?? ""}
+                          onChange={(event) =>
+                            pickConsignee(
+                              activeNode.consigneePartyIdField!,
+                              activeNode.consigneeNameField!,
+                              event.target.value,
+                            )
+                          }
+                          className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                          disabled={!canEdit}
+                        >
+                          <option value="">Select consignee</option>
+                          {consigneesList.map((option) => (
+                            <option key={option.id} value={String(option.id)}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => openAddConsignee(activeNode.consigneePartyIdField!, activeNode.consigneeNameField!)}
+                          disabled={!canEdit}
+                          className="mt-2 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+                        >
+                          New consignee
+                        </button>
+                      </label>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -653,121 +549,65 @@ export function CustomsAgentsStepForm({
         </label>
       </SectionFrame>
 
-      {showBrokerModal ? (
+      {addParty.open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
             type="button"
-            aria-label="Close broker modal"
-            onClick={closeBrokerModal}
+            aria-label="Close party modal"
+            onClick={() => setAddParty((prev) => ({ ...prev, open: false }))}
             className="absolute inset-0 bg-black/40"
           />
           <div className="relative z-10 w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.14em] text-zinc-500">
-                  Customs broker
+                  {addParty.type === "CUSTOMS_BROKER" ? "Customs broker" : "Consignee"}
                 </div>
-                <h4 className="mt-1 text-sm font-semibold text-zinc-900">
-                  Quick add
-                </h4>
+                <h4 className="mt-1 text-sm font-semibold text-zinc-900">Quick add</h4>
               </div>
               <button
                 type="button"
-                onClick={closeBrokerModal}
-                disabled={brokerSubmitting}
+                onClick={() => setAddParty((prev) => ({ ...prev, open: false }))}
+                disabled={partySubmitting}
                 className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
               >
                 Close
               </button>
             </div>
 
-            <div className="space-y-3">
-              <label className="block">
-                <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                  Broker name *
-                </div>
-                <input
-                  value={brokerForm.name}
-                  onChange={(event) => updateBrokerForm("name", event.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  disabled={brokerSubmitting}
-                />
-              </label>
+            <label className="block">
+              <div className="mb-1 text-[11px] font-medium text-zinc-500">Name *</div>
+              <input
+                value={partyName}
+                onChange={(event) => setPartyName(event.target.value)}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
+                disabled={partySubmitting}
+              />
+            </label>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                    Phone
-                  </div>
-                  <input
-                    value={brokerForm.phone}
-                    onChange={(event) => updateBrokerForm("phone", event.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                    disabled={brokerSubmitting}
-                  />
-                </label>
-                <label className="block">
-                  <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                    Email
-                  </div>
-                  <input
-                    value={brokerForm.email}
-                    onChange={(event) => updateBrokerForm("email", event.target.value)}
-                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                    disabled={brokerSubmitting}
-                  />
-                </label>
+            {partyError ? (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                {partyError}
               </div>
+            ) : null}
 
-              <label className="block">
-                <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                  Address
-                </div>
-                <input
-                  value={brokerForm.address}
-                  onChange={(event) => updateBrokerForm("address", event.target.value)}
-                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  disabled={brokerSubmitting}
-                />
-              </label>
-
-              <label className="block">
-                <div className="mb-1 text-[11px] font-medium text-zinc-500">
-                  Notes
-                </div>
-                <textarea
-                  value={brokerForm.notes}
-                  onChange={(event) => updateBrokerForm("notes", event.target.value)}
-                  rows={3}
-                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                  disabled={brokerSubmitting}
-                />
-              </label>
-
-              {brokerError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                  {brokerError}
-                </div>
-              ) : null}
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={createBroker}
-                  disabled={brokerSubmitting}
-                  className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
-                >
-                  {brokerSubmitting ? "Creating..." : "Create broker"}
-                </button>
-                <button
-                  type="button"
-                  onClick={closeBrokerModal}
-                  disabled={brokerSubmitting}
-                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
-                >
-                  Cancel
-                </button>
-              </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={createParty}
+                disabled={partySubmitting}
+                className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:bg-zinc-300"
+              >
+                {partySubmitting ? "Creating..." : "Create"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddParty((prev) => ({ ...prev, open: false }))}
+                disabled={partySubmitting}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-400"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>

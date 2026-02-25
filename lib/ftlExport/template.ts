@@ -7,8 +7,18 @@ import {
   createWorkflowTemplate,
   listTemplateSteps,
   listWorkflowTemplates,
+  updateTemplateStep,
 } from "@/lib/data/workflows";
 import { FTL_EXPORT_STEP_NAMES, FTL_EXPORT_TEMPLATE_NAME } from "./constants";
+
+function parseJsonValue<T>(raw: string, fallback: T): T {
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+}
 
 const truckGroup = (fields: StepFieldDefinition[]): StepFieldDefinition => ({
   id: "trucks",
@@ -451,10 +461,80 @@ const customsAgentsAllocationSchema: StepFieldSchema = {
       required: true,
     },
     {
+      id: "batha_clearance_mode",
+      label: "Batha border clearance mode",
+      type: "text",
+    },
+    {
+      id: "batha_consignee_party_id",
+      label: "Batha consignee party id",
+      type: "text",
+    },
+    {
+      id: "batha_consignee_name",
+      label: "Batha consignee name",
+      type: "text",
+    },
+    {
+      id: "show_batha_consignee_to_client",
+      label: "Show Batha consignee to client",
+      type: "text",
+    },
+    {
+      id: "batha_client_final_choice",
+      label: "Batha client final choice",
+      type: "text",
+    },
+    {
       id: "omari_agent_name",
       label: "Omari border clearing agent",
       type: "text",
       required: true,
+    },
+    {
+      id: "mushtarakah_agent_name",
+      label: "Mushtarakah clearing agent",
+      type: "text",
+    },
+    {
+      id: "mushtarakah_consignee_party_id",
+      label: "Mushtarakah consignee party id",
+      type: "text",
+    },
+    {
+      id: "mushtarakah_consignee_name",
+      label: "Mushtarakah consignee name",
+      type: "text",
+    },
+    {
+      id: "masnaa_clearance_mode",
+      label: "Masnaa border clearance mode",
+      type: "text",
+    },
+    {
+      id: "masnaa_agent_name",
+      label: "Masnaa agent name",
+      type: "text",
+    },
+    {
+      id: "masnaa_consignee_party_id",
+      label: "Masnaa consignee party id",
+      type: "text",
+    },
+    {
+      id: "masnaa_consignee_name",
+      label: "Masnaa consignee name",
+      type: "text",
+    },
+    {
+      id: "show_masnaa_consignee_to_client",
+      label: "Show Masnaa consignee to client",
+      type: "text",
+    },
+    {
+      id: "masnaa_client_final_choice",
+      label: "Masnaa client final choice",
+      type: "text",
     },
     {
       id: "naseeb_clearance_mode",
@@ -465,6 +545,11 @@ const customsAgentsAllocationSchema: StepFieldSchema = {
     {
       id: "naseeb_agent_name",
       label: "Naseeb agent name (if Zaxon)",
+      type: "text",
+    },
+    {
+      id: "syria_consignee_party_id",
+      label: "Syria consignee party id (if Zaxon)",
       type: "text",
     },
     {
@@ -585,6 +670,26 @@ const trackingKsaSchema: StepFieldSchema = {
       type: "date",
     },
     {
+      id: "batha_entered",
+      label: "Entered Batha",
+      type: "boolean",
+    },
+    {
+      id: "batha_entered_date",
+      label: "Entered Batha date",
+      type: "date",
+    },
+    {
+      id: "batha_delivered",
+      label: "Delivered at Batha",
+      type: "boolean",
+    },
+    {
+      id: "batha_delivered_date",
+      label: "Delivered at Batha date",
+      type: "date",
+    },
+    {
       id: "hadietha_exit",
       label: "Exit Hadietha",
       type: "boolean",
@@ -696,6 +801,96 @@ const trackingSyriaSchema: StepFieldSchema = {
       label: "Offload location",
       type: "text",
     },
+    {
+      id: "mushtarakah_entered",
+      label: "Enter Mushtarakah",
+      type: "boolean",
+    },
+    {
+      id: "mushtarakah_entered_date",
+      label: "Enter Mushtarakah date",
+      type: "date",
+    },
+    {
+      id: "mushtarakah_offloaded_warehouse",
+      label: "Offloaded at Mushtarakah warehouse",
+      type: "boolean",
+    },
+    {
+      id: "mushtarakah_offloaded_warehouse_date",
+      label: "Offloaded at Mushtarakah warehouse date",
+      type: "date",
+    },
+    {
+      id: "mushtarakah_loaded_syrian_trucks",
+      label: "Loaded into Syrian trucks",
+      type: "boolean",
+    },
+    {
+      id: "mushtarakah_loaded_syrian_trucks_date",
+      label: "Loaded into Syrian trucks date",
+      type: "date",
+    },
+    {
+      id: "mushtarakah_exit",
+      label: "Exit Mushtarakah",
+      type: "boolean",
+    },
+    {
+      id: "mushtarakah_exit_date",
+      label: "Exit Mushtarakah date",
+      type: "date",
+    },
+    {
+      id: "naseeb_arrived",
+      label: "Arrived at Naseeb",
+      type: "boolean",
+    },
+    {
+      id: "naseeb_arrived_date",
+      label: "Arrived at Naseeb date",
+      type: "date",
+    },
+    {
+      id: "naseeb_entered",
+      label: "Entered Naseeb",
+      type: "boolean",
+    },
+    {
+      id: "naseeb_entered_date",
+      label: "Entered Naseeb date",
+      type: "date",
+    },
+    {
+      id: "masnaa_arrived",
+      label: "Arrived at Masnaa",
+      type: "boolean",
+    },
+    {
+      id: "masnaa_arrived_date",
+      label: "Arrived at Masnaa date",
+      type: "date",
+    },
+    {
+      id: "masnaa_entered",
+      label: "Entered Masnaa",
+      type: "boolean",
+    },
+    {
+      id: "masnaa_entered_date",
+      label: "Entered Masnaa date",
+      type: "date",
+    },
+    {
+      id: "masnaa_delivered",
+      label: "Delivered at Masnaa",
+      type: "boolean",
+    },
+    {
+      id: "masnaa_delivered_date",
+      label: "Delivered at Masnaa date",
+      type: "date",
+    },
   ],
 };
 
@@ -784,16 +979,55 @@ export async function ensureFtlExportTemplate(input?: { createdByUserId?: number
   );
   if (existing) {
     const existingSteps = await listTemplateSteps(existing.id);
-    const existingNames = new Set(existingSteps.map((step) => step.name));
+    const existingByName = new Map(existingSteps.map((step) => [step.name, step]));
     for (const step of TEMPLATE_STEPS) {
-      if (existingNames.has(step.name)) continue;
-      await addTemplateStep({
-        templateId: existing.id,
+      const existingStep = existingByName.get(step.name);
+      const nextFieldSchemaJson = JSON.stringify(step.schema);
+      if (!existingStep) {
+        await addTemplateStep({
+          templateId: existing.id,
+          name: step.name,
+          ownerRole: step.ownerRole,
+          fieldSchemaJson: nextFieldSchemaJson,
+          customerVisible: step.customerVisible,
+          isExternal: step.isExternal,
+        });
+        continue;
+      }
+
+      const nextCustomerVisible = step.customerVisible ?? false;
+      const nextIsExternal = step.isExternal ?? false;
+      const needsUpdate =
+        existingStep.owner_role !== step.ownerRole ||
+        existingStep.field_schema_json !== nextFieldSchemaJson ||
+        existingStep.customer_visible !== (nextCustomerVisible ? 1 : 0) ||
+        existingStep.is_external !== (nextIsExternal ? 1 : 0);
+
+      if (!needsUpdate) continue;
+
+      await updateTemplateStep({
+        stepId: existingStep.id,
         name: step.name,
         ownerRole: step.ownerRole,
-        fieldSchemaJson: JSON.stringify(step.schema),
-        customerVisible: step.customerVisible,
-        isExternal: step.isExternal,
+        requiredFields: parseJsonValue<string[]>(
+          existingStep.required_fields_json,
+          [],
+        ),
+        requiredDocumentTypes: parseJsonValue<string[]>(
+          existingStep.required_document_types_json,
+          [],
+        ),
+        fieldSchemaJson: nextFieldSchemaJson,
+        slaHours: existingStep.sla_hours ?? null,
+        customerVisible: nextCustomerVisible,
+        isExternal: nextIsExternal,
+        checklistGroups: parseJsonValue(existingStep.checklist_groups_json, []),
+        dependsOnStepIds: parseJsonValue<number[]>(
+          existingStep.depends_on_step_ids_json,
+          [],
+        ),
+        customerCompletionMessageTemplate:
+          existingStep.customer_completion_message_template ?? null,
       });
     }
     return existing.id;

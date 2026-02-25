@@ -10,7 +10,10 @@ import { createShipment, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { ensureFclImportTemplate } from "@/lib/fclImport/template";
-import { FCL_IMPORT_STEP_NAMES } from "@/lib/fclImport/constants";
+import {
+  FCL_IMPORT_DEFAULT_DESTINATION,
+  FCL_IMPORT_STEP_NAMES,
+} from "@/lib/fclImport/constants";
 import { normalizeContainerNumbers } from "@/lib/fclImport/helpers";
 import {
   FTL_EXPORT_ROUTES,
@@ -19,6 +22,7 @@ import {
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
 import { IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE } from "@/lib/importTransferOwnership/constants";
 import { ensureImportTransferOwnershipTemplate } from "@/lib/importTransferOwnership/template";
+import { parseStepFieldValues } from "@/lib/stepFields";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -63,10 +67,13 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       originInput;
     const destination =
       selectedFtlRoute?.destination ??
-      destinationInput;
+      (serviceType === SERVICE_TYPE_FCL
+        ? FCL_IMPORT_DEFAULT_DESTINATION
+        : destinationInput);
     const containerNumbers = normalizeContainerNumbers(
       formData.getAll("containerNumbers").map((value) => String(value)),
     );
+    const blNumber = String(formData.get("blNumber") ?? "").trim();
     const jobIdsRaw = String(formData.get("jobIds") ?? "").trim();
     const jobIds = jobIdsRaw
       ? Array.from(
@@ -95,6 +102,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
 
     if (
       (serviceType === FTL_EXPORT_SERVICE_TYPE ||
+        serviceType === SERVICE_TYPE_FCL ||
         serviceType === IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE) &&
       customerPartyIds.length !== 1
     ) {
@@ -110,7 +118,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
         customerPartyIds,
         transportMode: "SEA",
         origin,
-        destination,
+        destination: FCL_IMPORT_DEFAULT_DESTINATION,
         shipmentType: "FCL",
         cargoDescription: "FCL Import Clearance",
         jobIds: jobIds.length ? jobIds : undefined,
@@ -123,17 +131,37 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       const creationStep = steps.find(
         (step) => step.name === FCL_IMPORT_STEP_NAMES.shipmentCreation,
       );
+      const blStep = steps.find((step) => step.name === FCL_IMPORT_STEP_NAMES.billOfLading);
 
-      if (creationStep && containerNumbers.length > 0) {
+      if (creationStep && (containerNumbers.length > 0 || blNumber)) {
+        const creationValues: Record<string, unknown> = {};
+        if (containerNumbers.length > 0) {
+          creationValues.containers = containerNumbers.map((number) => ({
+            container_number: number,
+          }));
+        }
+        if (blNumber) {
+          creationValues.bl_number = blNumber;
+        }
         await updateShipmentStep({
           stepId: creationStep.id,
-          status: "DONE",
-          fieldValuesJson: JSON.stringify({
-            containers: containerNumbers.map((number) => ({
-              container_number: number,
-            })),
-          }),
+          status: containerNumbers.length > 0 ? "DONE" : undefined,
+          fieldValuesJson: JSON.stringify(creationValues),
         });
+      }
+
+      if (blStep && blNumber) {
+        const blValues = parseStepFieldValues(blStep.field_values_json) as Record<string, unknown>;
+        const existingBl = typeof blValues.bl_number === "string" ? blValues.bl_number.trim() : "";
+        if (!existingBl) {
+          await updateShipmentStep({
+            stepId: blStep.id,
+            fieldValuesJson: JSON.stringify({
+              ...blValues,
+              bl_number: blNumber,
+            }),
+          });
+        }
       }
 
       await refreshShipmentDerivedState({

@@ -6,8 +6,9 @@ import {
   LtlMasterWorkspace,
   type LtlMasterSubshipmentView,
 } from "@/components/shipments/ltl-master/LtlMasterWorkspace";
+import { WorkflowDocumentsHub } from "@/components/shipments/shared/WorkflowDocumentsHub";
 import { requireUser } from "@/lib/auth";
-import { listDocuments } from "@/lib/data/documents";
+import { listDocumentRequests, listDocuments } from "@/lib/data/documents";
 import { listParties } from "@/lib/data/parties";
 import {
   getShipment,
@@ -29,6 +30,14 @@ import {
 } from "@/lib/ltlMasterJafzaSyria/status";
 import { ensureLtlMasterJafzaSyriaTemplate } from "@/lib/ltlMasterJafzaSyria/template";
 import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
+import {
+  deleteDocumentAction,
+  requestDocumentAction,
+  reviewDocumentAction,
+  updateDocumentFlagsAction,
+  uploadDocumentAction,
+} from "../../[shipmentId]/actions";
+import { listShipmentDocumentTypeOptions } from "@/lib/shipments/documentTypeOptions";
 import {
   closeMasterLoadingAction,
   createSubshipmentAction,
@@ -204,8 +213,9 @@ export default async function MasterShipmentPage({
     }
   }
 
-  const [docs, customers, brokers, subshipments, importCandidates] = await Promise.all([
+  const [docs, docRequests, customers, brokers, subshipments, importCandidates] = await Promise.all([
     listDocuments(id),
+    listDocumentRequests(id),
     listParties({ type: "CUSTOMER" }),
     listParties({ type: "CUSTOMS_BROKER" }),
     listSubshipmentsForMaster(id),
@@ -385,7 +395,17 @@ export default async function MasterShipmentPage({
     | "ksa"
     | "jordan"
     | "syria"
+    | "mushtarakah"
+    | "lebanon"
     | undefined;
+  const activeMainTab = initialTab ?? "creation";
+  const docsParams = new URLSearchParams();
+  docsParams.set("tab", activeMainTab);
+  if (activeMainTab === "tracking") {
+    docsParams.set("tracking", initialTrackingTab ?? "uae");
+  }
+  const docsReturnTo = `/shipments/master/${shipment.id}?${docsParams.toString()}`;
+  const workflowDocumentTypeOptions = listShipmentDocumentTypeOptions(steps);
 
   return (
     <div className={`${bodyFont.className} min-h-screen space-y-4`}>
@@ -429,6 +449,33 @@ export default async function MasterShipmentPage({
         saveMasterWarehouseArrivalAction={saveMasterWarehouseArrivalAction.bind(null, shipment.id)}
         initialTab={initialTab}
         initialTrackingTab={initialTrackingTab}
+      />
+      <WorkflowDocumentsHub
+        shipmentId={shipment.id}
+        docs={docs.map((doc) => ({
+          id: doc.id,
+          document_type: String(doc.document_type),
+          file_name: doc.file_name,
+          uploaded_at: doc.uploaded_at,
+          source: doc.source,
+          is_required: doc.is_required,
+          is_received: doc.is_received,
+          share_with_customer: doc.share_with_customer,
+          review_status: doc.review_status,
+        }))}
+        docRequests={docRequests.map((request) => ({
+          id: request.id,
+          document_type: String(request.document_type),
+          status: request.status,
+        }))}
+        documentTypeOptions={workflowDocumentTypeOptions}
+        canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
+        returnTo={docsReturnTo}
+        uploadDocumentAction={uploadDocumentAction.bind(null, shipment.id)}
+        requestDocumentAction={requestDocumentAction.bind(null, shipment.id)}
+        reviewDocumentAction={reviewDocumentAction.bind(null, shipment.id)}
+        updateDocumentFlagsAction={updateDocumentFlagsAction.bind(null, shipment.id)}
+        deleteDocumentAction={deleteDocumentAction.bind(null, shipment.id)}
       />
     </div>
   );

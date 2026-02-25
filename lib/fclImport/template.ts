@@ -7,6 +7,8 @@ import {
   createWorkflowTemplate,
   listWorkflowTemplates,
   listTemplateSteps,
+  updateTemplateStep,
+  type WorkflowTemplateStepRow,
 } from "@/lib/data/workflows";
 import { FCL_IMPORT_STEP_NAMES, FCL_IMPORT_TEMPLATE_NAME } from "./constants";
 
@@ -25,6 +27,12 @@ const containerGroup = (
 const shipmentCreationSchema: StepFieldSchema = {
   version: 1,
   fields: [
+    {
+      id: "bl_number",
+      label: "B/L number",
+      type: "text",
+      required: false,
+    },
     containerGroup(
       [
       {
@@ -511,6 +519,34 @@ type TemplateStep = {
   isExternal?: boolean;
 };
 
+function normalizeJson(input: unknown) {
+  try {
+    return JSON.stringify(input ?? null);
+  } catch {
+    return "";
+  }
+}
+
+function parseJson(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function shouldUpdateStepSchema(
+  existing: WorkflowTemplateStepRow,
+  expected: TemplateStep,
+) {
+  if (existing.owner_role !== expected.ownerRole) return true;
+  if ((existing.customer_visible === 1) !== !!expected.customerVisible) return true;
+  if ((existing.is_external === 1) !== !!expected.isExternal) return true;
+
+  const existingSchema = parseJson(existing.field_schema_json);
+  return normalizeJson(existingSchema) !== normalizeJson(expected.schema);
+}
+
 const TEMPLATE_STEPS: TemplateStep[] = [
   {
     name: FCL_IMPORT_STEP_NAMES.shipmentCreation,
@@ -593,11 +629,25 @@ export async function ensureFclImportTemplate(input?: { createdByUserId?: number
   );
   if (existing) {
     const existingSteps = await listTemplateSteps(existing.id);
-    const existingNames = new Set(existingSteps.map((step) => step.name));
+    const existingByName = new Map(existingSteps.map((step) => [step.name, step]));
     for (const step of TEMPLATE_STEPS) {
-      if (existingNames.has(step.name)) continue;
-      await addTemplateStep({
-        templateId: existing.id,
+      const current = existingByName.get(step.name);
+      if (!current) {
+        await addTemplateStep({
+          templateId: existing.id,
+          name: step.name,
+          ownerRole: step.ownerRole,
+          fieldSchemaJson: JSON.stringify(step.schema),
+          customerVisible: step.customerVisible,
+          isExternal: step.isExternal,
+        });
+        continue;
+      }
+
+      if (!shouldUpdateStepSchema(current, step)) continue;
+
+      await updateTemplateStep({
+        stepId: current.id,
         name: step.name,
         ownerRole: step.ownerRole,
         fieldSchemaJson: JSON.stringify(step.schema),

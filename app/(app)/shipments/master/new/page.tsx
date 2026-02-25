@@ -8,12 +8,16 @@ import { assertCanWrite, canWrite, requireUser } from "@/lib/auth";
 import { createShipment, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import {
-  LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+  LTL_MASTER_ROUTE_TO_SERVICE_TYPE,
   LTL_MASTER_JAFZA_SYRIA_STEP_NAMES,
 } from "@/lib/ltlMasterJafzaSyria/constants";
 import { ensureLtlMasterJafzaSyriaTemplate } from "@/lib/ltlMasterJafzaSyria/template";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { DatePickerInput } from "@/components/ui/DatePickerInput";
+import {
+  JAFZA_LAND_ROUTES,
+  type JafzaLandRouteId,
+} from "@/lib/routes/jafzaLandRoutes";
 
 const headingFont = Space_Grotesk({
   subsets: ["latin"],
@@ -37,6 +41,12 @@ function messageByError(error: string | null) {
   return "Could not create master shipment.";
 }
 
+const ROUTE_OPTIONS = [
+  JAFZA_LAND_ROUTES.JAFZA_TO_SYRIA,
+  JAFZA_LAND_ROUTES.JAFZA_TO_KSA,
+  JAFZA_LAND_ROUTES.JAFZA_TO_MUSHTARAKAH,
+] as const;
+
 export default async function NewMasterShipmentPage({
   searchParams,
 }: NewMasterShipmentPageProps) {
@@ -50,6 +60,18 @@ export default async function NewMasterShipmentPage({
     const user = await requireUser();
     assertCanWrite(user);
 
+    const routeIdRaw = String(formData.get("routeId") ?? "").trim();
+    if (
+      routeIdRaw !== "JAFZA_TO_SYRIA" &&
+      routeIdRaw !== "JAFZA_TO_KSA" &&
+      routeIdRaw !== "JAFZA_TO_MUSHTARAKAH"
+    ) {
+      redirect("/shipments/master/new?error=invalid");
+    }
+    const routeId = routeIdRaw as JafzaLandRouteId;
+    const route = JAFZA_LAND_ROUTES[routeId];
+    const serviceType = LTL_MASTER_ROUTE_TO_SERVICE_TYPE[routeId];
+
     const plannedLoadingDate = String(formData.get("plannedLoadingDate") ?? "").trim();
     const notes = String(formData.get("notes") ?? "").trim();
 
@@ -60,10 +82,10 @@ export default async function NewMasterShipmentPage({
     const created = await createShipment({
       customerPartyIds: [],
       transportMode: "LAND",
-      origin: "JAFZA, Dubai",
-      destination: "Syria",
+      origin: route.origin,
+      destination: route.destination,
       shipmentType: "LAND",
-      cargoDescription: "LTL JAFZA -> Syria Master Consolidation",
+      cargoDescription: `LTL ${route.origin} -> ${route.destination} Master Consolidation`,
       workflowTemplateId: templateId,
       shipmentKind: "MASTER",
       skipTrackingToken: true,
@@ -80,7 +102,8 @@ export default async function NewMasterShipmentPage({
         stepId: creationStep.id,
         status: "DONE",
         fieldValuesJson: JSON.stringify({
-          service_type: LTL_MASTER_JAFZA_SYRIA_SERVICE_TYPE,
+          service_type: serviceType,
+          route_id: routeId,
           planned_loading_date: plannedLoadingDate,
           notes,
         }),
@@ -110,7 +133,7 @@ export default async function NewMasterShipmentPage({
             Create LTL Master Shipment
           </h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
-            Service type is fixed to LTL JAFZA to Syria. Create the master shipment first,
+            Select route first. Service type and route behavior are set automatically,
             then add customer subshipments inside the master workflow.
           </p>
         </div>
@@ -134,13 +157,20 @@ export default async function NewMasterShipmentPage({
       >
         <label className="block">
           <div className="mb-1 text-xs font-medium uppercase tracking-[0.16em] text-zinc-500">
-            Service type
+            Route
           </div>
-          <input
-            value="LTL JAFZA -> Syria"
-            readOnly
-            className="w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-700"
-          />
+          <select
+            name="routeId"
+            defaultValue="JAFZA_TO_SYRIA"
+            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-700"
+            required
+          >
+            {ROUTE_OPTIONS.map((route) => (
+              <option key={route.id} value={route.id}>
+                {route.label}
+              </option>
+            ))}
+          </select>
         </label>
 
         <div className="grid gap-4 md:grid-cols-2">

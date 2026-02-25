@@ -38,7 +38,14 @@ import { LoadingDetailsStepForm } from "./forms/LoadingDetailsStepForm";
 import { StockViewStepForm } from "./forms/StockViewStepForm";
 import { TrackingStepForm, type TrackingAgentGate } from "./forms/TrackingStepForm";
 import { TrucksDetailsStepForm } from "./forms/TrucksDetailsStepForm";
-import { TRACKING_REGION_FLOW } from "./forms/trackingTimelineConfig";
+import {
+  trackingRegionFlowForRoute,
+  type TrackingRegion,
+} from "./forms/trackingTimelineConfig";
+import {
+  jafzaRouteById,
+  resolveJafzaLandRoute,
+} from "@/lib/routes/jafzaLandRoutes";
 
 export type FtlMainTab =
   | "plan"
@@ -48,13 +55,20 @@ export type FtlMainTab =
   | "agents"
   | "tracking";
 export type FtlInvoiceTab = "imports" | "invoice" | "stock";
-export type FtlTrackingTab = "uae" | "ksa" | "jordan" | "syria";
+export type FtlTrackingTab =
+  | "uae"
+  | "ksa"
+  | "jordan"
+  | "syria"
+  | "mushtarakah"
+  | "lebanon";
 
 type WorkspaceProps = {
   headingClassName?: string;
   shipment: FtlShipmentMeta;
   steps: FtlStepData[];
   brokers: Array<{ id: number; name: string }>;
+  customers: Array<{ id: number; name: string }>;
   latestDocsByType: Record<string, FtlDocumentMeta>;
   importCandidates: FtlImportCandidate[];
   trackingToken: string | null;
@@ -93,7 +107,14 @@ function isInvoiceTab(value: string | undefined): value is FtlInvoiceTab {
 }
 
 function isTrackingTab(value: string | undefined): value is FtlTrackingTab {
-  return value === "uae" || value === "ksa" || value === "jordan" || value === "syria";
+  return (
+    value === "uae" ||
+    value === "ksa" ||
+    value === "jordan" ||
+    value === "syria" ||
+    value === "mushtarakah" ||
+    value === "lebanon"
+  );
 }
 
 function daysSince(isoDate: string) {
@@ -124,6 +145,7 @@ export function FtlExportWorkspace({
   shipment,
   steps,
   brokers,
+  customers,
   latestDocsByType,
   importCandidates,
   trackingToken,
@@ -134,13 +156,22 @@ export function FtlExportWorkspace({
   initialInvoiceTab,
   initialTrackingTab,
 }: WorkspaceProps) {
+  const routeId = resolveJafzaLandRoute(shipment.origin, shipment.destination);
+  const routeProfile = jafzaRouteById(routeId);
+  const trackingFlow = trackingRegionFlowForRoute(routeId);
+  const defaultTrackingTab = (routeProfile.trackingTabs[0] ?? "uae") as FtlTrackingTab;
   const [tab, setTab] = useState<FtlMainTab>(initialTab && isMainTab(initialTab) ? initialTab : "plan");
   const [invoiceTab, setInvoiceTab] = useState<FtlInvoiceTab>(
     initialInvoiceTab && isInvoiceTab(initialInvoiceTab) ? initialInvoiceTab : "imports",
   );
-  const [trackingTab, setTrackingTab] = useState<FtlTrackingTab>(
-    initialTrackingTab && isTrackingTab(initialTrackingTab) ? initialTrackingTab : "uae",
-  );
+  const [trackingTab, setTrackingTab] = useState<FtlTrackingTab>(() => {
+    if (initialTrackingTab && isTrackingTab(initialTrackingTab)) {
+      return routeProfile.trackingTabs.includes(initialTrackingTab)
+        ? initialTrackingTab
+        : defaultTrackingTab;
+    }
+    return defaultTrackingTab;
+  });
 
   const stepByName = useMemo(() => new Map(steps.map((step) => [step.name, step])), [steps]);
 
@@ -166,20 +197,21 @@ export function FtlExportWorkspace({
   const importWarnings = computeImportWarnings(importRows);
   const stockSummary = buildImportStockSummary(importRows);
   const importsAvailable = allReferencedImportsAvailable(importRows);
-  const computedStatus = useMemo(() => {
-    const stepsByName: Record<string, { id: number; values: Record<string, unknown> } | undefined> =
-      {};
-    for (const currentStep of steps) {
-      stepsByName[currentStep.name] = {
-        id: currentStep.id,
-        values: (currentStep.values ?? {}) as Record<string, unknown>,
-      };
-    }
-    return computeFtlExportStatuses({
-      stepsByName,
-      docTypes: new Set(Object.keys(latestDocsByType)),
-    });
-  }, [steps, latestDocsByType]);
+  const stepsByNameForStatus: Record<
+    string,
+    { id: number; values: Record<string, unknown> } | undefined
+  > = {};
+  for (const currentStep of steps) {
+    stepsByNameForStatus[currentStep.name] = {
+      id: currentStep.id,
+      values: (currentStep.values ?? {}) as Record<string, unknown>,
+    };
+  }
+  const computedStatus = computeFtlExportStatuses({
+    stepsByName: stepsByNameForStatus,
+    docTypes: new Set(Object.keys(latestDocsByType)),
+    routeId,
+  });
   const loadingCompleted =
     computedStatus.statuses[FTL_EXPORT_STEP_NAMES.loadingDetails] === "DONE";
   const canFinalizeInvoice = computedStatus.canFinalizeInvoice;
@@ -209,15 +241,15 @@ export function FtlExportWorkspace({
   const invoiceDone = invoiceStep?.status === "DONE";
   const trackingUnlocked = loadingCompleted && invoiceDone;
   const trackingLink = trackingToken ? `/track/${trackingToken}` : "";
-  const trackingRegionStates = TRACKING_REGION_FLOW.map((regionEntry) => {
-    const step =
-      regionEntry.id === "uae"
-        ? uaeStep
-        : regionEntry.id === "ksa"
-          ? ksaStep
-          : regionEntry.id === "jordan"
-            ? jordanStep
-            : syriaStep;
+  const stepForTrackingTab = (tabId: FtlTrackingTab) => {
+    if (tabId === "uae") return uaeStep;
+    if (tabId === "ksa") return ksaStep;
+    if (tabId === "jordan") return jordanStep;
+    return syriaStep;
+  };
+
+  const trackingRegionStates = trackingFlow.map((regionEntry) => {
+    const step = stepForTrackingTab(regionEntry.id as FtlTrackingTab);
     const latestDate = latestDateValue((step?.values ?? {}) as Record<string, unknown>);
     const stalled =
       !!latestDate && step?.status !== "DONE" && daysSince(latestDate) >= 3;
@@ -232,15 +264,44 @@ export function FtlExportWorkspace({
       ? "ZAXON"
       : "CLIENT";
   const agentValues = (agentsStep?.values ?? {}) as Record<string, unknown>;
+  const bathaMode = getString(agentValues.batha_clearance_mode).toUpperCase();
+  const bathaModeReady =
+    routeId !== "JAFZA_TO_KSA"
+      ? !!getString(agentValues.batha_agent_name)
+      : bathaMode === "ZAXON"
+        ? !!getString(agentValues.batha_agent_name) &&
+          !!getString(agentValues.batha_consignee_name) &&
+          !!getString(agentValues.show_batha_consignee_to_client)
+        : bathaMode === "CLIENT"
+          ? !!getString(agentValues.batha_client_final_choice)
+          : false;
+  const masnaaMode = getString(agentValues.masnaa_clearance_mode).toUpperCase();
+  const masnaaReady =
+    routeId !== "JAFZA_TO_MUSHTARAKAH"
+      ? true
+      : masnaaMode === "ZAXON"
+        ? !!getString(agentValues.masnaa_agent_name) &&
+          !!getString(agentValues.masnaa_consignee_name) &&
+          !!getString(agentValues.show_masnaa_consignee_to_client)
+        : masnaaMode === "CLIENT"
+          ? !!getString(agentValues.masnaa_client_final_choice)
+          : false;
   const trackingAgentGate: TrackingAgentGate = {
     jebelAliReady: !!getString(agentValues.jebel_ali_agent_name),
     silaReady: !!getString(agentValues.sila_agent_name),
     bathaReady: !!getString(agentValues.batha_agent_name),
+    bathaModeReady,
     omariReady: !!getString(agentValues.omari_agent_name),
     naseebReady:
       syriaClearanceMode === "ZAXON"
         ? !!getString(agentValues.naseeb_agent_name)
         : !!getString(agentValues.naseeb_client_final_choice),
+    mushtarakahReady:
+      routeId !== "JAFZA_TO_MUSHTARAKAH"
+        ? true
+        : !!getString(agentValues.mushtarakah_agent_name) &&
+          !!getString(agentValues.mushtarakah_consignee_name),
+    masnaaReady,
   };
 
   const baseUrl = `/shipments/ftl-export/${shipment.id}`;
@@ -258,10 +319,7 @@ export function FtlExportWorkspace({
     invoice: invoiceStep?.status === "DONE",
     agents: agentsStep?.status === "DONE",
     tracking:
-      uaeStep?.status === "DONE" &&
-      ksaStep?.status === "DONE" &&
-      jordanStep?.status === "DONE" &&
-      syriaStep?.status === "DONE",
+      routeProfile.trackingTabs.every((tabId) => stepForTrackingTab(tabId)?.status === "DONE"),
   };
 
   return (
@@ -491,6 +549,8 @@ export function FtlExportWorkspace({
             canEdit={canEdit}
             isAdmin={isAdmin}
             brokers={brokers}
+            consigneeParties={customers}
+            routeId={routeId}
           />
         ) : (
           <MissingStep name={FTL_EXPORT_STEP_NAMES.customsAgentsAllocation} />
@@ -575,84 +635,29 @@ export function FtlExportWorkspace({
             </div>
           </div>
 
-          {trackingTab === "uae" ? (
-            uaeStep ? (
-              <TrackingStepForm
-                step={uaeStep}
-                updateAction={updateAction}
-                returnTo={returnTo("tracking", "uae")}
-                canEdit={canEdit}
-                isAdmin={isAdmin}
-                region="uae"
-                locked={!trackingUnlocked}
-                lockedMessage={
-                  !trackingUnlocked
-                    ? "Tracking starts only after loading is done and export invoice is finalized."
-                    : undefined
-                }
-                agentGate={trackingAgentGate}
-                latestDocsByType={latestDocsByType}
-              />
-            ) : (
-              <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingUae} />
-            )
-          ) : null}
+          {(() => {
+            const activeStep = stepForTrackingTab(trackingTab);
+            const missingStepName =
+              trackingTab === "uae"
+                ? FTL_EXPORT_STEP_NAMES.trackingUae
+                : trackingTab === "ksa"
+                  ? FTL_EXPORT_STEP_NAMES.trackingKsa
+                  : trackingTab === "jordan"
+                    ? FTL_EXPORT_STEP_NAMES.trackingJordan
+                    : FTL_EXPORT_STEP_NAMES.trackingSyria;
+            const region = trackingTab as TrackingRegion;
 
-          {trackingTab === "ksa" ? (
-            ksaStep ? (
-              <TrackingStepForm
-                step={ksaStep}
-                updateAction={updateAction}
-                returnTo={returnTo("tracking", "ksa")}
-                canEdit={canEdit}
-                isAdmin={isAdmin}
-                region="ksa"
-                locked={!trackingUnlocked}
-                lockedMessage={
-                  !trackingUnlocked
-                    ? "Tracking starts only after loading is done and export invoice is finalized."
-                    : undefined
-                }
-                agentGate={trackingAgentGate}
-                latestDocsByType={latestDocsByType}
-              />
-            ) : (
-              <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingKsa} />
-            )
-          ) : null}
+            if (!activeStep) return <MissingStep name={missingStepName} />;
 
-          {trackingTab === "jordan" ? (
-            jordanStep ? (
+            return (
               <TrackingStepForm
-                step={jordanStep}
+                step={activeStep}
                 updateAction={updateAction}
-                returnTo={returnTo("tracking", "jordan")}
+                returnTo={returnTo("tracking", trackingTab)}
                 canEdit={canEdit}
                 isAdmin={isAdmin}
-                region="jordan"
-                locked={!trackingUnlocked}
-                lockedMessage={
-                  !trackingUnlocked
-                    ? "Tracking starts only after loading is done and export invoice is finalized."
-                    : undefined
-                }
-                agentGate={trackingAgentGate}
-                latestDocsByType={latestDocsByType}
-              />
-            ) : (
-              <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingJordan} />
-            )
-          ) : null}
-
-          {trackingTab === "syria" ? (
-            syriaStep ? (
-              <TrackingStepForm
-                step={syriaStep}
-                updateAction={updateAction}
-                returnTo={returnTo("tracking", "syria")}
-                canEdit={canEdit}
-                isAdmin={isAdmin}
-                region="syria"
+                region={region}
+                routeId={routeId}
                 locked={!trackingUnlocked}
                 lockedMessage={
                   !trackingUnlocked
@@ -663,10 +668,8 @@ export function FtlExportWorkspace({
                 agentGate={trackingAgentGate}
                 latestDocsByType={latestDocsByType}
               />
-            ) : (
-              <MissingStep name={FTL_EXPORT_STEP_NAMES.trackingSyria} />
-            )
-          ) : null}
+            );
+          })()}
         </div>
       ) : null}
 

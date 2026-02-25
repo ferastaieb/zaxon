@@ -9,7 +9,7 @@ import {
   createDocumentRequest,
   listDocuments,
 } from "@/lib/data/documents";
-import { listShipmentSteps } from "@/lib/data/shipments";
+import { getShipment, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import { stepStatusLabel } from "@/lib/domain";
 import { nowIso, scanAll, tableName } from "@/lib/db";
@@ -26,6 +26,7 @@ import {
 import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import { computeFtlExportStatuses } from "@/lib/ftlExport/status";
 import { requireShipmentAccess } from "@/lib/permissions";
+import { resolveJafzaLandRoute } from "@/lib/routes/jafzaLandRoutes";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
 import {
@@ -80,15 +81,31 @@ function hasAnyImportRowData(row: {
   );
 }
 
-function hasTrackingAgentPrerequisite(
-  stepName: string,
-  rawAgentsValues: Record<string, unknown>,
-  touchedFieldKeys: Set<string>,
-) {
+function hasTrackingAgentPrerequisite(input: {
+  stepName: string;
+  rawAgentsValues: Record<string, unknown>;
+  touchedFieldKeys: Set<string>;
+  routeId: "JAFZA_TO_SYRIA" | "JAFZA_TO_KSA" | "JAFZA_TO_MUSHTARAKAH";
+}) {
+  const { stepName, rawAgentsValues, touchedFieldKeys, routeId } = input;
   const agentsValues = toRecord(rawAgentsValues);
   const hasPrefix = (prefix: string) => {
     for (const key of touchedFieldKeys) {
       if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+  const modeDone = (prefix: "batha" | "masnaa") => {
+    const mode = getString(agentsValues[`${prefix}_clearance_mode`]).toUpperCase();
+    if (mode === "ZAXON") {
+      return (
+        !!getString(agentsValues[`${prefix}_agent_name`]) &&
+        !!getString(agentsValues[`${prefix}_consignee_name`]) &&
+        !!getString(agentsValues[`show_${prefix}_consignee_to_client`])
+      );
+    }
+    if (mode === "CLIENT") {
+      return !!getString(agentsValues[`${prefix}_client_final_choice`]);
     }
     return false;
   };
@@ -102,13 +119,29 @@ function hasTrackingAgentPrerequisite(
   }
   if (stepName === FTL_EXPORT_STEP_NAMES.trackingKsa) {
     const requiresBatha = hasPrefix("batha_");
-    return !requiresBatha || !!getString(agentsValues.batha_agent_name);
+    if (!requiresBatha) return true;
+    if (routeId === "JAFZA_TO_KSA") return modeDone("batha");
+    return !!getString(agentsValues.batha_agent_name);
   }
   if (stepName === FTL_EXPORT_STEP_NAMES.trackingJordan) {
     const requiresOmari = hasPrefix("omari_");
     return !requiresOmari || !!getString(agentsValues.omari_agent_name);
   }
   if (stepName === FTL_EXPORT_STEP_NAMES.trackingSyria) {
+    if (routeId === "JAFZA_TO_MUSHTARAKAH") {
+      const touchesMushtarakah = hasPrefix("mushtarakah_");
+      const touchesMasnaa = hasPrefix("masnaa_");
+      if (touchesMushtarakah) {
+        return (
+          !!getString(agentsValues.mushtarakah_agent_name) &&
+          !!getString(agentsValues.mushtarakah_consignee_name)
+        );
+      }
+      if (touchesMasnaa) {
+        return modeDone("masnaa");
+      }
+      return true;
+    }
     if (!hasPrefix("syria_")) return true;
     const mode = getString(agentsValues.naseeb_clearance_mode).toUpperCase();
     if (mode === "ZAXON") {
@@ -148,6 +181,9 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const shipment = await getShipment(shipmentId);
+  if (!shipment) redirect(`/shipments/ftl-export/${shipmentId}?error=invalid`);
+  const routeId = resolveJafzaLandRoute(shipment.origin, shipment.destination);
 
   const stepId = Number(formData.get("stepId") ?? 0);
   if (!stepId) redirect(`/shipments/ftl-export/${shipmentId}?error=invalid`);
@@ -194,6 +230,13 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   }
   const trackingSteps = new Set<string>(FTL_EXPORT_TRACKING_STEPS);
   if (trackingSteps.has(step.name)) {
+    if (
+      routeId === "JAFZA_TO_KSA" &&
+      (step.name === FTL_EXPORT_STEP_NAMES.trackingJordan ||
+        step.name === FTL_EXPORT_STEP_NAMES.trackingSyria)
+    ) {
+      redirect(appendParam(returnBase, "error", "invalid"));
+    }
     const loadingStep = steps.find((row) => row.name === FTL_EXPORT_STEP_NAMES.loadingDetails);
     const invoiceStatusStep = steps.find((row) => row.name === FTL_EXPORT_STEP_NAMES.exportInvoice);
     const agentsStep = steps.find(
@@ -208,7 +251,14 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
     ) {
       redirect(appendParam(returnBase, "error", "tracking_locked"));
     }
-    if (!hasTrackingAgentPrerequisite(step.name, agentsValues, touchedFieldKeys)) {
+    if (
+      !hasTrackingAgentPrerequisite({
+        stepName: step.name,
+        rawAgentsValues: agentsValues,
+        touchedFieldKeys,
+        routeId,
+      })
+    ) {
       redirect(appendParam(returnBase, "error", "tracking_agent_required"));
     }
   }
@@ -336,6 +386,7 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
   const computed = computeFtlExportStatuses({
     stepsByName,
     docTypes,
+    routeId,
   });
 
   if (trackingSteps.has(step.name)) {
