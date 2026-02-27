@@ -14,6 +14,7 @@ import {
 } from "@/lib/ftlExport/helpers";
 import { FTL_EXPORT_STEP_NAMES } from "@/lib/ftlExport/constants";
 import {
+  jafzaRouteById,
   resolveJafzaLandRoute,
   type JafzaLandRouteId,
 } from "@/lib/routes/jafzaLandRoutes";
@@ -85,6 +86,7 @@ export type FtlClientTruckOverviewRow = {
   trailer_type: string;
   driver_summary: string;
   booking_status: string;
+  estimated_loading_date: string;
 };
 
 export type FtlClientLoadingCard = {
@@ -143,7 +145,45 @@ export type FtlClientTruckCargoRow = {
   weight_kg: number;
 };
 
+export type FtlClientSnapshotAgentKey =
+  | "jebel_ali"
+  | "sila"
+  | "batha"
+  | "omari"
+  | "naseeb"
+  | "mushtarakah"
+  | "masnaa";
+
+export type FtlClientSnapshotAgentMode = "AGENT" | "CLIENT" | "ZAXON" | null;
+
+export type FtlClientSnapshotAgent = {
+  name: string;
+  short_name: string;
+  mode: FtlClientSnapshotAgentMode;
+  doc_status: FtlClientTrackingAvailability;
+};
+
+export type FtlClientSnapshotTrucks = {
+  active_count: number;
+  loaded_count: number;
+  pending_count: number;
+  current_short_id: string;
+  current_truck_number: string;
+  current_trailer_type: string;
+  current_expected_loading_date: string | null;
+  current_actual_loading_date: string | null;
+  current_loading_origin: string;
+  current_supplier_name: string | null;
+  current_supplier_location: string | null;
+};
+
+export type FtlClientSnapshotMilestone = {
+  label: string;
+  eta: string | null;
+};
+
 export type FtlClientTrackingViewModel = {
+  shipment_code: string;
   route_id: JafzaLandRouteId;
   route_label: string;
   service_type_label: string;
@@ -172,6 +212,11 @@ export type FtlClientTrackingViewModel = {
     loaded_total_weight_kg: number;
     loaded_total_quantity_label: string;
   };
+  snapshot: {
+    agents: Record<FtlClientSnapshotAgentKey, FtlClientSnapshotAgent>;
+    trucks: FtlClientSnapshotTrucks;
+    next_milestone: FtlClientSnapshotMilestone;
+  };
 };
 
 type BuildInput = {
@@ -191,10 +236,44 @@ type StageRuntime = {
   file: { id: number; file_name: string } | null;
 };
 
+const SNAPSHOT_AGENT_KEYS: FtlClientSnapshotAgentKey[] = [
+  "jebel_ali",
+  "sila",
+  "batha",
+  "omari",
+  "naseeb",
+  "mushtarakah",
+  "masnaa",
+];
+
+const CUSTOMS_STAGE_ID_BY_AGENT_KEY: Record<FtlClientSnapshotAgentKey, string> = {
+  jebel_ali: "jebel_ali_customs",
+  sila: "sila_customs",
+  batha: "batha_customs",
+  omari: "omari_customs",
+  naseeb: "syria_customs",
+  mushtarakah: "mushtarakah_customs",
+  masnaa: "masnaa_customs",
+};
+
 function toDateOrNull(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const trimmed = input.trim();
   return trimmed ? trimmed : null;
+}
+
+function shortAgentName(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) return "TBD";
+  if (trimmed.length <= 16) return trimmed;
+  return `${trimmed.slice(0, 13)}...`;
+}
+
+function shortTruckId(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) return "-";
+  if (trimmed.length <= 18) return trimmed;
+  return `${trimmed.slice(0, 15)}...`;
 }
 
 function toProgressFromStepStatus(status: StepStatus | undefined): FtlClientTrackingProgressState {
@@ -673,6 +752,7 @@ export function buildFtlClientTrackingViewModel(
     trailer_type: row.trailer_type || "-",
     driver_summary: buildTruckDriverSummary(row),
     booking_status: row.booking_status || "PENDING",
+    estimated_loading_date: row.estimated_loading_date || "",
   }));
 
   const loadingByIndex = new Map(loadingRows.map((row) => [row.index, row]));
@@ -812,6 +892,52 @@ export function buildFtlClientTrackingViewModel(
     });
   }
 
+  const customsDocStatusByStageId = new Map<string, FtlClientTrackingAvailability>();
+  for (const row of customsRows) {
+    if (!row.id.startsWith("customs-")) continue;
+    customsDocStatusByStageId.set(row.id.slice("customs-".length), row.status);
+  }
+
+  const customsChain = jafzaRouteById(routeId).customsChain;
+  const customsNodeById = new Map(customsChain.map((node) => [node.id, node]));
+  const snapshotAgents = {} as Record<FtlClientSnapshotAgentKey, FtlClientSnapshotAgent>;
+  for (const key of SNAPSHOT_AGENT_KEYS) {
+    const node = customsNodeById.get(key);
+    let name = "";
+    let mode: FtlClientSnapshotAgentMode = null;
+
+    if (node) {
+      if (node.kind === "agent") {
+        mode = "AGENT";
+        name = node.agentField ? getString(customs.values[node.agentField]) : "";
+      } else {
+        const modeRaw = node.clearanceModeField
+          ? getString(customs.values[node.clearanceModeField]).toUpperCase()
+          : "";
+        if (modeRaw === "CLIENT") {
+          mode = "CLIENT";
+          name = node.clientFinalChoiceField
+            ? getString(customs.values[node.clientFinalChoiceField])
+            : "";
+        } else if (modeRaw === "ZAXON") {
+          mode = "ZAXON";
+          name = node.agentField ? getString(customs.values[node.agentField]) : "";
+        } else {
+          mode = null;
+          name = node.agentField ? getString(customs.values[node.agentField]) : "";
+        }
+      }
+    }
+
+    snapshotAgents[key] = {
+      name,
+      short_name: shortAgentName(name),
+      mode,
+      doc_status:
+        customsDocStatusByStageId.get(CUSTOMS_STAGE_ID_BY_AGENT_KEY[key]) ?? "NOT_AVAILABLE",
+    };
+  }
+
   const quantityByUnit = new Map<string, number>();
   let totalWeightFromImports = 0;
   for (const row of importRows) {
@@ -862,6 +988,36 @@ export function buildFtlClientTrackingViewModel(
     });
   }
 
+  const loadedTruckCount = loadingCards.filter((row) => row.status === "Loaded").length;
+  const activeTruckCount = trucksOverview.length;
+  const pendingTruckCount = Math.max(activeTruckCount - loadedTruckCount, 0);
+  const currentTruck =
+    loadingCards.find((row) => row.status !== "Loaded") ??
+    loadingCards[0] ??
+    null;
+  const currentTruckOverview = currentTruck
+    ? trucksOverview.find((row) => row.index === currentTruck.index) ?? null
+    : null;
+  const currentTruckLabel =
+    currentTruckOverview?.truck_number ||
+    currentTruck?.truck_number ||
+    currentTruck?.truck_reference ||
+    null;
+  const snapshotTrucks: FtlClientSnapshotTrucks = {
+    active_count: activeTruckCount,
+    loaded_count: loadedTruckCount,
+    pending_count: pendingTruckCount,
+    current_short_id: currentTruckLabel ? shortTruckId(currentTruckLabel) : "-",
+    current_truck_number: currentTruckOverview?.truck_number ?? currentTruck?.truck_number ?? "-",
+    current_trailer_type: currentTruckOverview?.trailer_type ?? currentTruck?.trailer_type ?? "-",
+    current_expected_loading_date:
+      toDateOrNull(currentTruckOverview?.estimated_loading_date) ?? null,
+    current_actual_loading_date: currentTruck?.actual_loading_date ?? null,
+    current_loading_origin: currentTruck?.loading_origin ?? "Not selected",
+    current_supplier_name: currentTruck?.supplier_name ?? null,
+    current_supplier_location: currentTruck?.supplier_location ?? null,
+  };
+
   const importReferenceRows: FtlClientImportReferenceRow[] = importRows.map((row, index) => ({
     index,
     import_reference: row.import_shipment_reference || "-",
@@ -903,7 +1059,28 @@ export function buildFtlClientTrackingViewModel(
     inTransitState,
   });
 
+  const milestoneCandidates = internationalRegions.flatMap((region) =>
+    region.events.map((event) => ({ region, event })),
+  );
+  const inProgressMilestone = milestoneCandidates.find(
+    (entry) => entry.event.state === "IN_PROGRESS",
+  );
+  const pendingMilestone = milestoneCandidates.find(
+    (entry) => entry.event.state === "PENDING",
+  );
+  const selectedMilestone = inProgressMilestone ?? pendingMilestone ?? null;
+  const nextMilestone: FtlClientSnapshotMilestone = selectedMilestone
+    ? {
+        label: `${selectedMilestone.region.label}: ${selectedMilestone.event.label}`,
+        eta: selectedMilestone.event.timestamp,
+      }
+    : {
+        label: "Delivered",
+        eta: null,
+      };
+
   return {
+    shipment_code: input.shipment.shipment_code,
     route_id: routeId,
     route_label: `${input.shipment.origin} -> ${input.shipment.destination}`,
     service_type_label: "Full truck Export",
@@ -931,6 +1108,11 @@ export function buildFtlClientTrackingViewModel(
       truck_allocations: truckAllocationRows,
       loaded_total_weight_kg: Number(truckWeightTotal.toFixed(2)),
       loaded_total_quantity_label: formatQuantitySummary(truckQuantityByUnit),
+    },
+    snapshot: {
+      agents: snapshotAgents,
+      trucks: snapshotTrucks,
+      next_milestone: nextMilestone,
     },
   };
 }

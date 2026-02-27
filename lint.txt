@@ -1,0 +1,7 @@
+
+C:\Users\Firas\Projects\logistic\components\tracking\public\FtlClientTrackView.tsx
+  109:10   warning  'laneTone' is defined but never used      @typescript-eslint/no-unused-vars
+  301:117  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+✖ 2 problems (1 error, 1 warning)
+

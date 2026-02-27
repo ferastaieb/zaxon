@@ -26,7 +26,10 @@ import {
 import { listFtlImportCandidates } from "@/lib/ftlExport/importCandidates";
 import { computeFtlExportStatuses } from "@/lib/ftlExport/status";
 import { requireShipmentAccess } from "@/lib/permissions";
-import { resolveJafzaLandRoute } from "@/lib/routes/jafzaLandRoutes";
+import {
+  resolveJafzaLandRoute,
+  type JafzaLandRouteId,
+} from "@/lib/routes/jafzaLandRoutes";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
 import {
@@ -39,6 +42,11 @@ import {
   parseStepFieldValues,
   stepFieldDocType,
 } from "@/lib/stepFields";
+import {
+  trackingRegionFlowForRoute,
+  trackingStagesForRegion,
+  type TrackingRegion,
+} from "@/components/shipments/ftl-export/forms/trackingTimelineConfig";
 
 type ShipmentStepLite = {
   id: number;
@@ -155,6 +163,84 @@ function hasTrackingAgentPrerequisite(input: {
   return true;
 }
 
+function resolveSyriaModeForTracking(input: {
+  agentsValues: Record<string, unknown>;
+  trackingValues: Record<string, unknown>;
+}) {
+  const fromTracking = getString(input.trackingValues.syria_clearance_mode).toUpperCase();
+  if (fromTracking === "ZAXON" || fromTracking === "CLIENT") {
+    return fromTracking as "ZAXON" | "CLIENT";
+  }
+  const fromAgents = getString(input.agentsValues.naseeb_clearance_mode).toUpperCase();
+  if (fromAgents === "ZAXON" || fromAgents === "CLIENT") {
+    return fromAgents as "ZAXON" | "CLIENT";
+  }
+  return "CLIENT" as const;
+}
+
+function trackingRegionsForStepName(
+  stepName: string,
+  routeId: JafzaLandRouteId,
+): TrackingRegion[] {
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingUae) return ["uae"];
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingKsa) return ["ksa"];
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingJordan) {
+    return routeId === "JAFZA_TO_KSA" ? [] : ["jordan"];
+  }
+  if (stepName === FTL_EXPORT_STEP_NAMES.trackingSyria) {
+    if (routeId === "JAFZA_TO_KSA") return [];
+    if (routeId === "JAFZA_TO_MUSHTARAKAH") return ["mushtarakah", "lebanon"];
+    return ["syria"];
+  }
+  return [];
+}
+
+function trackingStepNameForRegion(region: TrackingRegion) {
+  if (region === "uae") return FTL_EXPORT_STEP_NAMES.trackingUae;
+  if (region === "ksa") return FTL_EXPORT_STEP_NAMES.trackingKsa;
+  if (region === "jordan") return FTL_EXPORT_STEP_NAMES.trackingJordan;
+  return FTL_EXPORT_STEP_NAMES.trackingSyria;
+}
+
+function trackingStepOrderForRoute(routeId: JafzaLandRouteId) {
+  return trackingRegionFlowForRoute(routeId)
+    .map((entry) => trackingStepNameForRegion(entry.id))
+    .filter((stepName, index, all) => all.indexOf(stepName) === index) as string[];
+}
+
+function checkpointFieldKeysForStep(input: {
+  stepName: string;
+  routeId: JafzaLandRouteId;
+  stepValues: Record<string, unknown>;
+  agentsValues: Record<string, unknown>;
+}) {
+  const fieldKeys = new Set<string>();
+  const regions = trackingRegionsForStepName(input.stepName, input.routeId);
+  if (!regions.length) return fieldKeys;
+
+  const syriaMode = resolveSyriaModeForTracking({
+    agentsValues: input.agentsValues,
+    trackingValues: input.stepValues,
+  });
+
+  for (const region of regions) {
+    const stages = trackingStagesForRegion({
+      region,
+      routeId: input.routeId,
+      syriaMode,
+    });
+    for (const stage of stages) {
+      if (stage.type !== "checkpoint") continue;
+      fieldKeys.add(stage.dateKey);
+      if (stage.flagKey) {
+        fieldKeys.add(stage.flagKey);
+      }
+    }
+  }
+
+  return fieldKeys;
+}
+
 async function ensureInvoiceNumberUnique(input: {
   shipmentId: number;
   currentStepId: number;
@@ -260,6 +346,53 @@ export async function updateFtlStepAction(shipmentId: number, formData: FormData
       })
     ) {
       redirect(appendParam(returnBase, "error", "tracking_agent_required"));
+    }
+
+    const checkpointFieldKeys = checkpointFieldKeysForStep({
+      stepName: step.name,
+      routeId,
+      stepValues: toRecord(mergedValues),
+      agentsValues: toRecord(agentsValues),
+    });
+    const touchedTrackingSection = [...touchedFieldKeys].some((key) =>
+      checkpointFieldKeys.has(key),
+    );
+    if (touchedTrackingSection) {
+      const trackingStepOrder = trackingStepOrderForRoute(routeId);
+      const currentStepIndex = trackingStepOrder.indexOf(step.name);
+      if (currentStepIndex > 0) {
+        const previousSteps = trackingStepOrder.slice(0, currentStepIndex);
+        const docsBeforeSave = await listDocuments(shipmentId);
+        const docTypesBeforeSave = new Set(
+          docsBeforeSave
+            .filter((doc) => doc.is_received)
+            .map((doc) => String(doc.document_type)),
+        );
+        const previewStepsByName: Record<
+          string,
+          { id: number; values: Record<string, unknown> } | undefined
+        > = {};
+        for (const row of steps) {
+          previewStepsByName[row.name] = {
+            id: row.id,
+            values:
+              row.id === stepId
+                ? (mergedValues as Record<string, unknown>)
+                : (parseStepFieldValues(row.field_values_json) as Record<string, unknown>),
+          };
+        }
+        const previewStatus = computeFtlExportStatuses({
+          stepsByName: previewStepsByName,
+          docTypes: docTypesBeforeSave,
+          routeId,
+        });
+        const hasIncompletePrevious = previousSteps.some(
+          (previousStepName) => previewStatus.statuses[previousStepName] !== "DONE",
+        );
+        if (hasIncompletePrevious) {
+          redirect(appendParam(returnBase, "error", "tracking_sequence"));
+        }
+      }
     }
   }
 

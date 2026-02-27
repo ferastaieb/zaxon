@@ -247,15 +247,23 @@ export function FtlExportWorkspace({
     if (tabId === "jordan") return jordanStep;
     return syriaStep;
   };
+  const stepNameForTrackingTab = (tabId: FtlTrackingTab) => {
+    if (tabId === "uae") return FTL_EXPORT_STEP_NAMES.trackingUae;
+    if (tabId === "ksa") return FTL_EXPORT_STEP_NAMES.trackingKsa;
+    if (tabId === "jordan") return FTL_EXPORT_STEP_NAMES.trackingJordan;
+    return FTL_EXPORT_STEP_NAMES.trackingSyria;
+  };
 
   const trackingRegionStates = trackingFlow.map((regionEntry) => {
     const step = stepForTrackingTab(regionEntry.id as FtlTrackingTab);
+    const stepName = stepNameForTrackingTab(regionEntry.id as FtlTrackingTab);
+    const stepStatus = computedStatus.statuses[stepName] ?? step?.status ?? "PENDING";
     const latestDate = latestDateValue((step?.values ?? {}) as Record<string, unknown>);
     const stalled =
-      !!latestDate && step?.status !== "DONE" && daysSince(latestDate) >= 3;
+      !!latestDate && stepStatus !== "DONE" && daysSince(latestDate) >= 3;
     return {
       ...regionEntry,
-      stepStatus: step?.status ?? "PENDING",
+      stepStatus,
       stalled,
     };
   });
@@ -646,6 +654,18 @@ export function FtlExportWorkspace({
                     ? FTL_EXPORT_STEP_NAMES.trackingJordan
                     : FTL_EXPORT_STEP_NAMES.trackingSyria;
             const region = trackingTab as TrackingRegion;
+            const trackingOrder = trackingFlow.map((entry) => entry.id as FtlTrackingTab);
+            const trackingTabIndex = trackingOrder.indexOf(trackingTab);
+            const previousRegionStates =
+              trackingTabIndex > 0 ? trackingRegionStates.slice(0, trackingTabIndex) : [];
+            const blockingRegionState = previousRegionStates.find(
+              (entry) => (entry.stepStatus ?? "PENDING") !== "DONE",
+            );
+            const currentRegionLabel =
+              trackingRegionStates.find((entry) => entry.id === trackingTab)?.label ??
+              trackingTab.toUpperCase();
+            const blockingRegionLabel = blockingRegionState?.label;
+            const trackingSequenceLocked = trackingTabIndex > 0 && !!blockingRegionState;
 
             if (!activeStep) return <MissingStep name={missingStepName} />;
 
@@ -662,6 +682,12 @@ export function FtlExportWorkspace({
                 lockedMessage={
                   !trackingUnlocked
                     ? "Tracking starts only after loading is done and export invoice is finalized."
+                    : undefined
+                }
+                trackingSectionLocked={trackingSequenceLocked}
+                trackingSectionLockedMessage={
+                  trackingSequenceLocked
+                    ? `Complete ${blockingRegionLabel} tracking before updating ${currentRegionLabel} tracking checkpoints. Customs section remains available.`
                     : undefined
                 }
                 syriaClearanceMode={syriaClearanceMode}

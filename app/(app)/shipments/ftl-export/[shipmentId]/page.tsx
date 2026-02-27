@@ -133,6 +133,9 @@ function errorMessage(error: string | null) {
   if (error === "tracking_agent_required") {
     return "Assign the corresponding customs agent in Customs Agents before updating that tracking border.";
   }
+  if (error === "tracking_sequence") {
+    return "Tracking checkpoints must follow route sequence: complete the previous region before starting the next one. Customs section is still available.";
+  }
   if (error === "import_reference_invalid") {
     return "Import references must be selected from existing import shipments.";
   }

@@ -38,6 +38,8 @@ type Props = {
   region: TrackingRegion;
   locked: boolean;
   lockedMessage?: string;
+  trackingSectionLocked?: boolean;
+  trackingSectionLockedMessage?: string;
   syriaClearanceMode?: SyriaClearanceMode;
   agentGate: TrackingAgentGate;
   routeId?: JafzaLandRouteId;
@@ -166,6 +168,8 @@ export function TrackingStepForm({
   region,
   locked,
   lockedMessage,
+  trackingSectionLocked = false,
+  trackingSectionLockedMessage,
   syriaClearanceMode,
   agentGate,
   routeId,
@@ -181,7 +185,9 @@ export function TrackingStepForm({
   const [notes, setNotes] = useState(step.notes ?? "");
   const [openStageId, setOpenStageId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<Record<string, boolean>>({});
-  const disableForm = !canEdit || locked;
+  const disableCustomsSection = !canEdit || locked;
+  const disableTrackingSection = !canEdit || locked || trackingSectionLocked;
+  const disableNotes = !canEdit || locked;
   const effectiveRouteId = routeId ?? "JAFZA_TO_SYRIA";
 
   const setValue = (key: string, value: string) => {
@@ -330,7 +336,7 @@ export function TrackingStepForm({
                 const stageBlockedByAgent = !!entry.gate && !entry.gate.ready;
                 const stageBlockedBySequence = false;
                 const stageBlocked = stageBlockedByAgent || stageBlockedBySequence;
-                const stageDisabled = disableForm || stageBlocked;
+                const stageDisabled = disableCustomsSection || stageBlocked;
                 const doc =
                   stage.fileKey && stage.type === "customs"
                     ? docFor(latestDocsByType, step.id, stage.fileKey)
@@ -429,6 +435,11 @@ export function TrackingStepForm({
           <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
             Section tracking
           </div>
+          {trackingSectionLocked && trackingSectionLockedMessage ? (
+            <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+              {trackingSectionLockedMessage}
+            </div>
+          ) : null}
           <div className="overflow-x-auto pb-1">
             <div className="flex min-w-max items-center gap-2">
               {trackingStates.map((entry, index) => {
@@ -466,7 +477,7 @@ export function TrackingStepForm({
                     <button
                       type="button"
                       onClick={() => setOpenStageId(entry.stage.id)}
-                      disabled={disableForm || stageBlocked}
+                      disabled={disableTrackingSection || stageBlocked}
                       className={`w-40 rounded-lg border px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-80 ${buttonClass}`}
                     >
                       <div className="flex items-center gap-2">
@@ -518,7 +529,7 @@ export function TrackingStepForm({
           const stageBlockedByAgent = !!entry.gate && !entry.gate.ready;
           const stageBlockedBySequence = stageSequenceBlockedById.get(stage.id) ?? false;
           const stageBlocked = stageBlockedByAgent || stageBlockedBySequence;
-          const stageDisabled = disableForm || stageBlocked;
+          const stageDisabled = disableTrackingSection || stageBlocked;
 
           return (
             <div
@@ -657,7 +668,7 @@ export function TrackingStepForm({
             name="notes"
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            disabled={disableForm}
+            disabled={disableNotes}
             className="min-h-20 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
           />
         </label>
