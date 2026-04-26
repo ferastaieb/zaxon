@@ -294,7 +294,7 @@ export function FclImportWorkspace({
 }: WorkspaceProps) {
   const [showPalette, setShowPalette] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const trackingLink = trackingToken ? `/track/fcl/${trackingToken}` : "";
+  const trackingLink = trackingToken ? `/track/${trackingToken}` : "";
   const isFull = mode === "full";
   const [mainTab, setMainTab] = useState<FclMainTab>(() =>
     isFull && initialTab && isMainTab(initialTab) ? initialTab : "order-overview",

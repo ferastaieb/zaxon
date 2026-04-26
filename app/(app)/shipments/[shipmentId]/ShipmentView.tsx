@@ -364,11 +364,7 @@ export default function ShipmentView(props: ShipmentViewProps) {
             fclContainerNames.has(step.name),
     );
 
-    const trackingLink = trackingToken
-        ? isFclWorkflow
-            ? `/track/fcl/${trackingToken}`
-            : `/track/${trackingToken}`
-        : "-";
+    const trackingLink = trackingToken ? `/track/${trackingToken}` : "-";
 
     const trackingStepsView = isFclWorkflow
         ? steps.filter((step) => fclTrackingNames.has(step.name))

@@ -53,8 +53,7 @@ export type FtlClientTrackingDoc = {
 
 export type FtlClientTrackingProgressState = "PENDING" | "IN_PROGRESS" | "DONE";
 export type FtlClientTrackingAvailability = "AVAILABLE" | "NOT_AVAILABLE" | "UNAVAILABLE";
-export type FtlClientTrackingTab = "overview" | "tracking" | "documents" | "cargo";
-export type FtlClientTrackingSubTab = "overview" | "loading" | "international";
+export type FtlClientTrackingTab = "overview" | "trucks" | "documents" | "tracking";
 
 export type FtlClientStatusChip = {
   id: string;
@@ -125,6 +124,54 @@ export type FtlClientDocumentRow = {
   reason: string | null;
   file: { id: number; file_name: string } | null;
   details: string[];
+  number?: string | null;
+  date?: string | null;
+};
+
+export type FtlClientTimelineMilestone = {
+  id: string;
+  label: string;
+  state: FtlClientTrackingProgressState;
+  date: string | null;
+};
+
+export type FtlClientPlanTrailerRow = {
+  index: number;
+  trailer_type: string;
+};
+
+export type FtlClientConfirmedTruckRow = {
+  index: number;
+  truck_reference: string;
+  truck_number: string;
+  trailer_type: string;
+  driver_name: string;
+};
+
+export type FtlClientLoadedTruckRow = {
+  index: number;
+  truck_reference: string;
+  truck_number: string;
+  truck_type: string;
+  loading_place: string;
+  actual_loading_date: string | null;
+  total_quantity_label: string;
+  total_weight_kg: number;
+  cargo_description: string;
+  photo: { id: number; file_name: string } | null;
+};
+
+export type FtlClientTrackingCheckpointRow = {
+  id: string;
+  label: string;
+  date: string | null;
+  state: FtlClientTrackingProgressState;
+};
+
+export type FtlClientTrackingCheckpointGroup = {
+  id: string;
+  label: string;
+  checkpoints: FtlClientTrackingCheckpointRow[];
 };
 
 export type FtlClientImportReferenceRow = {
@@ -190,6 +237,25 @@ export type FtlClientTrackingViewModel = {
   shipment_status_label: string;
   shipment_date: string | null;
   last_updated_at: string;
+  timeline: FtlClientTimelineMilestone[];
+  plan: {
+    loading_date: string | null;
+    total_trucks_planned: number;
+    planned_trailers: FtlClientPlanTrailerRow[];
+  };
+  confirmed_trucks: FtlClientConfirmedTruckRow[];
+  cargo_loaded_details: FtlClientLoadedTruckRow[];
+  document_sections: {
+    export_invoice: FtlClientDocumentRow;
+    loading_sheets: FtlClientDocumentRow[];
+    export_transit_declarations: FtlClientDocumentRow[];
+    entry_declarations: FtlClientDocumentRow[];
+  };
+  tracking_groups: FtlClientTrackingCheckpointGroup[];
+  final_delivery: {
+    delivered_to: string;
+    date: string | null;
+  };
   status_chips: FtlClientStatusChip[];
   region_lanes: FtlClientRegionLane[];
   compact_checkpoints: FtlClientCheckpointSummary[];
@@ -221,6 +287,7 @@ export type FtlClientTrackingViewModel = {
 
 type BuildInput = {
   shipment: FtlClientTrackingShipment;
+  customer_address?: string | null;
   steps: FtlClientTrackingStep[];
   docs: FtlClientTrackingDoc[];
   connectedShipments?: unknown[];
@@ -338,6 +405,61 @@ function formatDateRangeLabel(dates: Array<string | null>) {
   const last = filtered[filtered.length - 1];
   if (first === last) return first;
   return `${first} to ${last}`;
+}
+
+function latestDate(dates: Array<string | null>) {
+  const filtered = dates
+    .filter((value): value is string => !!value)
+    .sort((a, b) => b.localeCompare(a));
+  return filtered[0] ?? null;
+}
+
+function toAvailabilityFromState(
+  state: FtlClientTrackingProgressState,
+): FtlClientTrackingAvailability {
+  if (state === "DONE") return "AVAILABLE";
+  if (state === "IN_PROGRESS") return "NOT_AVAILABLE";
+  return "NOT_AVAILABLE";
+}
+
+function checkpointStateFromRuntime(
+  runtime: StageRuntime | undefined,
+): FtlClientTrackingProgressState {
+  if (!runtime) return "PENDING";
+  if (runtime.done) return "DONE";
+  if (runtime.touched) return "IN_PROGRESS";
+  return "PENDING";
+}
+
+function loadingPlaceLabel(row: LoadingTruckRow) {
+  if (row.loading_origin === "ZAXON_WAREHOUSE") return "Zaxon Warehouse";
+  if (row.loading_origin === "EXTERNAL_SUPPLIER") {
+    const parts = [row.supplier_name, row.external_loading_location].filter((value) => !!value);
+    return parts.length ? parts.join(" - ") : "Supplier";
+  }
+  if (row.loading_origin === "MIXED") {
+    const parts = [row.supplier_name, row.external_loading_location].filter((value) => !!value);
+    return parts.length
+      ? `Supplier + Zaxon Warehouse (${parts.join(" - ")})`
+      : "Supplier + Zaxon Warehouse";
+  }
+  return "Not selected";
+}
+
+function parsePlannedTrailers(values: Record<string, unknown>): FtlClientPlanTrailerRow[] {
+  const raw = values.planned_trailers;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry, index) => {
+      const row = toRecord(entry);
+      const trailerType = getString(row.trailer_type);
+      if (!trailerType) return null;
+      return {
+        index,
+        trailer_type: trailerType,
+      };
+    })
+    .filter((value): value is FtlClientPlanTrailerRow => value !== null);
 }
 
 function fileForKey(
@@ -659,6 +781,15 @@ export function buildFtlClientTrackingViewModel(
     };
   });
 
+  const stageRuntimeById = new Map<string, StageRuntime>();
+  for (const region of regionsRuntime) {
+    for (const stage of region.stageRuntime) {
+      if (!stageRuntimeById.has(stage.stage.id)) {
+        stageRuntimeById.set(stage.stage.id, stage);
+      }
+    }
+  }
+
   const currentLaneIndex = (() => {
     const firstInProgress = regionsRuntime.findIndex((entry) => entry.state === "IN_PROGRESS");
     if (firstInProgress >= 0) return firstInProgress;
@@ -794,6 +925,18 @@ export function buildFtlClientTrackingViewModel(
     };
   });
 
+  const plannedTrailers = parsePlannedTrailers(trucks.values);
+  const totalTrucksPlanned = Math.max(0, safeNumber(trucks.values.total_trucks_planned));
+  const confirmedTrucks: FtlClientConfirmedTruckRow[] = activeTruckRows
+    .filter((row) => row.booking_status === "BOOKED" || row.truck_booked)
+    .map((row) => ({
+      index: row.index,
+      truck_reference: row.truck_reference || `Truck ${row.index + 1}`,
+      truck_number: row.truck_number || "-",
+      trailer_type: row.trailer_type || "-",
+      driver_name: row.driver_name || "TBD",
+    }));
+
   const expectedLoadingDateLabel = formatDateRangeLabel(
     activeTruckRows.map((row) => toDateOrNull(row.estimated_loading_date)),
   );
@@ -862,6 +1005,8 @@ export function buildFtlClientTrackingViewModel(
     reason: exportInvoiceFile ? null : "Export invoice was not shared yet.",
     file: exportInvoiceFile,
     details: [],
+    number: getString(invoice.values.invoice_number) || null,
+    date: toDateOrNull(invoice.values.invoice_date),
   };
 
   const customsRows: FtlClientDocumentRow[] = [];
@@ -889,6 +1034,7 @@ export function buildFtlClientTrackingViewModel(
       reason: base.reason,
       file: base.status === "AVAILABLE" ? stage?.file ?? null : null,
       details: base.details,
+      date: stage?.timestamp ?? null,
     });
   }
 
@@ -1037,6 +1183,26 @@ export function buildFtlClientTrackingViewModel(
   ).join(" | ");
   const cargoDescription = descriptionFromImports || input.shipment.cargo_description || "N/A";
 
+  const cargoLoadedDetails: FtlClientLoadedTruckRow[] = trucksOverview
+    .map((truck) => {
+      const load = loadingByIndex.get(truck.index);
+      if (!load || !effectiveLoaded(load)) return null;
+      const loadingPhoto = fileForTruckKey(docsByType, loading.stepId, truck.index, "loading_photo");
+      return {
+        index: truck.index,
+        truck_reference: truck.truck_reference,
+        truck_number: truck.truck_number || truck.truck_reference,
+        truck_type: truck.trailer_type || "-",
+        loading_place: loadingPlaceLabel(load),
+        actual_loading_date: rowActualLoadingDate(load),
+        total_quantity_label: rowQuantityLabel(load),
+        total_weight_kg: Number(rowWeightKg(load).toFixed(2)),
+        cargo_description: cargoDescription,
+        photo: loadingPhoto,
+      };
+    })
+    .filter((value): value is FtlClientLoadedTruckRow => value !== null);
+
   const totalQuantityLabel =
     totalWeightFromImports > 0 || quantityByUnit.size
       ? formatQuantitySummary(quantityByUnit)
@@ -1079,6 +1245,202 @@ export function buildFtlClientTrackingViewModel(
         eta: null,
       };
 
+  const cargoLoadedDate = latestDate(
+    loadingRows.flatMap((row) => {
+      if (row.loading_origin === "MIXED") {
+        return [
+          toDateOrNull(row.mixed_supplier_loading_date),
+          toDateOrNull(row.mixed_zaxon_loading_date),
+        ];
+      }
+      return [rowActualLoadingDate(row)];
+    }),
+  );
+  const cargoExportedRuntime = stageRuntimeById.get("sila_exit");
+  const cargoReceivedStageId =
+    routeId === "JAFZA_TO_KSA"
+      ? "batha_delivered"
+      : routeId === "JAFZA_TO_MUSHTARAKAH"
+        ? "masnaa_delivered"
+        : "syria_delivered";
+  const cargoReceivedRuntime = stageRuntimeById.get(cargoReceivedStageId);
+  const timeline: FtlClientTimelineMilestone[] = [
+    {
+      id: "order-received",
+      label: "Order Received",
+      state: orderReceivedState,
+      date: toDateOrNull(plan.values.order_received_date),
+    },
+    {
+      id: "cargo-collected",
+      label: "Cargo Collected",
+      state: "PENDING",
+      date: null,
+    },
+    {
+      id: "cargo-loaded",
+      label: "Cargo Loaded",
+      state: loadingState,
+      date: cargoLoadedDate,
+    },
+    {
+      id: "cargo-exported",
+      label: "Cargo Exported",
+      state: checkpointStateFromRuntime(cargoExportedRuntime),
+      date: cargoExportedRuntime?.timestamp ?? null,
+    },
+    {
+      id: "cargo-received",
+      label: "Cargo Received",
+      state: checkpointStateFromRuntime(cargoReceivedRuntime),
+      date: cargoReceivedRuntime?.timestamp ?? null,
+    },
+  ];
+
+  const loadingSheetRows: FtlClientDocumentRow[] = trucksOverview.map((truck) => {
+    const file = fileForTruckKey(docsByType, loading.stepId, truck.index, "loading_sheet_upload");
+    return {
+      id: `loading-sheet-${truck.index}`,
+      label: `${truck.truck_reference} - Loading sheet`,
+      status: file ? "AVAILABLE" : "NOT_AVAILABLE",
+      reason: file ? null : "Loading sheet was not shared yet.",
+      file,
+      details: [],
+      date:
+        loadingByIndex.get(truck.index) && rowActualLoadingDate(loadingByIndex.get(truck.index)!)
+          ? rowActualLoadingDate(loadingByIndex.get(truck.index)!)
+          : null,
+    };
+  });
+
+  const exportTransitDeclarations = customsRows.filter(
+    (row) => row.id !== "customs-syria_customs",
+  );
+  const entryDeclarations = customsRows.filter((row) => row.id === "customs-syria_customs");
+
+  const deliveredTo =
+    getString(trackingSyria.values.syria_offload_location) ||
+    (input.customer_address ?? "").trim() ||
+    "TBD";
+
+  const trackingGroupDefs: Array<{
+    id: string;
+    label: string;
+    checkpoints: Array<{ id: string; label: string }>;
+  }> = [
+    {
+      id: "jafza",
+      label: "JAFZA",
+      checkpoints: [
+        { id: "jebel_ali_sealed", label: "Sealed date" },
+        { id: "jebel_ali_exit", label: "Exit date" },
+      ],
+    },
+    {
+      id: "sila",
+      label: "SILA",
+      checkpoints: [
+        { id: "sila_arrived", label: "Arrived date" },
+        { id: "sila_exit", label: "Exit date" },
+      ],
+    },
+  ];
+  if (routeId === "JAFZA_TO_KSA") {
+    trackingGroupDefs.push({
+      id: "batha",
+      label: "BATHA",
+      checkpoints: [
+        { id: "batha_arrived", label: "Arrived date" },
+        { id: "batha_entered", label: "Entered date" },
+        { id: "batha_delivered", label: "Delivered date" },
+      ],
+    });
+  } else {
+    trackingGroupDefs.push(
+      {
+        id: "batha",
+        label: "BATHA",
+        checkpoints: [
+          { id: "batha_arrived", label: "Arrived date" },
+          { id: "batha_exit", label: "Exit date" },
+        ],
+      },
+      {
+        id: "hadietha",
+        label: "HADITHA",
+        checkpoints: [{ id: "hadietha_exit", label: "Exit date" }],
+      },
+      {
+        id: "omari",
+        label: "OMARI",
+        checkpoints: [
+          { id: "omari_arrived", label: "Arrived date" },
+          { id: "omari_exit", label: "Exit date" },
+        ],
+      },
+      {
+        id: "jaber",
+        label: "JABER",
+        checkpoints: [{ id: "jaber_exit", label: "Exit date" }],
+      },
+    );
+    if (routeId === "JAFZA_TO_MUSHTARAKAH") {
+      trackingGroupDefs.push(
+        {
+          id: "mushtarakah",
+          label: "MUSHTARAKAH",
+          checkpoints: [
+            { id: "mushtarakah_entered", label: "Entered date" },
+            { id: "mushtarakah_offloaded_warehouse", label: "Offloaded date" },
+            { id: "mushtarakah_loaded_syrian_trucks", label: "Loaded date" },
+            { id: "mushtarakah_exit", label: "Exit date" },
+          ],
+        },
+        {
+          id: "naseeb",
+          label: "NASEEB",
+          checkpoints: [
+            { id: "naseeb_arrived", label: "Arrived date" },
+            { id: "naseeb_entered", label: "Entered date" },
+          ],
+        },
+        {
+          id: "masnaa",
+          label: "MASNAA",
+          checkpoints: [
+            { id: "masnaa_arrived", label: "Arrived date" },
+            { id: "masnaa_entered", label: "Entered date" },
+            { id: "masnaa_delivered", label: "Delivered date" },
+          ],
+        },
+      );
+    } else {
+      trackingGroupDefs.push({
+        id: "naseeb",
+        label: "NASEEB",
+        checkpoints: [
+          { id: "syria_arrived", label: "Arrived date" },
+          { id: "syria_exit", label: "Exit date" },
+          { id: "syria_delivered", label: "Delivered date" },
+        ],
+      });
+    }
+  }
+
+  const trackingGroups: FtlClientTrackingCheckpointGroup[] = trackingGroupDefs.map((group) => ({
+    id: group.id,
+    label: group.label,
+    checkpoints: group.checkpoints.map((checkpoint) => {
+      const runtime = stageRuntimeById.get(checkpoint.id);
+      return {
+        id: checkpoint.id,
+        label: checkpoint.label,
+        date: runtime?.timestamp ?? null,
+        state: checkpointStateFromRuntime(runtime),
+      };
+    }),
+  }));
+
   return {
     shipment_code: input.shipment.shipment_code,
     route_id: routeId,
@@ -1087,6 +1449,25 @@ export function buildFtlClientTrackingViewModel(
     shipment_status_label: shipmentStatusLabel,
     shipment_date: shipmentDate,
     last_updated_at: input.shipment.last_update_at,
+    timeline,
+    plan: {
+      loading_date: toDateOrNull(plan.values.planned_loading_date),
+      total_trucks_planned: totalTrucksPlanned,
+      planned_trailers: plannedTrailers,
+    },
+    confirmed_trucks: confirmedTrucks,
+    cargo_loaded_details: cargoLoadedDetails,
+    document_sections: {
+      export_invoice: exportInvoiceRow,
+      loading_sheets: loadingSheetRows,
+      export_transit_declarations: exportTransitDeclarations,
+      entry_declarations: entryDeclarations,
+    },
+    tracking_groups: trackingGroups,
+    final_delivery: {
+      delivered_to: deliveredTo,
+      date: cargoReceivedRuntime?.timestamp ?? null,
+    },
     status_chips: statusChips,
     region_lanes: regionLanes,
     compact_checkpoints: compactCheckpoints,

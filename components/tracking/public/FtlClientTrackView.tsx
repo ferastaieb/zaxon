@@ -1,31 +1,23 @@
-﻿"use client";
 import Link from "next/link";
-import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
+import {
+  CalendarRange,
+  Clock3,
+  FileImage,
+  FileText,
+  MapPin,
+  Route,
+  Truck,
+  UserRound,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/Badge";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import type {
   FtlClientTrackingAvailability,
   FtlClientTrackingProgressState,
-  FtlClientTrackingSubTab,
   FtlClientTrackingTab,
   FtlClientTrackingViewModel,
 } from "@/lib/ftlExport/clientTrackingView";
-import type { TrackingConnectedShipment } from "@/lib/data/tracking";
-import { overallStatusLabel } from "@/lib/domain";
-import type { TrackingRegion } from "@/components/shipments/ftl-export/forms/trackingTimelineConfig";
-import { ShipmentJourneyMap } from "./ShipmentJourneyMap";
-import {
-  Map as MapIcon,
-  Truck,
-  Clock,
-  LogOut,
-  Info,
-  CalendarDays,
-  Activity,
-  FileText,
-  Package,
-} from "lucide-react";
 
 type PublicRequest = {
   id: number;
@@ -45,29 +37,14 @@ type PublicException = {
 
 type Props = {
   token: string;
-  shipmentCode: string;
+  shipmentId: number;
   uploaded: boolean;
   activeTab: FtlClientTrackingTab;
-  activeTrackingTab: FtlClientTrackingSubTab;
-  activeRegion: TrackingRegion | null;
-  activeTruck: number | null;
   viewModel: FtlClientTrackingViewModel;
-  connectedShipments: TrackingConnectedShipment[];
   exceptions: PublicException[];
   requests: PublicRequest[];
   uploadRequestedDocAction: (requestId: number, formData: FormData) => Promise<void>;
-  logoutTrackingAction: () => Promise<void>;
 };
-
-const headingFont = Space_Grotesk({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
-
-const bodyFont = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
 
 function fmtDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -97,14 +74,14 @@ function progressLabel(state: FtlClientTrackingProgressState) {
 
 function availabilityTone(status: FtlClientTrackingAvailability): "green" | "yellow" | "zinc" {
   if (status === "AVAILABLE") return "green";
-  if (status === "UNAVAILABLE") return "yellow";
-  return "zinc";
+  if (status === "UNAVAILABLE") return "zinc";
+  return "yellow";
 }
 
 function availabilityLabel(status: FtlClientTrackingAvailability) {
   if (status === "AVAILABLE") return "Available";
-  if (status === "UNAVAILABLE") return "Unavailable by rule";
-  return "Not available";
+  if (status === "UNAVAILABLE") return "Unavailable";
+  return "Pending";
 }
 
 function exceptionTone(risk: string) {
@@ -113,374 +90,552 @@ function exceptionTone(risk: string) {
   return "zinc";
 }
 
-const MAIN_TABS: Array<{ id: FtlClientTrackingTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "documents", label: "Documents" },
-  { id: "cargo", label: "Cargo Details" },
-];
+function hrefFor(token: string, shipmentId: number, tab: FtlClientTrackingTab) {
+  return `/track/${token}?shipment=${shipmentId}&tab=${tab}`;
+}
+
+function sectionClassName() {
+  return "rounded-[2rem] border border-stone-200 bg-white p-5 shadow-sm sm:p-6";
+}
+
+function documentCardClassName(status: FtlClientTrackingAvailability) {
+  if (status === "AVAILABLE") {
+    return "border-emerald-200 bg-emerald-50/70";
+  }
+  if (status === "UNAVAILABLE") {
+    return "border-stone-200 bg-stone-100 text-stone-500";
+  }
+  return "border-stone-200 bg-stone-50";
+}
 
 export function FtlClientTrackView({
   token,
-  shipmentCode,
+  shipmentId,
   uploaded,
   activeTab,
-  activeTrackingTab,
-  activeRegion,
-  activeTruck,
   viewModel,
-  connectedShipments,
   exceptions,
   requests,
   uploadRequestedDocAction,
-  logoutTrackingAction,
 }: Props) {
   const openRequests = requests.filter((request) => request.status === "OPEN");
-  const hasConnected = connectedShipments.length > 0;
-  const hasUpdates = exceptions.length > 0;
-  const hasRequests = openRequests.length > 0;
-
-  const hrefFor = (input: {
-    tab?: FtlClientTrackingTab;
-    trackingTab?: FtlClientTrackingSubTab;
-    region?: TrackingRegion | null;
-    truck?: number | null;
-  }) => {
-    const params = new URLSearchParams();
-    const tab = input.tab ?? activeTab;
-    params.set("tab", tab);
-    if (tab === "tracking") {
-      params.set("trackingTab", input.trackingTab ?? activeTrackingTab);
-      const region = input.region === undefined ? activeRegion : input.region;
-      if (region) params.set("region", region);
-    }
-    if (tab === "cargo") {
-      const truck = input.truck === undefined ? activeTruck : input.truck;
-      if (typeof truck === "number" && Number.isFinite(truck) && truck >= 0) {
-        params.set("truck", String(truck));
-      }
-    }
-    return `/track/${token}?${params.toString()}`;
-  };
 
   return (
-    <div className={`${bodyFont.className} min-h-screen pb-24 sm:pb-10 relative overflow-hidden bg-slate-50`}>
-      {/* Decorative background blobs */}
-      <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-emerald-200/20 blur-3xl pointer-events-none" />
-      <div className="fixed bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-blue-200/20 blur-3xl pointer-events-none" />
-
-      <div className="relative mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-10 z-10">
-        {activeTab === "overview" ? null : (
-          <header className="rounded-[2rem] border border-white/60 bg-white/60 backdrop-blur-xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] sm:p-7 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-blue-500" />
-            <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-emerald-600 flex items-center gap-1.5 mb-1.5">
-                  <Truck className="w-3.5 h-3.5" /> Shipment Tracking
-                </p>
-                <h1 className={`${headingFont.className} text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl`}>
-                  {shipmentCode}
-                </h1>
-                <p className="mt-2 text-sm font-medium text-slate-600 flex items-center gap-1.5">
-                  <MapIcon className="w-4 h-4 text-slate-400" /> {viewModel.route_label}
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Badge tone="zinc">{viewModel.service_type_label}</Badge>
-                  <div className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-900 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-900 focus:ring-offset-2">
-                    <span className="mr-1.5 flex h-2 w-2 rounded-full bg-blue-500"></span>
-                    {viewModel.shipment_status_label}
-                  </div>
-                </div>
-              </div>
-              <div className="grid w-full gap-3 grid-cols-2 md:w-auto md:max-w-md">
-                <div className="rounded-2xl border border-white/40 bg-white/50 px-4 py-3 backdrop-blur-md shadow-sm">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500 flex items-center gap-1"><CalendarDays className="w-3 h-3" /> Shipment date</div>
-                  <div className="mt-1 text-sm font-bold text-slate-900">{fmtDate(viewModel.shipment_date)}</div>
-                </div>
-                <div className="rounded-2xl border border-white/40 bg-white/50 px-4 py-3 backdrop-blur-md shadow-sm">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500 flex items-center gap-1"><Clock className="w-3 h-3" /> Last updated</div>
-                  <div className="mt-1 text-sm font-bold text-slate-900">{fmtDateTime(viewModel.last_updated_at)}</div>
-                </div>
-              </div>
+    <div className="space-y-5">
+      <section className={sectionClassName()}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-700">
+              Full Truck Export
             </div>
-          </header>
-        )}
-
-        {/* Sticky Bottom Navbar */}
-        <div className="fixed bottom-0 left-0 right-0 z-50 sm:sticky sm:top-2 sm:bottom-auto px-4 pb-6 pt-2 sm:p-0 sm:pb-0 pointer-events-none mt-6 sm:mt-0">
-          <div className="mx-auto max-w-md sm:max-w-none pointer-events-auto">
-            <div className="rounded-[2rem] sm:rounded-2xl border border-slate-200/60 sm:border-slate-200 bg-white/80 p-2 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] sm:shadow-sm backdrop-blur-xl">
-              <div className="flex justify-around sm:justify-start gap-1 sm:gap-2">
-                {MAIN_TABS.map((tab) => {
-                  const active = activeTab === tab.id;
-                  const Icon = tab.id === "overview" ? Activity : tab.id === "documents" ? FileText : Package;
-                  return (
-                    <Link
-                      key={tab.id}
-                      href={hrefFor({ tab: tab.id, trackingTab: "overview", region: null, truck: null })}
-                      className={`flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-1 sm:gap-2 rounded-2xl sm:rounded-xl px-3 sm:px-4 py-2 text-[10px] sm:text-sm font-bold transition-all sm:flex-1 md:flex-none ${active
-                        ? "bg-slate-900 text-white shadow-md scale-105 sm:scale-100"
-                        : "text-slate-500 hover:bg-slate-100/50 hover:text-slate-900"
-                        }`}
-                    >
-                      <Icon className={`w-5 h-5 sm:w-4 sm:h-4 ${active ? "text-emerald-400 sm:text-emerald-300" : ""}`} />
-                      <span className="tracking-tight">{tab.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-stone-950">
+              {viewModel.shipment_code}
+            </h2>
+            <div className="mt-2 flex flex-wrap gap-3 text-sm text-stone-600">
+              <span className="inline-flex items-center gap-2">
+                <Route className="h-4 w-4 text-stone-400" />
+                {viewModel.route_label}
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <Clock3 className="h-4 w-4 text-stone-400" />
+                Updated {fmtDateTime(viewModel.last_updated_at)}
+              </span>
             </div>
+          </div>
+          <div className="space-y-2 text-right">
+            <Badge tone="blue">{viewModel.shipment_status_label}</Badge>
+            <div className="text-xs text-stone-500">Started {fmtDate(viewModel.shipment_date)}</div>
           </div>
         </div>
 
-        {activeTab === "overview" ? (
-          <section className="mb-8">
-            <ShipmentJourneyMap viewModel={viewModel} />
-          </section>
+        {uploaded ? (
+          <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            Document uploaded successfully.
+          </div>
         ) : null}
 
-        {activeTab === "documents" ? (
-          <section className="mt-8 space-y-6">
-            <div className="rounded-[2rem] border border-white/60 bg-white/60 backdrop-blur-xl p-5 shadow-sm sm:p-7 relative overflow-hidden">
-              <h2 className={`${headingFont.className} text-xl font-bold text-slate-900 mb-6 flex items-center gap-2`}><FileText className="w-5 h-5 text-emerald-500" /> Essential Documents</h2>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+              Delivered To
+            </div>
+            <div className="mt-2 text-sm text-stone-900">{viewModel.final_delivery.delivered_to}</div>
+          </div>
+          <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+              Planned Loading
+            </div>
+            <div className="mt-2 text-sm text-stone-900">{fmtDate(viewModel.plan.loading_date)}</div>
+          </div>
+          <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+              Confirmed Trucks
+            </div>
+            <div className="mt-2 text-sm text-stone-900">{viewModel.confirmed_trucks.length}</div>
+          </div>
+          <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+              Loaded Trucks
+            </div>
+            <div className="mt-2 text-sm text-stone-900">{viewModel.cargo_loaded_details.length}</div>
+          </div>
+        </div>
+      </section>
 
-              <div className="space-y-6">
-                {/* Warehouse Docs */}
-                {viewModel.documents.warehouse.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 mb-3">Warehouse Documents</h3>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {viewModel.documents.warehouse.map((doc) => (
-                        <div key={doc.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="font-semibold text-slate-900">{doc.label}</div>
-                            <Badge tone={availabilityTone(doc.status)}>{availabilityLabel(doc.status)}</Badge>
-                          </div>
-                          {doc.reason ? <div className="text-xs text-slate-500 mb-3">{doc.reason}</div> : null}
-                          {doc.file ? (
-                            <a href={`/api/track/${token}/documents/${doc.file.id}`} className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition">
-                              Download File
-                            </a>
-                          ) : null}
+      <section className="rounded-[2rem] border border-stone-200 bg-white p-2 shadow-sm">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          {([
+            { id: "overview", label: "Overview" },
+            { id: "trucks", label: "Trucks" },
+            { id: "documents", label: "Documents" },
+            { id: "tracking", label: "Tracking" },
+          ] as Array<{ id: FtlClientTrackingTab; label: string }>).map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <Link
+                key={tab.id}
+                href={hrefFor(token, shipmentId, tab.id)}
+                className={`rounded-[1.3rem] px-4 py-3 text-center text-sm font-semibold transition ${
+                  active
+                    ? "bg-stone-950 text-white"
+                    : "bg-stone-50 text-stone-600 hover:bg-teal-50 hover:text-teal-800"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+
+      {activeTab === "overview" ? (
+        <div className="space-y-5">
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <CalendarRange className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">Date Timeline</h3>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              {viewModel.timeline.map((milestone) => (
+                <div
+                  key={milestone.id}
+                  className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-stone-950">{milestone.label}</div>
+                    <Badge tone={progressTone(milestone.state)}>
+                      {progressLabel(milestone.state)}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 text-sm text-stone-700">{fmtDate(milestone.date)}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <Truck className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">Plan</h3>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[260px_1fr]">
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                  Loading Date
+                </div>
+                <div className="mt-2 text-lg font-semibold text-stone-950">
+                  {fmtDate(viewModel.plan.loading_date)}
+                </div>
+                <div className="mt-3 text-sm text-stone-600">
+                  Planned trucks: {viewModel.plan.total_trucks_planned || 0}
+                </div>
+              </div>
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                  Planned Trailer Details
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {viewModel.plan.planned_trailers.map((row) => (
+                    <div
+                      key={`planned-trailer-${row.index}`}
+                      className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-900"
+                    >
+                      Trailer {row.index + 1}: {row.trailer_type}
+                    </div>
+                  ))}
+                  {viewModel.plan.planned_trailers.length === 0 ? (
+                    <div className="text-sm text-stone-500">No planned trailer details yet.</div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {exceptions.length ? (
+            <section className={sectionClassName()}>
+              <h3 className="text-lg font-semibold text-stone-950">Latest Updates</h3>
+              <div className="mt-4 space-y-3">
+                {exceptions.map((exception) => (
+                  <div
+                    key={exception.id}
+                    className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-stone-950">
+                          {exception.exception_name}
                         </div>
-                      ))}
+                        <div className="mt-1 text-xs text-stone-500">
+                          {fmtDateTime(exception.created_at)}
+                        </div>
+                      </div>
+                      <Badge tone={exceptionTone(exception.default_risk)}>
+                        {exception.default_risk === "BLOCKED" ? "Blocked" : "At risk"}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 text-sm text-stone-700">
+                      {exception.customer_message ?? "Our team is working on this update."}
                     </div>
                   </div>
-                )}
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
 
-                {/* Export Invoice */}
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 mb-3">Export Invoice</h3>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md max-w-md">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="font-semibold text-slate-900">{viewModel.documents.export_invoice.label}</div>
-                      <Badge tone={availabilityTone(viewModel.documents.export_invoice.status)}>{availabilityLabel(viewModel.documents.export_invoice.status)}</Badge>
+      {activeTab === "trucks" ? (
+        <div className="space-y-5">
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <Truck className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">Confirmed Trucks</h3>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {viewModel.confirmed_trucks.map((truck) => (
+                <div
+                  key={`confirmed-${truck.index}`}
+                  className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                >
+                  <div className="text-sm font-semibold text-stone-950">
+                    {truck.truck_number}
+                  </div>
+                  <div className="mt-2 space-y-2 text-sm text-stone-700">
+                    <div>Truck type: {truck.trailer_type}</div>
+                    <div className="inline-flex items-center gap-2">
+                      <UserRound className="h-4 w-4 text-stone-400" />
+                      {truck.driver_name}
                     </div>
-                    {viewModel.documents.export_invoice.reason ? <div className="text-xs text-slate-500 mb-3">{viewModel.documents.export_invoice.reason}</div> : null}
-                    {viewModel.documents.export_invoice.file ? (
-                      <a href={`/api/track/${token}/documents/${viewModel.documents.export_invoice.file.id}`} className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition">
-                        Download Invoice
+                  </div>
+                </div>
+              ))}
+              {viewModel.confirmed_trucks.length === 0 ? (
+                <div className="text-sm text-stone-500">No trucks have been confirmed yet.</div>
+              ) : null}
+            </div>
+          </section>
+
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <FileImage className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">Cargo Loaded Details</h3>
+            </div>
+            <div className="mt-4 space-y-3">
+              {viewModel.cargo_loaded_details.map((row) => (
+                <div
+                  key={`cargo-loaded-${row.index}`}
+                  className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-stone-950">
+                        {row.truck_number} / {row.truck_type}
+                      </div>
+                      <div className="mt-1 inline-flex items-center gap-2 text-sm text-stone-600">
+                        <MapPin className="h-4 w-4 text-stone-400" />
+                        {row.loading_place}
+                      </div>
+                    </div>
+                    <Badge tone="green">Loaded</Badge>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-900">
+                      Actual loading date: {fmtDate(row.actual_loading_date)}
+                    </div>
+                    <div className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-900">
+                      Total qty & type: {row.total_quantity_label}
+                    </div>
+                    <div className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-900">
+                      Total weight: {row.total_weight_kg} kg
+                    </div>
+                    <div className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm text-stone-900 sm:col-span-2 xl:col-span-3">
+                      Cargo description: {row.cargo_description}
+                    </div>
+                    {row.photo ? (
+                      <a
+                        href={`/api/track/${token}/documents/${row.photo.id}`}
+                        className="rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm font-medium text-teal-800 hover:underline sm:col-span-2 xl:col-span-1"
+                      >
+                        Loading photo: {row.photo.file_name}
                       </a>
                     ) : null}
                   </div>
                 </div>
-
-                {/* Customs Declarations */}
-                {viewModel.documents.customs.length > 0 && (
-                  <div className="mt-8 pt-6 border-t border-slate-200/60">
-                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 mb-3">Customs Declarations</h3>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {viewModel.documents.customs.map((doc) => (
-                        <div key={doc.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="font-semibold text-slate-900">{doc.label}</div>
-                            <Badge tone={availabilityTone(doc.status)}>{availabilityLabel(doc.status)}</Badge>
-                          </div>
-                          {doc.reason ? <div className="text-xs text-slate-500 mb-2">{doc.reason}</div> : null}
-                          {doc.details.length ? (
-                            <div className="mb-3 space-y-1 text-xs text-slate-600">
-                              {doc.details.map((detail, index) => (
-                                <div key={`${doc.id}-${index}`}>{detail}</div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {doc.file ? (
-                            <a href={`/api/track/${token}/documents/${doc.file.id}`} className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 transition">
-                              Download File
-                            </a>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              ))}
+              {viewModel.cargo_loaded_details.length === 0 ? (
+                <div className="text-sm text-stone-500">No loaded truck details shared yet.</div>
+              ) : null}
             </div>
           </section>
-        ) : null}
-
-        {activeTab === "cargo" ? (
-          <section className="mt-8 space-y-6">
-            <div className="grid gap-4 lg:grid-cols-3">
-              <div className="rounded-[2rem] border border-white/60 bg-white/60 backdrop-blur-xl p-5 shadow-sm sm:p-7 relative overflow-hidden lg:col-span-2">
-                <h2 className={`${headingFont.className} text-xl font-bold text-slate-900 mb-6 flex items-center gap-2`}><Package className="w-5 h-5 text-emerald-500" /> Cargo Details</h2>
-
-                {/* Reference Import Shipment Details */}
-                {viewModel.cargo.import_references.length > 0 && (
-                  <div className="mb-8">
-                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 mb-3">Reference Import Shipment Details</h3>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-left text-sm">
-                        <thead className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500 border-b border-slate-200">
-                          <tr>
-                            <th className="px-3 py-3 font-semibold">Import Reference</th>
-                            <th className="px-3 py-3 font-semibold">BOE</th>
-                            <th className="px-3 py-3 font-semibold">Cargo Description</th>
-                            <th className="px-3 py-3 font-semibold">Allocated Qty</th>
-                            <th className="px-3 py-3 font-semibold text-right">Allocated Wgt</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 bg-white">
-                          {viewModel.cargo.import_references.map((row) => (
-                            <tr key={`import-${row.index}`} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="px-3 py-4 font-medium text-slate-900 whitespace-nowrap">{row.import_reference}</td>
-                              <td className="px-3 py-4 text-slate-600">{row.boe}</td>
-                              <td className="px-3 py-4 text-slate-600">{row.cargo_description}</td>
-                              <td className="px-3 py-4 text-slate-600 whitespace-nowrap">{row.allocated_quantity} {row.package_type}</td>
-                              <td className="px-3 py-4 text-emerald-700 font-semibold text-right whitespace-nowrap">{row.allocated_weight} kg</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 mb-3">Cargo Allocation (Truck-wise)</h3>
-                {viewModel.cargo.truck_allocations.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <thead className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500 border-b border-slate-200">
-                        <tr>
-                          <th className="px-3 py-3 font-semibold">Truck</th>
-                          <th className="px-3 py-3 font-semibold">Loading Origin</th>
-                          <th className="px-3 py-3 font-semibold">Quantity</th>
-                          <th className="px-3 py-3 font-semibold text-right">Weight</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 bg-white">
-                        {viewModel.cargo.truck_allocations.map((row) => (
-                          <tr key={`truck-allocation-${row.index}`} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="px-3 py-4 font-medium text-slate-900 whitespace-nowrap">{row.truck_reference}</td>
-                            <td className="px-3 py-4 text-slate-600">{row.loading_origin}</td>
-                            <td className="px-3 py-4 text-slate-600 whitespace-nowrap">{row.quantity_label}</td>
-                            <td className="px-3 py-4 text-emerald-700 font-semibold text-right whitespace-nowrap">{row.weight_kg} kg</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-500 italic">No truck allocations available yet.</p>
-                )}
-              </div>
-              <div className="rounded-[2rem] border border-emerald-900/5 bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-5 shadow-sm sm:p-7 h-fit">
-                <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-800 mb-4">Total Cargo Summary</h3>
-                <dl className="space-y-4">
-                  <div className="bg-white/60 rounded-xl p-3 backdrop-blur-sm border border-white">
-                    <dt className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-600">Total Quantity</dt>
-                    <dd className="mt-1 text-lg font-bold text-emerald-950">{viewModel.cargo.loaded_total_quantity_label || viewModel.cargo.total_quantity_label}</dd>
-                  </div>
-                  <div className="bg-white/60 rounded-xl p-3 backdrop-blur-sm border border-white">
-                    <dt className="text-[10px] font-bold uppercase tracking-[0.15em] text-blue-600">Total Weight</dt>
-                    <dd className="mt-1 text-lg font-bold text-blue-950">{viewModel.cargo.loaded_total_weight_kg || viewModel.cargo.total_weight_kg} kg</dd>
-                  </div>
-                  <div className="pt-2">
-                    <dt className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">Description</dt>
-                    <dd className="mt-1 text-sm font-medium text-slate-800">{viewModel.cargo.description}</dd>
-                  </div>
-                </dl>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {hasConnected || hasUpdates || hasRequests ? (
-          <section className="space-y-3">
-            {hasConnected ? (
-              <details className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <summary className="cursor-pointer list-none text-sm font-semibold text-slate-900">
-                  Connected shipments ({connectedShipments.length})
-                </summary>
-                <div className="mt-3 space-y-2 text-sm">
-                  {connectedShipments.map((connected) => (
-                    <div key={connected.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                      <div>
-                        <div className="font-medium text-slate-900">{connected.shipment_code}</div>
-                        <div className="text-xs text-slate-500">{connected.origin} - {connected.destination}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge tone="zinc">{overallStatusLabel(connected.overall_status)}</Badge>
-                        {connected.tracking_token ? <Link href={`/track/${connected.tracking_token}`} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Open</Link> : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-
-            {hasUpdates ? (
-              <details className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <summary className="cursor-pointer list-none text-sm font-semibold text-slate-900">
-                  Updates ({exceptions.length})
-                </summary>
-                <div className="mt-3 space-y-2">
-                  {exceptions.map((exception) => (
-                    <div key={exception.id} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium text-slate-900">{exception.exception_name}</div>
-                        <Badge tone={exceptionTone(exception.default_risk)}>{exception.default_risk === "BLOCKED" ? "Blocked" : "At risk"}</Badge>
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">{fmtDateTime(exception.created_at)}</div>
-                      <div className="mt-1 text-sm text-slate-700">{exception.customer_message ?? "Our team is working on this update."}</div>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-
-            {hasRequests ? (
-              <details className="group rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <summary className="cursor-pointer list-none text-sm font-semibold text-slate-900">
-                  Requested documents ({openRequests.length})
-                </summary>
-                <div className="mt-3 space-y-3">
-                  {openRequests.map((request) => (
-                    <div key={request.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="text-sm font-medium text-slate-900">{request.document_type}</div>
-                      {request.message ? <div className="mt-1 text-sm text-slate-600">{request.message}</div> : null}
-                      <form action={uploadRequestedDocAction.bind(null, request.id)} className="mt-3 flex flex-wrap gap-2">
-                        <input name="file" type="file" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" required />
-                        <SubmitButton pendingLabel="Uploading..." className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Upload</SubmitButton>
-                      </form>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-          </section>
-        ) : null}
-
-        <div className="pb-8 pt-4 text-center">
-          <form action={logoutTrackingAction}>
-            <button type="submit" className="inline-flex items-center justify-center gap-1.5 text-xs font-bold tracking-wide text-slate-500 hover:text-slate-900 transition-colors bg-white/50 backdrop-blur px-4 py-2 rounded-full border border-slate-200/60 shadow-sm">
-              <LogOut className="w-3.5 h-3.5" /> Not you? Sign out
-            </button>
-          </form>
-          <div className="mt-4 text-[10px] font-medium text-slate-400 uppercase tracking-widest flex items-center justify-center gap-1">
-            <Info className="w-3 h-3" /> Powered by <Link href="/" className="text-slate-500 hover:text-slate-900 transition-colors font-bold">Logistic</Link>
-          </div>
         </div>
-      </div>
+      ) : null}
+
+      {activeTab === "documents" ? (
+        <div className="space-y-5">
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">All Documents</h3>
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <div
+                className={`rounded-[1.5rem] border p-4 ${documentCardClassName(
+                  viewModel.document_sections.export_invoice.status,
+                )}`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold">Export Invoice (Zaxon)</div>
+                  <Badge tone={availabilityTone(viewModel.document_sections.export_invoice.status)}>
+                    {availabilityLabel(viewModel.document_sections.export_invoice.status)}
+                  </Badge>
+                </div>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div>Number: {viewModel.document_sections.export_invoice.number ?? "-"}</div>
+                  <div>Date: {fmtDate(viewModel.document_sections.export_invoice.date)}</div>
+                  {viewModel.document_sections.export_invoice.file ? (
+                    <a
+                      href={`/api/track/${token}/documents/${viewModel.document_sections.export_invoice.file.id}`}
+                      className="inline-block font-medium text-teal-800 hover:underline"
+                    >
+                      {viewModel.document_sections.export_invoice.file.file_name}
+                    </a>
+                  ) : (
+                    <div className="text-stone-500">File not shared yet.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 p-4">
+                <div className="text-sm font-semibold text-stone-950">Loading Sheets</div>
+                <div className="mt-3 space-y-2">
+                  {viewModel.document_sections.loading_sheets.map((row) => (
+                    <div
+                      key={row.id}
+                      className={`rounded-2xl border px-3 py-3 text-sm ${documentCardClassName(
+                        row.status,
+                      )}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>{row.label}</div>
+                        <Badge tone={availabilityTone(row.status)}>
+                          {availabilityLabel(row.status)}
+                        </Badge>
+                      </div>
+                      {row.file ? (
+                        <a
+                          href={`/api/track/${token}/documents/${row.file.id}`}
+                          className="mt-2 inline-block font-medium text-teal-800 hover:underline"
+                        >
+                          {row.file.file_name}
+                        </a>
+                      ) : (
+                        <div className="mt-2 text-stone-500">{row.reason ?? "Pending"}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-5 lg:grid-cols-2">
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 p-4">
+                <div className="text-sm font-semibold text-stone-950">
+                  Export & Transit Declarations
+                </div>
+                <div className="mt-3 space-y-2">
+                  {viewModel.document_sections.export_transit_declarations.map((row) => (
+                    <div
+                      key={row.id}
+                      className={`rounded-2xl border px-3 py-3 text-sm ${documentCardClassName(
+                        row.status,
+                      )}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>{row.label}</div>
+                        <Badge tone={availabilityTone(row.status)}>
+                          {availabilityLabel(row.status)}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 text-stone-600">Date: {fmtDate(row.date)}</div>
+                      {row.file ? (
+                        <a
+                          href={`/api/track/${token}/documents/${row.file.id}`}
+                          className="mt-2 inline-block font-medium text-teal-800 hover:underline"
+                        >
+                          {row.file.file_name}
+                        </a>
+                      ) : (
+                        <div className="mt-2 text-stone-500">{row.reason ?? "Pending"}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 p-4">
+                <div className="text-sm font-semibold text-stone-950">
+                  Entry Declarations
+                </div>
+                <div className="mt-3 space-y-2">
+                  {viewModel.document_sections.entry_declarations.map((row) => (
+                    <div
+                      key={row.id}
+                      className={`rounded-2xl border px-3 py-3 text-sm ${documentCardClassName(
+                        row.status,
+                      )}`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>{row.label}</div>
+                        <Badge tone={availabilityTone(row.status)}>
+                          {availabilityLabel(row.status)}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 text-stone-600">Date: {fmtDate(row.date)}</div>
+                      {row.file ? (
+                        <a
+                          href={`/api/track/${token}/documents/${row.file.id}`}
+                          className="mt-2 inline-block font-medium text-teal-800 hover:underline"
+                        >
+                          {row.file.file_name}
+                        </a>
+                      ) : (
+                        <div className="mt-2 text-stone-500">{row.reason ?? "Pending"}</div>
+                      )}
+                    </div>
+                  ))}
+                  {viewModel.document_sections.entry_declarations.length === 0 ? (
+                    <div className="text-sm text-stone-500">
+                      No entry declarations apply to this shipment.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {openRequests.length ? (
+            <section className={sectionClassName()}>
+              <h3 className="text-lg font-semibold text-stone-950">Requested Documents</h3>
+              <div className="mt-4 space-y-3">
+                {openRequests.map((request) => (
+                  <div
+                    key={request.id}
+                    className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                  >
+                    <div className="text-sm font-semibold text-stone-950">
+                      {request.document_type}
+                    </div>
+                    {request.message ? (
+                      <div className="mt-1 text-sm text-stone-600">{request.message}</div>
+                    ) : null}
+
+                    <form
+                      action={uploadRequestedDocAction.bind(null, request.id)}
+                      className="mt-4 flex flex-wrap gap-2"
+                    >
+                      <input
+                        name="file"
+                        type="file"
+                        className="w-full rounded-2xl border border-stone-300 bg-white px-3 py-2 text-sm"
+                        required
+                      />
+                      <SubmitButton
+                        pendingLabel="Uploading..."
+                        className="rounded-full bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+                      >
+                        Upload
+                      </SubmitButton>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+
+      {activeTab === "tracking" ? (
+        <div className="space-y-5">
+          <section className={sectionClassName()}>
+            <div className="flex items-center gap-2">
+              <Route className="h-5 w-5 text-teal-700" />
+              <h3 className="text-lg font-semibold text-stone-950">Shipment Tracking</h3>
+            </div>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {viewModel.tracking_groups.map((group) => (
+                <div
+                  key={group.id}
+                  className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
+                >
+                  <div className="text-sm font-semibold text-stone-950">{group.label}</div>
+                  <div className="mt-3 space-y-2">
+                    {group.checkpoints.map((checkpoint) => (
+                      <div
+                        key={checkpoint.id}
+                        className="rounded-2xl border border-stone-200 bg-white px-3 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm text-stone-900">{checkpoint.label}</div>
+                          <Badge tone={progressTone(checkpoint.state)}>
+                            {progressLabel(checkpoint.state)}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 text-sm text-stone-600">
+                          {fmtDate(checkpoint.date)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className={sectionClassName()}>
+            <h3 className="text-lg font-semibold text-stone-950">Final Delivery</h3>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                  Delivered To
+                </div>
+                <div className="mt-2 text-sm text-stone-900">
+                  {viewModel.final_delivery.delivered_to}
+                </div>
+              </div>
+              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                  Delivery Date
+                </div>
+                <div className="mt-2 text-sm text-stone-900">
+                  {fmtDate(viewModel.final_delivery.date)}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

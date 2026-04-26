@@ -1,7 +1,5 @@
-﻿import Link from "next/link";
-
-import { Badge } from "@/components/ui/Badge";
 import { SubmitButton } from "@/components/ui/SubmitButton";
+import { Badge } from "@/components/ui/Badge";
 import {
   encodeFieldPath,
   parseStepFieldSchema,
@@ -11,11 +9,12 @@ import {
   type StepFieldDefinition,
   type StepFieldValues,
 } from "@/lib/stepFields";
-import { overallStatusLabel, stepStatusLabel, type StepStatus } from "@/lib/domain";
-import type {
-  TrackingConnectedShipment,
-  TrackingShipment,
-} from "@/lib/data/tracking";
+import {
+  overallStatusLabel,
+  stepStatusLabel,
+  type StepStatus,
+} from "@/lib/domain";
+import type { TrackingShipment } from "@/lib/data/tracking";
 
 type LegacyStep = {
   id: number;
@@ -63,9 +62,13 @@ type LegacyTrackViewProps = {
   docs: LegacyDoc[];
   requests: LegacyRequest[];
   exceptions: LegacyException[];
-  connectedShipments: TrackingConnectedShipment[];
   uploadRequestedDocAction: (requestId: number, formData: FormData) => Promise<void>;
-  logoutTrackingAction: () => Promise<void>;
+};
+
+type StepFieldRow = {
+  label: string;
+  value: string;
+  docId?: number;
 };
 
 function readFriendlyDateTime(value: string | null | undefined) {
@@ -94,12 +97,6 @@ function exceptionTone(risk: string) {
   if (risk === "AT_RISK") return "yellow";
   return "zinc";
 }
-
-type StepFieldRow = {
-  label: string;
-  value: string;
-  docId?: number;
-};
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object") return false;
@@ -194,8 +191,7 @@ function collectStepFieldRows(input: {
 
     if (field.type === "shipment_goods") {
       const entries = isPlainObject(fieldValue) ? Object.values(fieldValue) : [];
-      const hasValue = entries.some(isStringValue);
-      if (hasValue) {
+      if (entries.some(isStringValue)) {
         rows.push({
           label: labels.join(" / "),
           value: "Allocated",
@@ -257,198 +253,86 @@ function collectStepFieldRows(input: {
   return rows;
 }
 
-function hasAnyFieldValue(input: {
-  fields: StepFieldDefinition[];
-  values: StepFieldValues;
-  stepId: number;
-  docByType: Map<string, { id: number; file_name: string }>;
-  valuePath: string[];
-}): boolean {
-  const container = isPlainObject(input.values) ? input.values : {};
-  for (const field of input.fields) {
-    const path = [...input.valuePath, field.id];
-    const fieldValue = container[field.id];
-
-    if (field.type === "text" || field.type === "number" || field.type === "date") {
-      if (isStringValue(fieldValue)) return true;
-      continue;
-    }
-
-    if (field.type === "boolean") {
-      if (isTruthyBooleanValue(fieldValue)) return true;
-      continue;
-    }
-
-    if (field.type === "file") {
-      const docType = stepFieldDocType(input.stepId, encodeFieldPath(path));
-      if (input.docByType.has(docType)) return true;
-      continue;
-    }
-
-    if (field.type === "shipment_goods") {
-      const entries = isPlainObject(fieldValue) ? Object.values(fieldValue) : [];
-      if (entries.some(isStringValue)) return true;
-      continue;
-    }
-
-    if (field.type === "group") {
-      if (field.repeatable) {
-        const items = Array.isArray(fieldValue) ? fieldValue : [];
-        for (let index = 0; index < items.length; index += 1) {
-          const item = items[index];
-          if (!isPlainObject(item)) continue;
-          if (
-            hasAnyFieldValue({
-              fields: field.fields,
-              values: item as StepFieldValues,
-              stepId: input.stepId,
-              docByType: input.docByType,
-              valuePath: [...path, String(index)],
-            })
-          ) {
-            return true;
-          }
-        }
-      } else if (isPlainObject(fieldValue)) {
-        if (
-          hasAnyFieldValue({
-            fields: field.fields,
-            values: fieldValue as StepFieldValues,
-            stepId: input.stepId,
-            docByType: input.docByType,
-            valuePath: path,
-          })
-        ) {
-          return true;
-        }
-      }
-      continue;
-    }
-
-    if (field.type === "choice") {
-      const choiceValues = isPlainObject(fieldValue) ? fieldValue : {};
-      for (const option of field.options) {
-        const optionValue = choiceValues[option.id];
-        if (
-          isPlainObject(optionValue) &&
-          hasAnyFieldValue({
-            fields: option.fields,
-            values: optionValue as StepFieldValues,
-            stepId: input.stepId,
-            docByType: input.docByType,
-            valuePath: [...path, option.id],
-          })
-        ) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+function sectionCardClassName() {
+  return "rounded-[2rem] border border-stone-200 bg-white p-5 shadow-sm sm:p-6";
 }
 
-function collectChoiceMessages(input: {
-  fields: StepFieldDefinition[];
-  values: StepFieldValues;
-  stepId: number;
+function renderStepSection(input: {
+  token: string;
+  title: string;
+  emptyLabel: string;
+  steps: LegacyStep[];
   docByType: Map<string, { id: number; file_name: string }>;
-  labelPath: string[];
-  valuePath: string[];
-}): string[] {
-  const messages: string[] = [];
-
-  for (const field of input.fields) {
-    const labels = [...input.labelPath, field.label];
-    const path = [...input.valuePath, field.id];
-    const fieldValue = input.values[field.id];
-
-    if (field.type === "group") {
-      if (field.repeatable) {
-        const items = Array.isArray(fieldValue) ? fieldValue : [];
-        items.forEach((item, index) => {
-          if (!isPlainObject(item)) return;
-          messages.push(
-            ...collectChoiceMessages({
-              fields: field.fields,
-              values: item as StepFieldValues,
-              stepId: input.stepId,
-              docByType: input.docByType,
-              labelPath: [...labels, `Item ${index + 1}`],
-              valuePath: [...path, String(index)],
-            }),
-          );
-        });
-      } else if (isPlainObject(fieldValue)) {
-        messages.push(
-          ...collectChoiceMessages({
-            fields: field.fields,
-            values: fieldValue as StepFieldValues,
-            stepId: input.stepId,
+}) {
+  return (
+    <section className={sectionCardClassName()}>
+      <h2 className="text-lg font-semibold text-stone-950">{input.title}</h2>
+      <div className="mt-4 space-y-3">
+        {input.steps.map((step) => {
+          const fieldSchema = getStepFieldSchema(step);
+          const fieldValues = parseStepFieldValues(step.field_values_json);
+          const rows = collectStepFieldRows({
+            fields: fieldSchema.fields,
+            values: fieldValues,
+            labelPath: [],
+            valuePath: [],
+            stepId: step.id,
             docByType: input.docByType,
-            labelPath: labels,
-            valuePath: path,
-          }),
-        );
-      }
-      continue;
-    }
+          });
 
-    if (field.type === "choice") {
-      const choiceValues = isPlainObject(fieldValue) ? fieldValue : {};
-      const finalOptions = field.options.filter((opt) => opt.is_final);
-      const finalHasValue = finalOptions.some((option) => {
-        const optionValue = choiceValues[option.id];
-        return (
-          isPlainObject(optionValue) &&
-          hasAnyFieldValue({
-            fields: option.fields,
-            values: optionValue as StepFieldValues,
-            stepId: input.stepId,
-            docByType: input.docByType,
-            valuePath: [...path, option.id],
-          })
-        );
-      });
+          return (
+            <div
+              key={step.id}
+              className="rounded-[1.5rem] border border-stone-200 bg-stone-50/70 p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-stone-950">
+                    {step.sort_order}. {step.name}
+                  </div>
+                  <div className="mt-1 text-xs text-stone-500">
+                    Updated {readFriendlyDateTime(step.completed_at ?? step.started_at)}
+                  </div>
+                </div>
+                <Badge tone={stepTone(step.status)}>{stepStatusLabel(step.status)}</Badge>
+              </div>
 
-      for (const option of field.options) {
-        if (finalHasValue && !option.is_final) continue;
-        const optionValue = choiceValues[option.id];
-        const optionValues = isPlainObject(optionValue)
-          ? (optionValue as StepFieldValues)
-          : {};
-        const optionHasValue = hasAnyFieldValue({
-          fields: option.fields,
-          values: optionValues,
-          stepId: input.stepId,
-          docByType: input.docByType,
-          valuePath: [...path, option.id],
-        });
-
-        const message =
-          option.customer_message_visible && option.customer_message
-            ? String(option.customer_message).trim()
-            : "";
-        if (optionHasValue && message) {
-          messages.push(`${labels.join(" / ")} - ${message}`);
-        }
-
-        if (isPlainObject(optionValue)) {
-          messages.push(
-            ...collectChoiceMessages({
-              fields: option.fields,
-              values: optionValues,
-              stepId: input.stepId,
-              docByType: input.docByType,
-              labelPath: [...labels, option.label],
-              valuePath: [...path, option.id],
-            }),
+              {rows.length ? (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {rows.map((row, index) => (
+                    <div
+                      key={`${step.id}-row-${index}`}
+                      className="rounded-2xl border border-stone-200 bg-white px-3 py-3"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
+                        {row.label}
+                      </div>
+                      {row.docId ? (
+                        <a
+                          href={`/api/track/${input.token}/documents/${row.docId}`}
+                          className="mt-1 block text-sm font-medium text-teal-800 hover:underline"
+                        >
+                          {row.value}
+                        </a>
+                      ) : (
+                        <div className="mt-1 text-sm text-stone-900">{row.value}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-4 text-sm text-stone-500">No details shared yet.</div>
+              )}
+            </div>
           );
-        }
-      }
-    }
-  }
+        })}
 
-  return messages;
+        {input.steps.length === 0 ? (
+          <div className="text-sm text-stone-500">{input.emptyLabel}</div>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 export function LegacyTrackView({
@@ -459,13 +343,11 @@ export function LegacyTrackView({
   docs,
   requests,
   exceptions,
-  connectedShipments,
   uploadRequestedDocAction,
-  logoutTrackingAction,
 }: LegacyTrackViewProps) {
-  const timelineSteps = steps.filter((s) => !s.is_external);
-  const trackingSteps = steps.filter((s) => s.is_external);
-  const openRequests = requests.filter((r) => r.status === "OPEN");
+  const timelineSteps = steps.filter((step) => !step.is_external);
+  const trackingSteps = steps.filter((step) => step.is_external);
+  const openRequests = requests.filter((request) => request.status === "OPEN");
 
   const docByType = new Map<string, { id: number; file_name: string }>();
   for (const doc of docs) {
@@ -475,329 +357,162 @@ export function LegacyTrackView({
   }
 
   return (
-    <>
-      <div className="mx-auto max-w-3xl px-6 py-12">
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-xs font-medium text-zinc-500">Tracking shipment</div>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
-                {shipment.shipment_code}
-              </h1>
-              <div className="mt-2 text-sm text-zinc-600">
-                {shipment.origin} - {shipment.destination}
-              </div>
-            </div>
-            <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
-          </div>
-
-          {uploaded ? (
-            <div className="mt-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-              Document uploaded successfully. Thank you!
-            </div>
-          ) : null}
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-zinc-200 p-4">
-              <div className="text-xs font-medium text-zinc-500">Last update</div>
-              <div className="mt-1 text-sm text-zinc-900">{readFriendlyDateTime(shipment.last_update_at)}</div>
-            </div>
-            <div className="rounded-xl border border-zinc-200 p-4">
-              <div className="text-xs font-medium text-zinc-500">ETA / ETD</div>
-              <div className="mt-1 text-sm text-zinc-900">
-                <span className="text-zinc-500">{readFriendlyDate(shipment.etd)}</span> /{" "}
-                <span className="text-zinc-500">{readFriendlyDate(shipment.eta)}</span>
-              </div>
-            </div>
-          </div>
-
-          {connectedShipments.length ? (
-            <div className="mt-8">
-              <h2 className="text-sm font-semibold text-zinc-900">Connected shipments</h2>
-              <div className="mt-3 space-y-2">
-                {connectedShipments.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 p-4"
-                  >
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-medium text-zinc-900">{s.shipment_code}</div>
-                        <Badge tone="zinc">{overallStatusLabel(s.overall_status)}</Badge>
-                      </div>
-                      <div className="mt-1 text-xs text-zinc-500">
-                        {s.origin} - {s.destination}
-                      </div>
-                      {(s.shipment_label || s.connected_label) ? (
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-600">
-                          {s.shipment_label ? (
-                            <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
-                              This: {s.shipment_label}
-                            </span>
-                          ) : null}
-                          {s.connected_label ? (
-                            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700">
-                              Connected: {s.connected_label}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                    {s.tracking_token ? (
-                      <Link
-                        href={`/track/${s.tracking_token}`}
-                        className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-                      >
-                        Open tracking
-                      </Link>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {exceptions.length ? (
-            <div className="mt-8">
-              <h2 className="text-sm font-semibold text-zinc-900">Updates</h2>
-              <div className="mt-3 space-y-2">
-                {exceptions.map((e) => (
-                  <div key={e.id} className="rounded-xl border border-zinc-200 bg-white p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="text-sm font-medium text-zinc-900">{e.exception_name}</div>
-                      <Badge tone={exceptionTone(e.default_risk)}>
-                        {e.default_risk === "BLOCKED" ? "Blocked" : "At risk"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-500">{readFriendlyDateTime(e.created_at)}</div>
-                    <div className="mt-2 text-sm text-zinc-700">
-                      {e.customer_message ??
-                        "An issue occurred and our team is working on it. We will update you soon."}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mt-8">
-            <h2 className="text-sm font-semibold text-zinc-900">Timeline</h2>
-            <div className="mt-3 space-y-2">
-              {timelineSteps.map((s) => {
-                const fieldSchema = getStepFieldSchema(s);
-                const fieldValues = parseStepFieldValues(s.field_values_json);
-                const rows = collectStepFieldRows({
-                  fields: fieldSchema.fields,
-                  values: fieldValues,
-                  labelPath: [],
-                  valuePath: [],
-                  stepId: s.id,
-                  docByType,
-                });
-                const messages = collectChoiceMessages({
-                  fields: fieldSchema.fields,
-                  values: fieldValues,
-                  labelPath: [],
-                  valuePath: [],
-                  stepId: s.id,
-                  docByType,
-                });
-
-                return (
-                  <div
-                    key={s.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 p-4"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-900">
-                        {s.sort_order}. {s.name}
-                      </div>
-                      {rows.length || messages.length ? (
-                        <div className="mt-2 space-y-2 text-xs text-zinc-600">
-                          {rows.map((row, index) => (
-                            <div
-                              key={`${s.id}-timeline-${index}`}
-                              className="flex flex-wrap items-center justify-between gap-3"
-                            >
-                              <div className="font-medium text-zinc-700">{row.label}</div>
-                              {row.docId ? (
-                                <a
-                                  href={`/api/track/${token}/documents/${row.docId}`}
-                                  className="text-zinc-600 hover:underline"
-                                >
-                                  {row.value}
-                                </a>
-                              ) : (
-                                <div className="text-zinc-900">{row.value}</div>
-                              )}
-                            </div>
-                          ))}
-                          {messages.length ? (
-                            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-900">
-                              {messages.map((message, index) => (
-                                <div key={`${s.id}-timeline-msg-${index}`}>{message}</div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                    <Badge tone={stepTone(s.status)}>{stepStatusLabel(s.status)}</Badge>
-                  </div>
-                );
-              })}
-              {timelineSteps.length === 0 ? (
-                <div className="text-sm text-zinc-500">No timeline available.</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <h2 className="text-sm font-semibold text-zinc-900">Tracking</h2>
-            <div className="mt-3 space-y-2">
-              {trackingSteps.map((s) => {
-                const fieldSchema = getStepFieldSchema(s);
-                const fieldValues = parseStepFieldValues(s.field_values_json);
-                const rows = collectStepFieldRows({
-                  fields: fieldSchema.fields,
-                  values: fieldValues,
-                  labelPath: [],
-                  valuePath: [],
-                  stepId: s.id,
-                  docByType,
-                });
-                const messages = collectChoiceMessages({
-                  fields: fieldSchema.fields,
-                  values: fieldValues,
-                  labelPath: [],
-                  valuePath: [],
-                  stepId: s.id,
-                  docByType,
-                });
-
-                return (
-                  <div
-                    key={s.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 p-4"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-900">
-                        {s.sort_order}. {s.name}
-                      </div>
-                      {rows.length || messages.length ? (
-                        <div className="mt-2 space-y-2 text-xs text-zinc-600">
-                          {rows.map((row, index) => (
-                            <div
-                              key={`${s.id}-tracking-${index}`}
-                              className="flex flex-wrap items-center justify-between gap-3"
-                            >
-                              <div className="font-medium text-zinc-700">{row.label}</div>
-                              {row.docId ? (
-                                <a
-                                  href={`/api/track/${token}/documents/${row.docId}`}
-                                  className="text-zinc-600 hover:underline"
-                                >
-                                  {row.value}
-                                </a>
-                              ) : (
-                                <div className="text-zinc-900">{row.value}</div>
-                              )}
-                            </div>
-                          ))}
-                          {messages.length ? (
-                            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-900">
-                              {messages.map((message, index) => (
-                                <div key={`${s.id}-tracking-msg-${index}`}>{message}</div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                    <Badge tone={stepTone(s.status)}>{stepStatusLabel(s.status)}</Badge>
-                  </div>
-                );
-              })}
-              {trackingSteps.length === 0 ? (
-                <div className="text-sm text-zinc-500">No tracking steps yet.</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-8">
-            <h2 className="text-sm font-semibold text-zinc-900">Documents</h2>
-            <div className="mt-3 space-y-2">
-              {docs.map((d) => (
-                <div
-                  key={d.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 p-4"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-zinc-900">{d.document_type}</div>
-                    <div className="mt-1 text-xs text-zinc-500">{d.file_name}</div>
-                  </div>
-                  <a
-                    href={`/api/track/${token}/documents/${d.id}`}
-                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-                  >
-                    Download
-                  </a>
-                </div>
-              ))}
-              {docs.length === 0 ? (
-                <div className="text-sm text-zinc-500">No documents shared yet.</div>
-              ) : null}
-            </div>
-          </div>
-
-          {openRequests.length ? (
-            <div className="mt-8">
-              <h2 className="text-sm font-semibold text-zinc-900">Requested documents</h2>
-              <div className="mt-3 space-y-3">
-                {openRequests.map((r) => (
-                  <div key={r.id} className="rounded-xl border border-zinc-200 p-4">
-                    <div className="text-sm font-medium text-zinc-900">{r.document_type}</div>
-                    {r.message ? <div className="mt-1 text-sm text-zinc-600">{r.message}</div> : null}
-
-                    <form action={uploadRequestedDocAction.bind(null, r.id)} className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        name="file"
-                        type="file"
-                        className="w-full max-w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm"
-                        required
-                      />
-                      <SubmitButton
-                        pendingLabel="Uploading..."
-                        className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
-                      >
-                        Upload
-                      </SubmitButton>
-                    </form>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mt-8 text-xs text-zinc-500">
-            If you have questions, reply to your logistics contact.
-          </div>
-        </div>
-
-        <div className="mt-6 flex flex-col items-center gap-3 text-center text-xs text-zinc-500">
-          <form action={logoutTrackingAction}>
-            <button type="submit" className="hover:underline">
-              Not you? Re-verify
-            </button>
-          </form>
+    <div className="space-y-5">
+      <section className={sectionCardClassName()}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            Powered by Logistic -{" "}
-            <Link href="/" className="hover:underline">
-              Staff login
-            </Link>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">
+              Shipment Overview
+            </div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-stone-950">
+              {shipment.shipment_code}
+            </h2>
+            <div className="mt-2 text-sm text-stone-600">
+              {shipment.origin} - {shipment.destination}
+            </div>
+          </div>
+          <Badge tone="zinc">{overallStatusLabel(shipment.overall_status)}</Badge>
+        </div>
+
+        {uploaded ? (
+          <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            Document uploaded successfully.
+          </div>
+        ) : null}
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[1.4rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Last Update
+            </div>
+            <div className="mt-1 text-sm text-stone-900">
+              {readFriendlyDateTime(shipment.last_update_at)}
+            </div>
+          </div>
+          <div className="rounded-[1.4rem] border border-stone-200 bg-stone-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-500">
+              ETA / ETD
+            </div>
+            <div className="mt-1 text-sm text-stone-900">
+              {readFriendlyDate(shipment.etd)} / {readFriendlyDate(shipment.eta)}
+            </div>
           </div>
         </div>
-      </div>
-    </>
+      </section>
+
+      {exceptions.length ? (
+        <section className={sectionCardClassName()}>
+          <h2 className="text-lg font-semibold text-stone-950">Updates</h2>
+          <div className="mt-4 space-y-3">
+            {exceptions.map((exception) => (
+              <div
+                key={exception.id}
+                className="rounded-[1.5rem] border border-stone-200 bg-stone-50/70 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-stone-950">
+                      {exception.exception_name}
+                    </div>
+                    <div className="mt-1 text-xs text-stone-500">
+                      {readFriendlyDateTime(exception.created_at)}
+                    </div>
+                  </div>
+                  <Badge tone={exceptionTone(exception.default_risk)}>
+                    {exception.default_risk === "BLOCKED" ? "Blocked" : "At risk"}
+                  </Badge>
+                </div>
+                <div className="mt-3 text-sm text-stone-700">
+                  {exception.customer_message ??
+                    "An issue occurred and our team is working on it."}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {renderStepSection({
+        token,
+        title: "Timeline",
+        emptyLabel: "No timeline available.",
+        steps: timelineSteps,
+        docByType,
+      })}
+
+      {renderStepSection({
+        token,
+        title: "Tracking",
+        emptyLabel: "No tracking steps yet.",
+        steps: trackingSteps,
+        docByType,
+      })}
+
+      <section className={sectionCardClassName()}>
+        <h2 className="text-lg font-semibold text-stone-950">Documents</h2>
+        <div className="mt-4 space-y-3">
+          {docs.map((doc) => (
+            <div
+              key={doc.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-[1.5rem] border border-stone-200 bg-stone-50/70 p-4"
+            >
+              <div>
+                <div className="text-sm font-semibold text-stone-950">{doc.document_type}</div>
+                <div className="mt-1 text-xs text-stone-500">{doc.file_name}</div>
+              </div>
+              <a
+                href={`/api/track/${token}/documents/${doc.id}`}
+                className="rounded-full border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-50"
+              >
+                Download
+              </a>
+            </div>
+          ))}
+
+          {docs.length === 0 ? (
+            <div className="text-sm text-stone-500">No documents shared yet.</div>
+          ) : null}
+        </div>
+      </section>
+
+      {openRequests.length ? (
+        <section className={sectionCardClassName()}>
+          <h2 className="text-lg font-semibold text-stone-950">Requested Documents</h2>
+          <div className="mt-4 space-y-3">
+            {openRequests.map((request) => (
+              <div
+                key={request.id}
+                className="rounded-[1.5rem] border border-stone-200 bg-stone-50/70 p-4"
+              >
+                <div className="text-sm font-semibold text-stone-950">
+                  {request.document_type}
+                </div>
+                {request.message ? (
+                  <div className="mt-1 text-sm text-stone-600">{request.message}</div>
+                ) : null}
+
+                <form
+                  action={uploadRequestedDocAction.bind(null, request.id)}
+                  className="mt-4 flex flex-wrap items-center gap-2"
+                >
+                  <input
+                    name="file"
+                    type="file"
+                    className="w-full rounded-2xl border border-stone-300 bg-white px-3 py-2 text-sm"
+                    required
+                  />
+                  <SubmitButton
+                    pendingLabel="Uploading..."
+                    className="rounded-full bg-stone-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-stone-800"
+                  >
+                    Upload
+                  </SubmitButton>
+                </form>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
   );
 }

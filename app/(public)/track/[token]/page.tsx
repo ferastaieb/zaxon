@@ -1,6 +1,7 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { CustomerPortalShell } from "@/components/tracking/public/CustomerPortalShell";
 import { FtlClientTrackView } from "@/components/tracking/public/FtlClientTrackView";
 import { LegacyTrackView } from "@/components/tracking/public/LegacyTrackView";
 import {
@@ -11,23 +12,22 @@ import {
 import { logActivity } from "@/lib/data/activities";
 import { getShipment, listShipmentSteps } from "@/lib/data/shipments";
 import {
-  getShipmentIdForTrackingToken,
+  getTrackingCustomerContext,
   getTrackingCustomerPhoneLast4,
-  getTrackingShipment,
-  listCustomerVisibleExceptions,
+  getTrackingShipmentById,
   listCustomerDocumentRequests,
   listCustomerVisibleDocuments,
+  listCustomerVisibleExceptions,
   listCustomerVisibleSteps,
-  listTrackingConnectedShipments,
+  listTrackingPortalShipments,
+  shipmentBelongsToTrackingCustomer,
 } from "@/lib/data/tracking";
 import { getWorkflowTemplate } from "@/lib/data/workflows";
-import { FCL_IMPORT_TEMPLATE_NAME } from "@/lib/fclImport/constants";
 import { FTL_EXPORT_TEMPLATE_NAME, FTL_EXPORT_STEP_NAMES } from "@/lib/ftlExport/constants";
 import {
   buildFtlClientTrackingViewModel,
-  type FtlClientTrackingSubTab,
-  type FtlClientTrackingTab,
   type FtlClientTrackingStep,
+  type FtlClientTrackingTab,
 } from "@/lib/ftlExport/clientTrackingView";
 import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { saveUpload } from "@/lib/storage";
@@ -36,9 +36,9 @@ import {
   createTrackingSession,
   deleteTrackingSession,
   getTrackingSessionToken,
+  getTrackingSessionCustomerPartyId,
   isTrackingSessionValid,
 } from "@/lib/trackingAuth";
-import type { TrackingRegion } from "@/components/shipments/ftl-export/forms/trackingTimelineConfig";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -49,36 +49,16 @@ function readParam(params: SearchParams, key: string): string | undefined {
   return value;
 }
 
-function parseTab(value: string | undefined): FtlClientTrackingTab {
-  if (value === "tracking" || value === "documents" || value === "cargo") return value;
-  return "overview";
-}
-
-function parseTrackingTab(value: string | undefined): FtlClientTrackingSubTab {
-  if (value === "loading" || value === "international") return value;
-  return "overview";
-}
-
-function parseRegion(value: string | undefined): TrackingRegion | null {
-  if (!value) return null;
-  if (
-    value === "uae" ||
-    value === "ksa" ||
-    value === "jordan" ||
-    value === "syria" ||
-    value === "mushtarakah" ||
-    value === "lebanon"
-  ) {
-    return value;
-  }
-  return null;
-}
-
-function parseTruck(value: string | undefined): number | null {
+function parseShipmentId(value: string | undefined): number | null {
   if (!value) return null;
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.trunc(parsed);
+}
+
+function parseTab(value: string | undefined): FtlClientTrackingTab {
+  if (value === "trucks" || value === "documents" || value === "tracking") return value;
+  return "overview";
 }
 
 function fallbackIsFtlStepSet(stepNames: Set<string>) {
@@ -88,6 +68,26 @@ function fallbackIsFtlStepSet(stepNames: Set<string>) {
     stepNames.has(FTL_EXPORT_STEP_NAMES.loadingDetails) &&
     stepNames.has(FTL_EXPORT_STEP_NAMES.customsAgentsAllocation)
   );
+}
+
+function buildTrackHref(input: {
+  token: string;
+  shipmentId?: number | null;
+  uploaded?: boolean;
+  error?: string | null;
+}) {
+  const params = new URLSearchParams();
+  if (input.shipmentId) {
+    params.set("shipment", String(input.shipmentId));
+  }
+  if (input.uploaded) {
+    params.set("uploaded", "1");
+  }
+  if (input.error) {
+    params.set("error", input.error);
+  }
+  const query = params.toString();
+  return query ? `/track/${input.token}?${query}` : `/track/${input.token}`;
 }
 
 export default async function TrackShipmentPage({
@@ -104,37 +104,33 @@ export default async function TrackShipmentPage({
   const error = readParam(resolved, "error");
 
   const { token } = await params;
-  const shipment = await getTrackingShipment(token);
-  if (!shipment) notFound();
-
-  const fullShipment = await getShipment(shipment.id);
-  const workflowTemplate = fullShipment?.workflow_template_id
-    ? await getWorkflowTemplate(fullShipment.workflow_template_id)
-    : null;
-
-  if (
-    workflowTemplate?.name &&
-    workflowTemplate.name.toLowerCase() === FCL_IMPORT_TEMPLATE_NAME.toLowerCase()
-  ) {
-    redirect(`/track/fcl/${token}`);
-  }
+  const customerContext = await getTrackingCustomerContext(token);
+  if (!customerContext) notFound();
 
   const isAuthed = await isTrackingSessionValid(token);
-  const customerLast4 = await getTrackingCustomerPhoneLast4(token);
+  const customerLast4 =
+    customerContext.customer_phone_last4 ?? (await getTrackingCustomerPhoneLast4(token));
 
   async function authenticateAction(tokenValue: string, formData: FormData) {
     "use server";
-    const expected = await getTrackingCustomerPhoneLast4(tokenValue);
-    if (!expected) redirect(`/track/${tokenValue}?error=no_phone`);
+    const context = await getTrackingCustomerContext(tokenValue);
+    const expected = context?.customer_phone_last4 ?? null;
+    if (!context || !expected) {
+      redirect(buildTrackHref({ token: tokenValue, error: "no_phone" }));
+    }
 
     const pin = String(formData.get("pin") ?? "")
       .trim()
       .replace(/\D+/g, "");
-    if (pin.length !== 4) redirect(`/track/${tokenValue}?error=pin`);
-    if (pin !== expected) redirect(`/track/${tokenValue}?error=pin`);
+    if (pin.length !== 4 || pin !== expected) {
+      redirect(buildTrackHref({ token: tokenValue, error: "pin" }));
+    }
 
-    await createTrackingSession(tokenValue);
-    redirect(`/track/${tokenValue}`);
+    await createTrackingSession({
+      trackingToken: tokenValue,
+      customerPartyId: context.customer_party_id,
+    });
+    redirect(buildTrackHref({ token: tokenValue, shipmentId: context.seed_shipment_id }));
   }
 
   async function logoutTrackingAction(tokenValue: string) {
@@ -142,7 +138,7 @@ export default async function TrackShipmentPage({
     const sessionToken = await getTrackingSessionToken();
     if (sessionToken) await deleteTrackingSession(sessionToken);
     await clearTrackingSessionCookie();
-    redirect(`/track/${tokenValue}`);
+    redirect(buildTrackHref({ token: tokenValue }));
   }
 
   if (!isAuthed) {
@@ -151,10 +147,10 @@ export default async function TrackShipmentPage({
         <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
           <div className="text-xs font-medium text-zinc-500">Tracking access</div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
-            Verify to view shipment
+            Verify to view shipments
           </h1>
           <div className="mt-2 text-sm text-zinc-600">
-            Enter the last 4 digits of your phone number to access this tracking link.
+            Enter the last 4 digits of your phone number to access this customer portal.
           </div>
 
           {error ? (
@@ -199,30 +195,90 @@ export default async function TrackShipmentPage({
     );
   }
 
-  const [docs, requests, exceptions, connectedShipments, allSteps] = await Promise.all([
-    listCustomerVisibleDocuments(shipment.id),
-    listCustomerDocumentRequests(shipment.id),
-    listCustomerVisibleExceptions(shipment.id),
-    listTrackingConnectedShipments(shipment.id),
-    listShipmentSteps(shipment.id),
+  const portalShipments = await listTrackingPortalShipments(customerContext.customer_party_id);
+  if (!portalShipments.length) notFound();
+
+  const requestedShipmentId = parseShipmentId(readParam(resolved, "shipment"));
+  const requestedSummary = requestedShipmentId
+    ? portalShipments.find((shipment) => shipment.id === requestedShipmentId) ?? null
+    : null;
+  const seedSummary =
+    portalShipments.find((shipment) => shipment.id === customerContext.seed_shipment_id) ?? null;
+  const firstVisibleSummary =
+    portalShipments.find((shipment) => shipment.has_portal_content) ?? null;
+  const selectedSummary =
+    requestedSummary ?? seedSummary ?? firstVisibleSummary ?? portalShipments[0] ?? null;
+  if (!selectedSummary) notFound();
+
+  if (
+    requestedShipmentId &&
+    (!requestedSummary ||
+      (!requestedSummary.has_portal_content &&
+        requestedSummary.id !== customerContext.seed_shipment_id))
+  ) {
+    redirect(
+      buildTrackHref({
+        token,
+        shipmentId: (firstVisibleSummary ?? seedSummary ?? selectedSummary).id,
+      }),
+    );
+  }
+
+  const selectedShipment = await getTrackingShipmentById(selectedSummary.id);
+  if (!selectedShipment) notFound();
+
+  const [fullShipment, allSteps, docs, requests, exceptions] = await Promise.all([
+    getShipment(selectedSummary.id),
+    listShipmentSteps(selectedSummary.id),
+    listCustomerVisibleDocuments(selectedSummary.id),
+    listCustomerDocumentRequests(selectedSummary.id),
+    listCustomerVisibleExceptions(selectedSummary.id),
   ]);
 
-  const visibleConnected = connectedShipments.filter((row) => row.tracking_token);
-  const openExceptions = exceptions.filter((row) => row.status === "OPEN");
+  const workflowTemplate = fullShipment?.workflow_template_id
+    ? await getWorkflowTemplate(fullShipment.workflow_template_id)
+    : null;
+  const stepNames = new Set(allSteps.map((step) => step.name));
+  const isFtl =
+    (workflowTemplate?.name?.toLowerCase() ?? "") === FTL_EXPORT_TEMPLATE_NAME.toLowerCase() ||
+    fallbackIsFtlStepSet(stepNames);
 
-  async function uploadRequestedDocAction(tokenValue: string, requestId: number, formData: FormData) {
+  async function uploadRequestedDocAction(
+    tokenValue: string,
+    shipmentId: number,
+    requestId: number,
+    formData: FormData,
+  ) {
     "use server";
     const authed = await isTrackingSessionValid(tokenValue);
-    if (!authed) redirect(`/track/${tokenValue}?error=auth`);
+    if (!authed) {
+      redirect(buildTrackHref({ token: tokenValue, shipmentId, error: "auth" }));
+    }
 
-    const shipmentId = await getShipmentIdForTrackingToken(tokenValue);
-    if (!shipmentId) redirect(`/track/${tokenValue}?error=invalid`);
+    const customerPartyId = await getTrackingSessionCustomerPartyId(tokenValue);
+    if (!customerPartyId) {
+      redirect(buildTrackHref({ token: tokenValue, shipmentId, error: "auth" }));
+    }
+
+    const canAccessShipment = await shipmentBelongsToTrackingCustomer(
+      customerPartyId,
+      shipmentId,
+    );
+    if (!canAccessShipment) {
+      redirect(buildTrackHref({ token: tokenValue, shipmentId, error: "invalid" }));
+    }
 
     const file = formData.get("file");
-    if (!file || !(file instanceof File)) redirect(`/track/${tokenValue}?error=file`);
+    if (!file || !(file instanceof File)) {
+      redirect(buildTrackHref({ token: tokenValue, shipmentId, error: "file" }));
+    }
 
-    const req = (await listDocumentRequests(shipmentId)).find((request) => request.id === requestId);
-    if (!req || req.status !== "OPEN") redirect(`/track/${tokenValue}?error=request`);
+    const req = (await listDocumentRequests(shipmentId)).find(
+      (request) => request.id === requestId,
+    );
+    if (!req || req.status !== "OPEN") {
+      redirect(buildTrackHref({ token: tokenValue, shipmentId, error: "request" }));
+    }
 
     const upload = await saveUpload({
       shipmentId,
@@ -256,73 +312,70 @@ export default async function TrackShipmentPage({
       data: { docId, requestId: req.id },
     });
 
-    await refreshShipmentDerivedState({ shipmentId, actorUserId: null, updateLastUpdate: true });
-
-    redirect(`/track/${tokenValue}?uploaded=1`);
-  }
-
-  const stepNames = new Set(allSteps.map((step) => step.name));
-  const isFtl =
-    (workflowTemplate?.name?.toLowerCase() ?? "") === FTL_EXPORT_TEMPLATE_NAME.toLowerCase() ||
-    fallbackIsFtlStepSet(stepNames);
-
-  if (isFtl) {
-    const viewModel = buildFtlClientTrackingViewModel({
-      shipment: {
-        id: shipment.id,
-        shipment_code: shipment.shipment_code,
-        origin: shipment.origin,
-        destination: shipment.destination,
-        overall_status: shipment.overall_status,
-        cargo_description: fullShipment?.cargo_description ?? null,
-        last_update_at: shipment.last_update_at,
-        created_at: fullShipment?.created_at ?? shipment.last_update_at,
-      },
-      steps: allSteps.map((step) => ({
-        id: step.id,
-        name: step.name,
-        status: step.status,
-        field_values_json: step.field_values_json,
-      })) as FtlClientTrackingStep[],
-      docs,
-      connectedShipments: visibleConnected,
-      exceptions: openExceptions,
-      requests,
+    await refreshShipmentDerivedState({
+      shipmentId,
+      actorUserId: null,
+      updateLastUpdate: true,
     });
 
-    return (
-      <FtlClientTrackView
-        token={token}
-        shipmentCode={shipment.shipment_code}
-        uploaded={uploaded}
-        activeTab={parseTab(readParam(resolved, "tab"))}
-        activeTrackingTab={parseTrackingTab(readParam(resolved, "trackingTab"))}
-        activeRegion={parseRegion(readParam(resolved, "region"))}
-        activeTruck={parseTruck(readParam(resolved, "truck"))}
-        viewModel={viewModel}
-        connectedShipments={visibleConnected}
-        exceptions={openExceptions}
-        requests={requests}
-        uploadRequestedDocAction={uploadRequestedDocAction.bind(null, token)}
-        logoutTrackingAction={logoutTrackingAction.bind(null, token)}
-      />
-    );
+    redirect(buildTrackHref({ token: tokenValue, shipmentId, uploaded: true }));
   }
 
-  const steps = await listCustomerVisibleSteps(shipment.id);
-
-  return (
+  const detail = isFtl ? (
+    <FtlClientTrackView
+      token={token}
+      shipmentId={selectedSummary.id}
+      uploaded={uploaded}
+      activeTab={parseTab(readParam(resolved, "tab"))}
+      viewModel={buildFtlClientTrackingViewModel({
+        shipment: {
+          id: selectedShipment.id,
+          shipment_code: selectedShipment.shipment_code,
+          origin: selectedShipment.origin,
+          destination: selectedShipment.destination,
+          overall_status: selectedShipment.overall_status,
+          cargo_description: fullShipment?.cargo_description ?? null,
+          last_update_at: selectedShipment.last_update_at,
+          created_at: fullShipment?.created_at ?? selectedShipment.last_update_at,
+        },
+        customer_address: customerContext.customer_address,
+        steps: allSteps.map((step) => ({
+          id: step.id,
+          name: step.name,
+          status: step.status,
+          field_values_json: step.field_values_json,
+        })) as FtlClientTrackingStep[],
+        docs,
+        requests,
+        exceptions,
+      })}
+      exceptions={exceptions.filter((row) => row.status === "OPEN")}
+      requests={requests}
+      uploadRequestedDocAction={uploadRequestedDocAction.bind(null, token, selectedSummary.id)}
+    />
+  ) : (
     <LegacyTrackView
       token={token}
-      shipment={shipment}
+      shipment={selectedShipment}
       uploaded={uploaded}
-      steps={steps}
+      steps={await listCustomerVisibleSteps(selectedSummary.id)}
       docs={docs}
       requests={requests}
-      exceptions={openExceptions}
-      connectedShipments={visibleConnected}
-      uploadRequestedDocAction={uploadRequestedDocAction.bind(null, token)}
-      logoutTrackingAction={logoutTrackingAction.bind(null, token)}
+      exceptions={exceptions.filter((row) => row.status === "OPEN")}
+      uploadRequestedDocAction={uploadRequestedDocAction.bind(null, token, selectedSummary.id)}
     />
+  );
+
+  return (
+    <CustomerPortalShell
+      token={token}
+      customerName={customerContext.customer_name}
+      customerPhone={customerContext.customer_phone}
+      currentShipmentId={selectedSummary.id}
+      shipments={portalShipments}
+      logoutTrackingAction={logoutTrackingAction.bind(null, token)}
+    >
+      {detail}
+    </CustomerPortalShell>
   );
 }

@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { getDocument } from "@/lib/data/documents";
-import { getShipmentIdForTrackingToken } from "@/lib/data/tracking";
+import { shipmentBelongsToTrackingCustomer } from "@/lib/data/tracking";
 import { getStorageBasename, readUpload } from "@/lib/storage";
-import { isTrackingSessionValid } from "@/lib/trackingAuth";
+import {
+  getTrackingSessionCustomerPartyId,
+  isTrackingSessionValid,
+} from "@/lib/trackingAuth";
 
 export const runtime = "nodejs";
 
@@ -12,14 +15,20 @@ export async function GET(
   context: { params: Promise<{ token: string; documentId: string }> },
 ) {
   const { token, documentId } = await context.params;
-  const shipmentId = await getShipmentIdForTrackingToken(token);
-  if (!shipmentId) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const authed = await isTrackingSessionValid(token);
   if (!authed) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const customerPartyId = await getTrackingSessionCustomerPartyId(token);
+  if (!customerPartyId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
   const doc = await getDocument(Number(documentId));
   if (!doc) return NextResponse.json({ error: "not_found" }, { status: 404 });
-  if (doc.shipment_id !== shipmentId) {
+  const canAccessShipment = await shipmentBelongsToTrackingCustomer(
+    customerPartyId,
+    doc.shipment_id,
+  );
+  if (!canAccessShipment) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
   if (!doc.share_with_customer) {

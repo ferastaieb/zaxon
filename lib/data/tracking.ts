@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ShipmentOverallStatus, StepStatus, TransportMode } from "@/lib/domain";
 import { getItem, scanAll, tableName } from "@/lib/db";
+import { FTL_EXPORT_STEP_NAMES } from "@/lib/ftlExport/constants";
 
 export type TrackingShipment = {
   id: number;
@@ -13,6 +14,28 @@ export type TrackingShipment = {
   last_update_at: string;
   etd: string | null;
   eta: string | null;
+};
+
+export type TrackingCustomerContext = {
+  seed_shipment_id: number;
+  seed_tracking_token: string;
+  customer_party_id: number;
+  customer_name: string;
+  customer_phone: string | null;
+  customer_address: string | null;
+  customer_phone_last4: string | null;
+};
+
+export type TrackingPortalShipmentSummary = {
+  id: number;
+  shipment_code: string;
+  transport_mode: TransportMode;
+  origin: string;
+  destination: string;
+  overall_status: ShipmentOverallStatus;
+  last_update_at: string;
+  tracking_token: string | null;
+  has_portal_content: boolean;
 };
 
 export type TrackingConnectedShipment = {
@@ -37,26 +60,104 @@ const EXCEPTION_TYPES_TABLE = tableName("exception_types");
 const SHIPMENT_LINKS_TABLE = tableName("shipment_links");
 const SHIPMENT_CUSTOMERS_TABLE = tableName("shipment_customers");
 
-export async function getShipmentIdForTrackingToken(token: string): Promise<number | null> {
-  const row = await getItem<{ shipment_id: number; revoked_at: string | null }>(
-    TRACKING_TOKENS_TABLE,
-    { token },
+type TrackingTokenRow = {
+  token: string;
+  shipment_id: number;
+  created_at?: string;
+  revoked_at: string | null;
+};
+
+type ShipmentCustomerRow = {
+  shipment_id: number;
+  customer_party_id: number;
+};
+
+type ShipmentSeedRow = {
+  id: number;
+  customer_party_id: number | null;
+};
+
+function fallbackIsFtlStepSet(stepNames: Set<string>) {
+  return (
+    stepNames.has(FTL_EXPORT_STEP_NAMES.exportPlanOverview) &&
+    stepNames.has(FTL_EXPORT_STEP_NAMES.trucksDetails) &&
+    stepNames.has(FTL_EXPORT_STEP_NAMES.loadingDetails) &&
+    stepNames.has(FTL_EXPORT_STEP_NAMES.customsAgentsAllocation)
   );
+}
+
+async function getActiveTrackingTokenRow(token: string): Promise<TrackingTokenRow | null> {
+  const row = await getItem<TrackingTokenRow>(TRACKING_TOKENS_TABLE, { token });
   if (!row || row.revoked_at) return null;
+  return row;
+}
+
+async function getTrackingCustomerPartyIdForShipment(shipmentId: number): Promise<number | null> {
+  const shipment = await getItem<ShipmentSeedRow>(SHIPMENTS_TABLE, { id: shipmentId });
+  if (typeof shipment?.customer_party_id === "number" && shipment.customer_party_id > 0) {
+    return shipment.customer_party_id;
+  }
+
+  const shipmentCustomers = await scanAll<ShipmentCustomerRow>(SHIPMENT_CUSTOMERS_TABLE);
+  return (
+    shipmentCustomers.find((row) => row.shipment_id === shipmentId)?.customer_party_id ?? null
+  );
+}
+
+export async function getShipmentIdForTrackingToken(token: string): Promise<number | null> {
+  const row = await getActiveTrackingTokenRow(token);
+  if (!row) return null;
   return row.shipment_id ?? null;
 }
 
 export async function getTrackingShipment(token: string): Promise<TrackingShipment | null> {
-  const row = await getItem<{ shipment_id: number; revoked_at: string | null }>(
-    TRACKING_TOKENS_TABLE,
-    { token },
-  );
-  if (!row || row.revoked_at) return null;
+  const row = await getActiveTrackingTokenRow(token);
+  if (!row) return null;
 
-  const shipment = await getItem<TrackingShipment>(SHIPMENTS_TABLE, {
-    id: row.shipment_id,
-  });
+  return getTrackingShipmentById(row.shipment_id);
+}
+
+export async function getTrackingShipmentById(
+  shipmentId: number,
+): Promise<TrackingShipment | null> {
+  const shipment = await getItem<TrackingShipment>(SHIPMENTS_TABLE, { id: shipmentId });
   return shipment ?? null;
+}
+
+export async function getTrackingCustomerPartyIdForToken(
+  token: string,
+): Promise<number | null> {
+  const row = await getActiveTrackingTokenRow(token);
+  if (!row) return null;
+  return getTrackingCustomerPartyIdForShipment(row.shipment_id);
+}
+
+export async function getTrackingCustomerContext(
+  token: string,
+): Promise<TrackingCustomerContext | null> {
+  const tracking = await getActiveTrackingTokenRow(token);
+  if (!tracking) return null;
+
+  const customerPartyId = await getTrackingCustomerPartyIdForShipment(tracking.shipment_id);
+  if (!customerPartyId) return null;
+
+  const party = await getItem<{
+    id: number;
+    name: string;
+    phone: string | null;
+    address: string | null;
+  }>(PARTIES_TABLE, { id: customerPartyId });
+  if (!party) return null;
+
+  return {
+    seed_shipment_id: tracking.shipment_id,
+    seed_tracking_token: token,
+    customer_party_id: customerPartyId,
+    customer_name: party.name,
+    customer_phone: party.phone ?? null,
+    customer_address: party.address ?? null,
+    customer_phone_last4: last4Digits(party.phone ?? null),
+  };
 }
 
 export async function listCustomerVisibleSteps(shipmentId: number) {
@@ -144,21 +245,132 @@ function last4Digits(phone: string | null | undefined): string | null {
 }
 
 export async function getTrackingCustomerPhoneLast4(token: string): Promise<string | null> {
-  const tracking = await getItem<{ shipment_id: number; revoked_at: string | null }>(
-    TRACKING_TOKENS_TABLE,
-    { token },
+  const context = await getTrackingCustomerContext(token);
+  return context?.customer_phone_last4 ?? null;
+}
+
+export async function shipmentBelongsToTrackingCustomer(
+  customerPartyId: number,
+  shipmentId: number,
+): Promise<boolean> {
+  const shipment = await getItem<{ id: number; customer_party_id: number | null }>(
+    SHIPMENTS_TABLE,
+    { id: shipmentId },
   );
-  if (!tracking || tracking.revoked_at) return null;
+  if (!shipment) return false;
+  if (shipment.customer_party_id === customerPartyId) return true;
 
-  const shipment = await getItem<{ customer_party_id: number }>(SHIPMENTS_TABLE, {
-    id: tracking.shipment_id,
-  });
-  if (!shipment) return null;
+  const shipmentCustomers = await scanAll<ShipmentCustomerRow>(SHIPMENT_CUSTOMERS_TABLE);
+  return shipmentCustomers.some(
+    (row) => row.shipment_id === shipmentId && row.customer_party_id === customerPartyId,
+  );
+}
 
-  const party = await getItem<{ phone: string | null }>(PARTIES_TABLE, {
-    id: shipment.customer_party_id,
-  });
-  return last4Digits(party?.phone ?? null);
+export async function listTrackingPortalShipments(
+  customerPartyId: number,
+): Promise<TrackingPortalShipmentSummary[]> {
+  const [shipments, shipmentCustomers, trackingTokens, steps, docs, requests, exceptions] =
+    await Promise.all([
+      scanAll<{
+        id: number;
+        shipment_code: string;
+        transport_mode: TransportMode;
+        origin: string;
+        destination: string;
+        overall_status: ShipmentOverallStatus;
+        last_update_at: string;
+        customer_party_id: number | null;
+      }>(SHIPMENTS_TABLE),
+      scanAll<ShipmentCustomerRow>(SHIPMENT_CUSTOMERS_TABLE),
+      scanAll<TrackingTokenRow>(TRACKING_TOKENS_TABLE),
+      scanAll<{
+        shipment_id: number;
+        name: string;
+        customer_visible: 0 | 1;
+      }>(SHIPMENT_STEPS_TABLE),
+      scanAll<{
+        shipment_id: number;
+        share_with_customer: 0 | 1;
+      }>(DOCUMENTS_TABLE),
+      scanAll<{
+        shipment_id: number;
+        status: "OPEN" | "FULFILLED";
+      }>(DOCUMENT_REQUESTS_TABLE),
+      scanAll<{
+        shipment_id: number;
+        share_with_customer: 0 | 1;
+      }>(SHIPMENT_EXCEPTIONS_TABLE),
+    ]);
+
+  const shipmentIds = new Set<number>();
+  for (const shipment of shipments) {
+    if (shipment.customer_party_id === customerPartyId) {
+      shipmentIds.add(shipment.id);
+    }
+  }
+  for (const row of shipmentCustomers) {
+    if (row.customer_party_id === customerPartyId) {
+      shipmentIds.add(row.shipment_id);
+    }
+  }
+
+  const tokenByShipment = new Map<number, { token: string; created_at: string }>();
+  for (const token of trackingTokens) {
+    if (token.revoked_at || !token.created_at) continue;
+    const existing = tokenByShipment.get(token.shipment_id);
+    if (!existing || token.created_at > existing.created_at) {
+      tokenByShipment.set(token.shipment_id, {
+        token: token.token,
+        created_at: token.created_at,
+      });
+    }
+  }
+
+  const customerVisibleShipments = new Set(
+    steps.filter((step) => step.customer_visible === 1).map((step) => step.shipment_id),
+  );
+  const stepNamesByShipment = new Map<number, Set<string>>();
+  for (const step of steps) {
+    const current = stepNamesByShipment.get(step.shipment_id) ?? new Set<string>();
+    current.add(step.name);
+    stepNamesByShipment.set(step.shipment_id, current);
+  }
+  const ftlPortalShipments = new Set<number>();
+  for (const [shipmentId, stepNames] of stepNamesByShipment.entries()) {
+    if (fallbackIsFtlStepSet(stepNames)) {
+      ftlPortalShipments.add(shipmentId);
+    }
+  }
+
+  const sharedDocShipments = new Set(
+    docs.filter((doc) => doc.share_with_customer === 1).map((doc) => doc.shipment_id),
+  );
+  const requestShipments = new Set(requests.map((request) => request.shipment_id));
+  const exceptionShipments = new Set(
+    exceptions
+      .filter((exception) => exception.share_with_customer === 1)
+      .map((exception) => exception.shipment_id),
+  );
+
+  return shipments
+    .filter((shipment) => shipmentIds.has(shipment.id))
+    .map((shipment) => ({
+      id: shipment.id,
+      shipment_code: shipment.shipment_code,
+      transport_mode: shipment.transport_mode,
+      origin: shipment.origin,
+      destination: shipment.destination,
+      overall_status: shipment.overall_status,
+      last_update_at: shipment.last_update_at,
+      tracking_token: tokenByShipment.get(shipment.id)?.token ?? null,
+      has_portal_content:
+        customerVisibleShipments.has(shipment.id) ||
+        sharedDocShipments.has(shipment.id) ||
+        requestShipments.has(shipment.id) ||
+        exceptionShipments.has(shipment.id) ||
+        ftlPortalShipments.has(shipment.id),
+    }))
+    .sort((a, b) => b.last_update_at.localeCompare(a.last_update_at));
 }
 
 export async function listCustomerVisibleExceptions(shipmentId: number) {
