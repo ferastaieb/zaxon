@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { AppIcon } from "@/components/ui/AppIcon";
 import { Badge } from "@/components/ui/Badge";
+import { CopyField } from "@/components/ui/CopyField";
 import {
   overallStatusLabel,
   riskLabel,
@@ -19,6 +20,7 @@ import { PartiesCargoStepForm } from "./forms/PartiesCargoStepForm";
 import { StockViewStepForm } from "./forms/StockViewStepForm";
 import type {
   ImportTransferDocumentMeta,
+  ImportTransferJobIdMeta,
   ImportTransferShipmentMeta,
   ImportTransferStepData,
   ImportTransferStockSummary,
@@ -39,7 +41,12 @@ type Props = {
   canEdit: boolean;
   isAdmin: boolean;
   updateAction: (formData: FormData) => void;
+  deleteDocumentAction: (formData: FormData) => void;
+  addJobIdsAction: (formData: FormData) => void;
+  removeJobIdAction: (formData: FormData) => void;
   stockSummary: ImportTransferStockSummary;
+  jobIds: ImportTransferJobIdMeta[];
+  trackingLink: string;
   initialTab?: ImportTransferTab;
 };
 
@@ -75,21 +82,17 @@ export function ImportTransferOwnershipWorkspace({
   canEdit,
   isAdmin,
   updateAction,
+  deleteDocumentAction,
+  addJobIdsAction,
+  removeJobIdAction,
   stockSummary,
+  jobIds,
+  trackingLink,
   initialTab,
 }: Props) {
   const [tab, setTab] = useState<ImportTransferTab>(
     initialTab && isMainTab(initialTab) ? initialTab : "overview",
   );
-
-  const stepByName = useMemo(() => new Map(steps.map((step) => [step.name, step])), [steps]);
-  const overviewStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview);
-  const partiesStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo);
-  const documentsStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe);
-  const collectionStep = stepByName.get(
-    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.collectionOutcome,
-  );
-  const stockStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.stockView);
 
   const computed = useMemo(() => {
     const stepsByName: Record<string, { id: number; values: Record<string, unknown> } | undefined> =
@@ -103,8 +106,30 @@ export function ImportTransferOwnershipWorkspace({
     return computeImportTransferOwnershipStatuses({
       stepsByName,
       docTypes: new Set(Object.keys(latestDocsByType)),
+      hasJobNumber: jobIds.length > 0,
     });
-  }, [steps, latestDocsByType]);
+  }, [jobIds.length, latestDocsByType, steps]);
+
+  const effectiveSteps = useMemo(
+    () =>
+      steps.map((step) => ({
+        ...step,
+        status: computed.statuses[step.name] ?? step.status,
+      })),
+    [computed.statuses, steps],
+  );
+
+  const stepByName = useMemo(
+    () => new Map(effectiveSteps.map((step) => [step.name, step])),
+    [effectiveSteps],
+  );
+  const overviewStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview);
+  const partiesStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo);
+  const documentsStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe);
+  const collectionStep = stepByName.get(
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.collectionOutcome,
+  );
+  const stockStep = stepByName.get(IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.stockView);
 
   const summary: ImportTransferStockSummary = {
     ...stockSummary,
@@ -171,6 +196,29 @@ export function ImportTransferOwnershipWorkspace({
             Pending collection reason is required while cargo is not yet delivered to Zaxon warehouse.
           </div>
         ) : null}
+        {computed.jobNumberMissing ? (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Job number is required before the shipment can be completed.
+          </div>
+        ) : null}
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_260px]">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Client tracking link
+            </div>
+            <div className="mt-2">
+              <CopyField value={trackingLink} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+            <div className="text-xs uppercase tracking-[0.16em] text-zinc-500">
+              Job numbers
+            </div>
+            <div className="mt-2 text-sm text-zinc-800">
+              {jobIds.length ? jobIds.map((job) => job.job_id).join(", ") : "Not added yet"}
+            </div>
+          </div>
+        </div>
       </header>
 
       <div className="flex flex-wrap gap-2 rounded-2xl border border-zinc-200 bg-white p-3 shadow-sm">
@@ -218,9 +266,13 @@ export function ImportTransferOwnershipWorkspace({
           <OverviewStepForm
             step={overviewStep}
             updateAction={updateAction}
+            addJobIdsAction={addJobIdsAction}
+            removeJobIdAction={removeJobIdAction}
             returnTo={returnTo("overview")}
             canEdit={canEdit}
             isAdmin={isAdmin}
+            jobIds={jobIds}
+            trackingLink={trackingLink}
           />
         ) : (
           <MissingStep name={IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview} />
@@ -247,6 +299,7 @@ export function ImportTransferOwnershipWorkspace({
             step={documentsStep}
             latestDocsByType={latestDocsByType}
             updateAction={updateAction}
+            deleteDocumentAction={deleteDocumentAction}
             returnTo={returnTo("documents-boe")}
             canEdit={canEdit}
             isAdmin={isAdmin}

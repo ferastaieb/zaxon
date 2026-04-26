@@ -34,10 +34,10 @@ export const IMPORT_TRANSFER_COLLECTION_PERFORMED_BY = [
 
 export const IMPORT_TRANSFER_VEHICLE_TYPES = ["PICKUP", "TRAILER"] as const;
 
-export const IMPORT_TRANSFER_VEHICLE_SIZES = [
-  "SMALL",
-  "MEDIUM",
-  "LARGE",
+export const IMPORT_TRANSFER_TRAILER_TYPES = [
+  "13.5 Refer",
+  "16M BOX",
+  "18M BOX",
 ] as const;
 
 export const IMPORT_TRANSFER_STOCK_TYPES = [

@@ -2,17 +2,22 @@
 
 import { useState } from "react";
 
-import type { ImportTransferStepData } from "../types";
+import type { ImportTransferJobIdMeta, ImportTransferStepData } from "../types";
 import { boolValue, fieldName, stringValue, toRecord } from "../fieldNames";
 import { SectionFrame } from "@/components/shipments/ftl-export/forms/SectionFrame";
 import { DatePickerInput } from "@/components/ui/DatePickerInput";
+import { CopyField } from "@/components/ui/CopyField";
 
 type Props = {
   step: ImportTransferStepData;
   updateAction: (formData: FormData) => void;
+  addJobIdsAction: (formData: FormData) => void;
+  removeJobIdAction: (formData: FormData) => void;
   returnTo: string;
   canEdit: boolean;
   isAdmin: boolean;
+  jobIds: ImportTransferJobIdMeta[];
+  trackingLink: string;
 };
 
 function todayIso() {
@@ -24,9 +29,13 @@ function todayIso() {
 export function OverviewStepForm({
   step,
   updateAction,
+  addJobIdsAction,
+  removeJobIdAction,
   returnTo,
   canEdit,
   isAdmin,
+  jobIds,
+  trackingLink,
 }: Props) {
   const values = toRecord(step.values);
   const [requestReceived, setRequestReceived] = useState(
@@ -35,8 +44,6 @@ export function OverviewStepForm({
   const [requestDate, setRequestDate] = useState(
     stringValue(values.request_received_date),
   );
-  const isDone = step.status === "DONE";
-
   const toggleMission = () => {
     setRequestReceived((prev) => {
       const next = !prev;
@@ -57,7 +64,7 @@ export function OverviewStepForm({
       <input type="hidden" name="returnTo" value={returnTo} />
       <SectionFrame
         title="Overview"
-        description="Start the import ownership workflow when the request is received."
+        description="Start the import ownership workflow when the request is received, add the job number, and share the client tracking link."
         status={step.status}
         canEdit={canEdit}
         isAdmin={isAdmin}
@@ -91,7 +98,7 @@ export function OverviewStepForm({
               role="switch"
               aria-checked={requestReceived}
               onClick={toggleMission}
-              disabled={!canEdit || isDone}
+              disabled={!canEdit}
               className={`relative inline-flex h-11 w-32 items-center rounded-full border transition ${
                 requestReceived
                   ? "border-blue-500 bg-blue-600 text-white"
@@ -128,10 +135,73 @@ export function OverviewStepForm({
                 name={fieldName(["request_received_date"])}
                 value={requestDate}
                 onChange={(event) => setRequestDate(event.target.value)}
-                disabled={!canEdit || !requestReceived || isDone}
+                disabled={!canEdit || !requestReceived}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
                />
             </label>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+              Job number
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {jobIds.length === 0 ? (
+                <span className="text-sm text-amber-700">
+                  Add a job number before this shipment can be completed.
+                </span>
+              ) : (
+                jobIds.map((job) => (
+                  <div
+                    key={job.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-800"
+                  >
+                    <span>{job.job_id}</span>
+                    {canEdit ? (
+                      <button
+                        type="submit"
+                        formAction={removeJobIdAction}
+                        name="jobIdId"
+                        value={String(job.id)}
+                        className="text-zinc-400 transition hover:text-red-600"
+                      >
+                        x
+                      </button>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <input
+                name="jobIds"
+                disabled={!canEdit}
+                placeholder="Add job number"
+                className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm disabled:bg-zinc-100"
+              />
+              <button
+                type="submit"
+                formAction={addJobIdsAction}
+                disabled={!canEdit}
+                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:bg-zinc-100"
+              >
+                Add job number
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-zinc-500">
+              Client tracking
+            </div>
+            <div className="mt-3">
+              <CopyField value={trackingLink} />
+              <p className="mt-2 text-xs text-zinc-500">
+                Share this link with the client.
+              </p>
+            </div>
           </div>
         </div>
       </SectionFrame>

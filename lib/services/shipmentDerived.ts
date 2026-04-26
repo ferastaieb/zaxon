@@ -2,8 +2,14 @@ import "server-only";
 
 import type { ShipmentOverallStatus, ShipmentRisk, StepStatus } from "@/lib/domain";
 import { nowIso, scanAll, tableName, updateItem, getItem } from "@/lib/db";
+import { listDocuments } from "@/lib/data/documents";
+import { listShipmentJobIds } from "@/lib/data/shipments";
+import { updateShipmentStep } from "@/lib/data/steps";
 import { listActiveUserIdsByRole } from "@/lib/data/users";
 import { createAlert } from "@/lib/data/alerts";
+import { parseStepFieldValues } from "@/lib/stepFields";
+import { IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES } from "@/lib/importTransferOwnership/constants";
+import { computeImportTransferOwnershipStatuses } from "@/lib/importTransferOwnership/status";
 
 const SHIPMENT_STEPS_TABLE = tableName("shipment_steps");
 const SHIPMENT_EXCEPTIONS_TABLE = tableName("shipment_exceptions");
@@ -20,6 +26,7 @@ type StepLite = {
   due_at: string | null;
   shipment_id: number;
   sort_order: number;
+  field_values_json: string;
 };
 
 type OpenExceptionLite = {
@@ -61,6 +68,17 @@ function computeRisk(steps: StepLite[], exceptions: OpenExceptionLite[]): Shipme
   return "ON_TRACK";
 }
 
+function isImportTransferOwnershipWorkflow(steps: StepLite[]) {
+  const names = new Set(steps.map((step) => step.name));
+  return [
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.collectionOutcome,
+    IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.stockView,
+  ].every((name) => names.has(name));
+}
+
 export async function refreshShipmentDerivedState(input: {
   shipmentId: number;
   actorUserId?: number | null;
@@ -85,6 +103,42 @@ export async function refreshShipmentDerivedState(input: {
   const shipmentSteps = steps
     .filter((step) => step.shipment_id === input.shipmentId)
     .sort((a, b) => a.sort_order - b.sort_order);
+
+  if (isImportTransferOwnershipWorkflow(shipmentSteps)) {
+    const [docs, jobIds] = await Promise.all([
+      listDocuments(input.shipmentId),
+      listShipmentJobIds(input.shipmentId),
+    ]);
+    const docTypes = new Set(
+      docs.filter((doc) => doc.is_received).map((doc) => String(doc.document_type)),
+    );
+    const stepsByName: Record<
+      string,
+      { id: number; values: Record<string, unknown> } | undefined
+    > = {};
+    for (const step of shipmentSteps) {
+      stepsByName[step.name] = {
+        id: step.id,
+        values: parseStepFieldValues(step.field_values_json) as Record<string, unknown>,
+      };
+    }
+
+    const computed = computeImportTransferOwnershipStatuses({
+      stepsByName,
+      docTypes,
+      hasJobNumber: jobIds.length > 0,
+    });
+
+    for (const step of shipmentSteps) {
+      const nextStatus = computed.statuses[step.name];
+      if (!nextStatus || nextStatus === step.status) continue;
+      await updateShipmentStep({
+        stepId: step.id,
+        status: nextStatus,
+      });
+      step.status = nextStatus;
+    }
+  }
 
   const openExceptions = exceptions
     .filter((ex) => ex.shipment_id === input.shipmentId && ex.status === "OPEN")

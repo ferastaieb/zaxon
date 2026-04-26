@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { PartyRow } from "@/lib/data/parties";
 import {
@@ -30,6 +30,8 @@ type CreateFormProps = {
   action: (formData: FormData) => void;
   canWrite: boolean;
   error: string | null;
+  draftKey?: string;
+  createdCustomerId?: string | null;
 };
 
 const SERVICE_TYPES = [
@@ -46,17 +48,27 @@ export function FclImportCreateForm({
   action,
   canWrite,
   error,
+  draftKey,
+  createdCustomerId,
 }: CreateFormProps) {
   const [query, setQuery] = useState("");
   const [selectedCustomers, setSelectedCustomers] = useState<string[]>([]);
   const [containers, setContainers] = useState<string[]>([""]);
   const [blNumber, setBlNumber] = useState("");
   const [jobIds, setJobIds] = useState("");
+  const [supplierName, setSupplierName] = useState("");
   const [serviceType, setServiceType] = useState(
     SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE",
   );
   const [ftlRouteId, setFtlRouteId] = useState<string>(
     FTL_EXPORT_ROUTES[0]?.id ?? "",
+  );
+  const [createDraftKey] = useState(
+    () =>
+      draftKey ||
+      (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `shipment-draft-${Date.now()}`),
   );
   const containerInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const isFclService = serviceType === "FCL_IMPORT_CLEARANCE";
@@ -84,6 +96,10 @@ export function FclImportCreateForm({
     if (!trimmed) return customers;
     return customers.filter((c) => c.name.toLowerCase().includes(trimmed));
   }, [customers, query]);
+  const draftStorageKey = `shipment-create-draft:${createDraftKey}`;
+  const newCustomerHref = `/parties/new?type=CUSTOMER&returnTo=${encodeURIComponent(
+    `/shipments/new?draftKey=${encodeURIComponent(createDraftKey)}`,
+  )}`;
 
   const toggleCustomer = (id: string) => {
     if (requiresSingleCustomer) {
@@ -116,6 +132,88 @@ export function FclImportCreateForm({
 
   const removeContainer = (index: number) => {
     setContainers((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !draftKey) {
+      if (
+        createdCustomerId &&
+        customers.some((customer) => String(customer.id) === createdCustomerId)
+      ) {
+        setSelectedCustomers([createdCustomerId]);
+      }
+      return;
+    }
+
+    const raw = window.sessionStorage.getItem(draftStorageKey);
+    if (!raw) {
+      if (
+        createdCustomerId &&
+        customers.some((customer) => String(customer.id) === createdCustomerId)
+      ) {
+        setSelectedCustomers([createdCustomerId]);
+      }
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as {
+        query?: string;
+        selectedCustomers?: string[];
+        containers?: string[];
+        blNumber?: string;
+        jobIds?: string;
+        supplierName?: string;
+        serviceType?: string;
+        ftlRouteId?: string;
+      };
+
+      setQuery(parsed.query ?? "");
+      setContainers(parsed.containers?.length ? parsed.containers : [""]);
+      setBlNumber(parsed.blNumber ?? "");
+      setJobIds(parsed.jobIds ?? "");
+      setSupplierName(parsed.supplierName ?? "");
+      setServiceType(parsed.serviceType ?? SERVICE_TYPES[0]?.id ?? "FCL_IMPORT_CLEARANCE");
+      setFtlRouteId(parsed.ftlRouteId ?? FTL_EXPORT_ROUTES[0]?.id ?? "");
+
+      const restoredCustomers = Array.isArray(parsed.selectedCustomers)
+        ? parsed.selectedCustomers.filter((value) => typeof value === "string" && value.trim())
+        : [];
+      if (
+        createdCustomerId &&
+        customers.some((customer) => String(customer.id) === createdCustomerId)
+      ) {
+        setSelectedCustomers([createdCustomerId]);
+      } else {
+        setSelectedCustomers(restoredCustomers);
+      }
+    } catch {
+      if (
+        createdCustomerId &&
+        customers.some((customer) => String(customer.id) === createdCustomerId)
+      ) {
+        setSelectedCustomers([createdCustomerId]);
+      }
+    } finally {
+      window.sessionStorage.removeItem(draftStorageKey);
+    }
+  }, [createdCustomerId, customers, draftKey, draftStorageKey]);
+
+  const saveDraft = () => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(
+      draftStorageKey,
+      JSON.stringify({
+        query,
+        selectedCustomers,
+        containers,
+        blNumber,
+        jobIds,
+        supplierName,
+        serviceType,
+        ftlRouteId,
+      }),
+    );
   };
 
   return (
@@ -243,17 +341,32 @@ export function FclImportCreateForm({
                   />
                 </label>
               ) : isImportTransferService ? (
-                <label className="block md:col-span-2">
-                  <div className="mb-1 inline-flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <AppIcon name="icon-route" size={20} />
-                    Route
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    Supplier location to Zaxon ownership (defined in workflow steps).
-                  </div>
-                  <input type="hidden" name="origin" value="Supplier Location" />
-                  <input type="hidden" name="destination" value="Zaxon Ownership" />
-                </label>
+                <>
+                  <label className="block">
+                    <div className="mb-1 inline-flex items-center gap-2 text-sm font-medium text-slate-700">
+                      <AppIcon name="icon-route" size={20} />
+                      Route
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                      Supplier location to Zaxon ownership (defined in workflow steps).
+                    </div>
+                    <input type="hidden" name="origin" value="Supplier Location" />
+                    <input type="hidden" name="destination" value="Zaxon Ownership" />
+                  </label>
+                  <label className="block">
+                    <div className="mb-1 text-sm font-medium text-slate-700">
+                      Supplier name
+                    </div>
+                    <input
+                      name="supplierName"
+                      value={supplierName}
+                      onChange={(event) => setSupplierName(event.target.value)}
+                      disabled={!canWrite}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                      placeholder="Enter supplier name"
+                    />
+                  </label>
+                </>
               ) : (
                 <>
                   <label className="block">
@@ -297,7 +410,8 @@ export function FclImportCreateForm({
                 </h2>
               </div>
               <Link
-                href="/parties/new?type=CUSTOMER"
+                href={newCustomerHref}
+                onClick={saveDraft}
                 className={`rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 ${
                   !canWrite ? "pointer-events-none opacity-60" : ""
                 }`}
@@ -306,42 +420,66 @@ export function FclImportCreateForm({
               </Link>
             </div>
 
-            <div className="mt-4">
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search customers..."
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
-              />
-            </div>
+            {isImportTransferService ? (
+              <div className="mt-4">
+                <select
+                  name="customerPartyIds"
+                  value={selectedCustomers[0] ?? ""}
+                  onChange={(event) =>
+                    setSelectedCustomers(event.target.value ? [event.target.value] : [])
+                  }
+                  disabled={!canWrite}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none disabled:bg-slate-100"
+                  required
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
+                <div className="mt-4">
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search customers..."
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-slate-400 focus:outline-none"
+                  />
+                </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {filteredCustomers.map((customer) => {
-                const id = String(customer.id);
-                const checked = selectedCustomers.includes(id);
-                return (
-                  <label
-                    key={customer.id}
-                    className={`flex items-center gap-3 rounded-xl border px-3 py-2 text-sm transition ${
-                      checked
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      name="customerPartyIds"
-                      value={id}
-                      checked={checked}
-                      onChange={() => toggleCustomer(id)}
-                      disabled={!canWrite}
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                    />
-                    <span className="truncate">{customer.name}</span>
-                  </label>
-                );
-              })}
-            </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {filteredCustomers.map((customer) => {
+                    const id = String(customer.id);
+                    const checked = selectedCustomers.includes(id);
+                    return (
+                      <label
+                        key={customer.id}
+                        className={`flex items-center gap-3 rounded-xl border px-3 py-2 text-sm transition ${
+                          checked
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          name="customerPartyIds"
+                          value={id}
+                          checked={checked}
+                          onChange={() => toggleCustomer(id)}
+                          disabled={!canWrite}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                        />
+                        <span className="truncate">{customer.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
             {selectedCustomers.length ? (
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
                 {selectedCustomers.map((id) => {

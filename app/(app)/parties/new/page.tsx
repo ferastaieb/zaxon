@@ -14,6 +14,11 @@ function readParam(params: SearchParams, key: string): string | undefined {
   return value;
 }
 
+function appendQueryParam(url: string, key: string, value: string) {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
 function partyTypeLabel(type: PartyType) {
   switch (type) {
     case "CUSTOMER":
@@ -40,6 +45,11 @@ export default async function NewPartyPage({
   const type = PartyTypes.includes(typeRaw as PartyType)
     ? (typeRaw as PartyType)
     : "CUSTOMER";
+  const returnToRaw = readParam(resolved, "returnTo");
+  const returnTo =
+    typeof returnToRaw === "string" && returnToRaw.startsWith("/shipments/new")
+      ? returnToRaw
+      : null;
 
   async function createPartyAction(formData: FormData) {
     "use server";
@@ -58,6 +68,10 @@ export default async function NewPartyPage({
     }
 
     const id = await createParty({ type, name, phone, email, address, notes });
+    const returnToRaw = String(formData.get("returnTo") ?? "").trim();
+    if (returnToRaw.startsWith("/shipments/new")) {
+      redirect(appendQueryParam(returnToRaw, "createdCustomerId", String(id)));
+    }
     redirect(`/parties/${id}?type=${type}`);
   }
 
@@ -78,6 +92,7 @@ export default async function NewPartyPage({
       <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
         <form action={createPartyAction} className="space-y-4">
           <input type="hidden" name="type" value={type} />
+          <input type="hidden" name="returnTo" value={returnTo ?? ""} />
           <label className="block">
             <div className="mb-1 text-sm font-medium text-zinc-800">Name</div>
             <input
@@ -126,7 +141,7 @@ export default async function NewPartyPage({
               Create
             </button>
             <Link
-              href={`/parties?type=${type}`}
+              href={returnTo ?? `/parties?type=${type}`}
               className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
             >
               Cancel

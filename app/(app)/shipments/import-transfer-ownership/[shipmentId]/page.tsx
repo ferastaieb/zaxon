@@ -12,6 +12,8 @@ import {
 } from "@/lib/data/documents";
 import {
   getShipment,
+  getTrackingTokenForShipment,
+  listShipmentJobIds,
   listShipmentSteps,
   syncShipmentStepsFromTemplate,
 } from "@/lib/data/shipments";
@@ -21,9 +23,12 @@ import {
 } from "@/lib/importTransferOwnership/constants";
 import { ensureImportTransferOwnershipTemplate } from "@/lib/importTransferOwnership/template";
 import { requireShipmentAccess } from "@/lib/permissions";
+import { refreshShipmentDerivedState } from "@/lib/services/shipmentDerived";
 import { parseStepFieldSchema, parseStepFieldValues } from "@/lib/stepFields";
 import {
+  addShipmentJobIdsAction,
   deleteDocumentAction,
+  removeShipmentJobIdAction,
   requestDocumentAction,
   reviewDocumentAction,
   updateDocumentFlagsAction,
@@ -114,6 +119,7 @@ export default async function ImportTransferOwnershipShipmentPage({
   if (!id) redirect("/shipments");
 
   await requireShipmentAccess(user, id);
+  await refreshShipmentDerivedState({ shipmentId: id });
 
   const shipment = await getShipment(id);
   if (!shipment) redirect("/shipments");
@@ -139,7 +145,7 @@ export default async function ImportTransferOwnershipShipmentPage({
     }
   }
 
-  const [docs, docRequests, importCandidates] = await Promise.all([
+  const [docs, docRequests, importCandidates, jobIds, trackingToken] = await Promise.all([
     listDocuments(id),
     listDocumentRequests(id),
     listFtlImportCandidates({
@@ -147,6 +153,8 @@ export default async function ImportTransferOwnershipShipmentPage({
       role: user.role,
       currentShipmentId: 0,
     }),
+    listShipmentJobIds(id),
+    getTrackingTokenForShipment(id),
   ]);
 
   const stepData = steps.map((step) => ({
@@ -215,6 +223,9 @@ export default async function ImportTransferOwnershipShipmentPage({
         canEdit={["ADMIN", "OPERATIONS", "CLEARANCE", "SALES"].includes(user.role)}
         isAdmin={user.role === "ADMIN"}
         updateAction={updateImportTransferStepAction.bind(null, shipment.id)}
+        deleteDocumentAction={deleteDocumentAction.bind(null, shipment.id)}
+        addJobIdsAction={addShipmentJobIdsAction.bind(null, shipment.id)}
+        removeJobIdAction={removeShipmentJobIdAction.bind(null, shipment.id)}
         initialTab={initialTab}
         stockSummary={{
           importedQuantity,
@@ -226,6 +237,12 @@ export default async function ImportTransferOwnershipShipmentPage({
           stockType: candidate?.nonPhysicalStock ? "OWNERSHIP_STOCK" : "WAREHOUSE_STOCK",
           allocationHistory: candidate?.allocationHistory ?? [],
         }}
+        jobIds={jobIds.map((job) => ({
+          id: job.id,
+          job_id: job.job_id,
+          created_by_name: job.created_by_name ?? null,
+        }))}
+        trackingLink={trackingToken ? `/track/${trackingToken}` : "-"}
       />
       <WorkflowDocumentsHub
         shipmentId={shipment.id}

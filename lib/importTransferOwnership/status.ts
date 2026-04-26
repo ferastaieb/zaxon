@@ -25,6 +25,7 @@ type StepSnapshot = {
 type StatusInput = {
   stepsByName: Record<string, StepSnapshot | undefined>;
   docTypes: Set<string>;
+  hasJobNumber?: boolean;
 };
 
 export type ImportTransferOwnershipStatusResult = {
@@ -35,6 +36,7 @@ export type ImportTransferOwnershipStatusResult = {
   stockType: ImportTransferStockType;
   pendingCollection: boolean;
   pendingCollectionReasonMissing: boolean;
+  jobNumberMissing: boolean;
   importedQuantity: number;
   importedWeight: number;
 };
@@ -63,10 +65,11 @@ export function computeImportTransferOwnershipStatuses(
     typeof overviewValues.request_received_date === "string"
       ? overviewValues.request_received_date.trim()
       : "";
+  const hasJobNumber = !!input.hasJobNumber;
   const overviewTouched = hasAnyValue(overviewValues);
   statuses[IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.overview] = statusByDoneAndTouched(
-    requestReceived && !!requestReceivedDate,
-    overviewTouched,
+    requestReceived && !!requestReceivedDate && hasJobNumber,
+    overviewTouched || hasJobNumber,
   );
 
   const partiesStep = input.stepsByName[IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo];
@@ -88,10 +91,14 @@ export function computeImportTransferOwnershipStatuses(
   const documentsStep = input.stepsByName[IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe];
   const documentsValues = toRecord(documentsStep?.values ?? {});
   const boe = parseDocumentsBoe(documentsValues);
+  const bundleDocsDone =
+    boe.single_documents_bundle &&
+    hasFile(documentsStep, ["single_documents_bundle_upload"], input.docTypes);
   const mandatoryDocsDone =
-    hasFile(documentsStep, ["transfer_ownership_letter"], input.docTypes) &&
-    hasFile(documentsStep, ["delivery_advice"], input.docTypes) &&
-    hasFile(documentsStep, ["commercial_invoice"], input.docTypes);
+    bundleDocsDone ||
+    (hasFile(documentsStep, ["transfer_ownership_letter"], input.docTypes) &&
+      hasFile(documentsStep, ["delivery_advice"], input.docTypes) &&
+      hasFile(documentsStep, ["commercial_invoice"], input.docTypes));
   const boeDone =
     !!boe.boe_prepared_by &&
     !!boe.boe_number &&
@@ -103,6 +110,7 @@ export function computeImportTransferOwnershipStatuses(
     hasFile(documentsStep, ["delivery_advice"], input.docTypes) ||
     hasFile(documentsStep, ["commercial_invoice"], input.docTypes) ||
     hasFile(documentsStep, ["packing_list"], input.docTypes) ||
+    hasFile(documentsStep, ["single_documents_bundle_upload"], input.docTypes) ||
     hasFile(documentsStep, ["boe_upload"], input.docTypes);
   statuses[IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.documentsBoe] = statusByDoneAndTouched(
     mandatoryDocsDone && boeDone,
@@ -117,11 +125,29 @@ export function computeImportTransferOwnershipStatuses(
   const normalizedOutcome = normalizeOutcomeType(collection.outcome_type);
   const planReady = !!normalizedOutcome && !!collection.collection_performed_by;
   const vehicleRowsWithData = vehicleRows.filter(
-    (row) => !!row.vehicle_type || !!row.vehicle_size || row.vehicle_count > 0,
+    (row) =>
+      !!row.trailer_type ||
+      row.truck_count > 0 ||
+      !!row.truck_number ||
+      row.truck_loaded ||
+      !!row.truck_loaded_date,
   );
   const vehiclesValid = vehicleRowsWithData.every(
-    (row) => !!row.vehicle_type && !!row.vehicle_size,
+    (row) =>
+      !!row.trailer_type &&
+      (normalizedOutcome !== "DIRECT_EXPORT" || !!row.truck_number),
   );
+  const directExportUsesTruckRows = vehicleRowsWithData.some(
+    (row) =>
+      !!row.truck_number ||
+      row.truck_loaded ||
+      !!row.truck_loaded_date ||
+      !!row.trailer_type,
+  );
+  const directExportLoaded =
+    directExportUsesTruckRows &&
+    vehicleRowsWithData.length > 0 &&
+    vehicleRowsWithData.every((row) => row.truck_loaded && !!row.truck_loaded_date);
 
   const caseAComplete =
     normalizedOutcome === "DELIVER_TO_ZAXON_WAREHOUSE" &&
@@ -129,8 +155,9 @@ export function computeImportTransferOwnershipStatuses(
     !!collection.dropoff_date;
   const caseBComplete =
     normalizedOutcome === "DIRECT_EXPORT" &&
-    collection.collected_by_export_truck &&
-    !!collection.direct_export_date;
+    (directExportUsesTruckRows
+      ? directExportLoaded
+      : collection.collected_by_export_truck && !!collection.direct_export_date);
   const collectionDone = boeDone && planReady && vehiclesValid && (caseAComplete || caseBComplete);
   const pendingCollection =
     normalizedOutcome === "DELIVER_TO_ZAXON_WAREHOUSE" && !caseAComplete;
@@ -165,6 +192,7 @@ export function computeImportTransferOwnershipStatuses(
     stockType,
     pendingCollection,
     pendingCollectionReasonMissing,
+    jobNumberMissing: !hasJobNumber,
     importedQuantity: parties.quantity,
     importedWeight: parties.total_weight,
   };

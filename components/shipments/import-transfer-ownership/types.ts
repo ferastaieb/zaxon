@@ -27,6 +27,12 @@ export type ImportTransferDocumentMeta = {
   review_note?: string | null;
 };
 
+export type ImportTransferJobIdMeta = {
+  id: number;
+  job_id: string;
+  created_by_name?: string | null;
+};
+
 export type ImportTransferShipmentMeta = {
   id: number;
   shipment_code: string;

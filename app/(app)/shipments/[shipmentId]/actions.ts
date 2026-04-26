@@ -974,6 +974,7 @@ export async function addShipmentJobIdsAction(
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
 
   const raw = String(formData.get("jobIds") ?? "").trim();
   const jobIds = raw
@@ -986,7 +987,12 @@ export async function addShipmentJobIdsAction(
         ),
       ).slice(0, 20)
     : [];
-  if (!jobIds.length) redirect(`/shipments/${shipmentId}`);
+  if (!jobIds.length) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "saved", "jobIds"));
+    }
+    redirect(`/shipments/${shipmentId}`);
+  }
 
   const existing = await listShipmentJobIds(shipmentId);
   const existingSet = new Set(existing.map((row) => row.job_id));
@@ -1024,6 +1030,9 @@ export async function addShipmentJobIdsAction(
     });
   }
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "saved", "jobIds"));
+  }
   redirect(`/shipments/${shipmentId}?saved=jobIds`);
 }
 
@@ -1034,15 +1043,24 @@ export async function removeShipmentJobIdAction(
   const user = await requireUser();
   assertCanWrite(user);
   await requireShipmentAccess(user, shipmentId);
+  const returnTo = normalizeShipmentReturnTo(shipmentId, formData.get("returnTo"));
 
   const jobIdId = Number(formData.get("jobIdId") ?? 0);
-  if (!jobIdId) redirect(`/shipments/${shipmentId}?error=invalid`);
+  if (!jobIdId) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
+    redirect(`/shipments/${shipmentId}?error=invalid`);
+  }
 
   const row = await getItem<{ job_id: string; shipment_id: number }>(
     tableName("shipment_job_ids"),
     { id: jobIdId },
   );
   if (!row || row.shipment_id !== shipmentId) {
+    if (returnTo) {
+      redirect(appendQueryParam(returnTo, "error", "invalid"));
+    }
     redirect(`/shipments/${shipmentId}?error=invalid`);
   }
 
@@ -1061,6 +1079,9 @@ export async function removeShipmentJobIdAction(
     updateLastUpdate: true,
   });
 
+  if (returnTo) {
+    redirect(appendQueryParam(returnTo, "saved", "jobIds"));
+  }
   redirect(`/shipments/${shipmentId}`);
 }
 export async function createShipmentLinkAction(

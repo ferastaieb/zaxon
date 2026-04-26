@@ -58,17 +58,21 @@ export function asGroupArray(values: AnyRecord, groupId: string): AnyRecord[] {
 
 export type ImportTransferVehicleRow = {
   index: number;
-  vehicle_type: string;
-  vehicle_size: string;
-  vehicle_count: number;
+  trailer_type: string;
+  truck_count: number;
+  truck_number: string;
+  truck_loaded: boolean;
+  truck_loaded_date: string;
 };
 
 export function parseVehicleRows(values: AnyRecord): ImportTransferVehicleRow[] {
   return asGroupArray(values, "vehicles").map((entry, index) => ({
     index,
-    vehicle_type: getString(entry.vehicle_type),
-    vehicle_size: getString(entry.vehicle_size),
-    vehicle_count: getNumber(entry.vehicle_count),
+    trailer_type: getString(entry.trailer_type || entry.vehicle_size),
+    truck_count: getNumber(entry.truck_count || entry.vehicle_count),
+    truck_number: getString(entry.truck_number),
+    truck_loaded: isTruthy(entry.truck_loaded),
+    truck_loaded_date: getString(entry.truck_loaded_date),
   }));
 }
 
@@ -102,6 +106,7 @@ export type ImportTransferDocumentsBoeData = {
   boe_prepared_by: string;
   boe_number: string;
   boe_date: string;
+  single_documents_bundle: boolean;
 };
 
 export function parseDocumentsBoe(values: AnyRecord): ImportTransferDocumentsBoeData {
@@ -109,6 +114,7 @@ export function parseDocumentsBoe(values: AnyRecord): ImportTransferDocumentsBoe
     boe_prepared_by: getString(values.boe_prepared_by),
     boe_number: getString(values.boe_number),
     boe_date: getString(values.boe_date),
+    single_documents_bundle: isTruthy(values.single_documents_bundle),
   };
 }
 

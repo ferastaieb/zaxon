@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { assertCanWrite, requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data/activities";
 import { addDocument, listDocuments } from "@/lib/data/documents";
-import { listShipmentSteps } from "@/lib/data/shipments";
+import { listShipmentJobIds, listShipmentSteps } from "@/lib/data/shipments";
 import { updateShipmentStep } from "@/lib/data/steps";
 import { stepStatusLabel } from "@/lib/domain";
 import { nowIso } from "@/lib/db";
@@ -108,6 +108,7 @@ export async function updateImportTransferStepAction(
   });
 
   const docs = await listDocuments(shipmentId);
+  const jobIds = await listShipmentJobIds(shipmentId);
   const docTypes = new Set(
     docs.filter((doc) => doc.is_received).map((doc) => String(doc.document_type)),
   );
@@ -127,6 +128,7 @@ export async function updateImportTransferStepAction(
   const computed = computeImportTransferOwnershipStatuses({
     stepsByName,
     docTypes,
+    hasJobNumber: jobIds.length > 0,
   });
 
   for (const row of steps) {

@@ -20,7 +20,10 @@ import {
   FTL_EXPORT_SERVICE_TYPE,
 } from "@/lib/ftlExport/constants";
 import { ensureFtlExportTemplate } from "@/lib/ftlExport/template";
-import { IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE } from "@/lib/importTransferOwnership/constants";
+import {
+  IMPORT_TRANSFER_OWNERSHIP_SERVICE_TYPE,
+  IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES,
+} from "@/lib/importTransferOwnership/constants";
 import { ensureImportTransferOwnershipTemplate } from "@/lib/importTransferOwnership/template";
 import { parseStepFieldValues } from "@/lib/stepFields";
 
@@ -45,6 +48,9 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
   const customers = await listParties({ type: "CUSTOMER" });
   const resolved = searchParams ? await Promise.resolve(searchParams) : {};
   const error = typeof resolved.error === "string" ? resolved.error : null;
+  const draftKey = typeof resolved.draftKey === "string" ? resolved.draftKey : undefined;
+  const createdCustomerId =
+    typeof resolved.createdCustomerId === "string" ? resolved.createdCustomerId : null;
 
   async function createShipmentAction(formData: FormData) {
     "use server";
@@ -85,6 +91,7 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
           ),
         ).slice(0, 20)
       : [];
+    const supplierName = String(formData.get("supplierName") ?? "").trim();
 
     const validServiceType =
       serviceType === SERVICE_TYPE_FCL ||
@@ -217,6 +224,26 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
       createdByUserId: user.id,
     });
 
+    if (supplierName) {
+      const steps = await listShipmentSteps(created.shipmentId);
+      const partiesStep = steps.find(
+        (step) => step.name === IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES.partiesCargo,
+      );
+      if (partiesStep) {
+        const partiesValues = parseStepFieldValues(partiesStep.field_values_json) as Record<
+          string,
+          unknown
+        >;
+        await updateShipmentStep({
+          stepId: partiesStep.id,
+          fieldValuesJson: JSON.stringify({
+            ...partiesValues,
+            supplier_company_name: supplierName,
+          }),
+        });
+      }
+    }
+
     await refreshShipmentDerivedState({
       shipmentId: created.shipmentId,
       actorUserId: user.id,
@@ -257,6 +284,8 @@ export default async function NewShipmentPage({ searchParams }: NewShipmentPageP
         action={createShipmentAction}
         canWrite={canWrite(user.role)}
         error={error}
+        draftKey={draftKey}
+        createdCustomerId={createdCustomerId}
       />
     </div>
   );

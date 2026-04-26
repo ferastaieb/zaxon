@@ -7,6 +7,7 @@ import {
   createWorkflowTemplate,
   listTemplateSteps,
   listWorkflowTemplates,
+  updateTemplateStep,
 } from "@/lib/data/workflows";
 import {
   IMPORT_TRANSFER_OWNERSHIP_STEP_NAMES,
@@ -115,6 +116,16 @@ const documentsBoeSchema: StepFieldSchema = {
       type: "file",
     },
     {
+      id: "single_documents_bundle",
+      label: "Single file contains all supplier documents",
+      type: "boolean",
+    },
+    {
+      id: "single_documents_bundle_upload",
+      label: "Combined supplier documents file",
+      type: "file",
+    },
+    {
       id: "boe_prepared_by",
       label: "BOE prepared by",
       type: "text",
@@ -168,21 +179,30 @@ const collectionOutcomeSchema: StepFieldSchema = {
       repeatable: true,
       fields: [
         {
-          id: "vehicle_type",
-          label: "Vehicle type",
+          id: "trailer_type",
+          label: "Trailer type",
           type: "text",
           required: true,
         },
         {
-          id: "vehicle_size",
-          label: "Vehicle size",
-          type: "text",
-          required: true,
-        },
-        {
-          id: "vehicle_count",
-          label: "Vehicle count",
+          id: "truck_count",
+          label: "Truck count",
           type: "number",
+        },
+        {
+          id: "truck_number",
+          label: "Truck number",
+          type: "text",
+        },
+        {
+          id: "truck_loaded",
+          label: "Truck loaded",
+          type: "boolean",
+        },
+        {
+          id: "truck_loaded_date",
+          label: "Truck loaded date",
+          type: "date",
         },
       ],
     },
@@ -289,15 +309,30 @@ export async function ensureImportTransferOwnershipTemplate(input?: {
   );
   if (existing) {
     const existingSteps = await listTemplateSteps(existing.id);
-    const existingNames = new Set(existingSteps.map((step) => step.name));
+    const existingByName = new Map(existingSteps.map((step) => [step.name, step]));
     for (const step of TEMPLATE_STEPS) {
-      if (existingNames.has(step.name)) continue;
-      await addTemplateStep({
-        templateId: existing.id,
-        name: step.name,
-        ownerRole: step.ownerRole,
-        fieldSchemaJson: JSON.stringify(step.schema),
-      });
+      const existingStep = existingByName.get(step.name);
+      if (!existingStep) {
+        await addTemplateStep({
+          templateId: existing.id,
+          name: step.name,
+          ownerRole: step.ownerRole,
+          fieldSchemaJson: JSON.stringify(step.schema),
+        });
+        continue;
+      }
+      const nextSchemaJson = JSON.stringify(step.schema);
+      if (
+        existingStep.owner_role !== step.ownerRole ||
+        existingStep.field_schema_json !== nextSchemaJson
+      ) {
+        await updateTemplateStep({
+          stepId: existingStep.id,
+          name: step.name,
+          ownerRole: step.ownerRole,
+          fieldSchemaJson: nextSchemaJson,
+        });
+      }
     }
     return existing.id;
   }
