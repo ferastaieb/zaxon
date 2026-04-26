@@ -14,9 +14,6 @@ import {
 } from "@aws-sdk/client-s3";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 
-const DEFAULT_UPLOADS_BUCKET = "logisticzaxon-uploads-250598593974-me-south-1";
-const DEFAULT_UPLOADS_REGION = "me-south-1";
-
 export function getUploadsRoot() {
   return process.env.UPLOADS_ROOT ?? path.join(process.cwd(), "data", "uploads");
 }
@@ -26,12 +23,16 @@ let cachedUploadsRegion: string | null = null;
 let cachedUploadsPrefix: string | null = null;
 let uploadsConfigLoaded = false;
 
-function getUploadsBucket() {
-  return (
-    process.env.UPLOADS_BUCKET?.trim() ||
-    cachedUploadsBucket ||
-    DEFAULT_UPLOADS_BUCKET
+function isHostedRuntime() {
+  return Boolean(
+    process.env.AWS_EXECUTION_ENV ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.AMPLIFY_APP_ID,
   );
+}
+
+function getUploadsBucket() {
+  return process.env.UPLOADS_BUCKET?.trim() || cachedUploadsBucket || "";
 }
 
 function getUploadsRegion() {
@@ -39,7 +40,7 @@ function getUploadsRegion() {
     process.env.UPLOADS_REGION ??
     cachedUploadsRegion ??
     process.env.AWS_REGION ??
-    DEFAULT_UPLOADS_REGION
+    process.env.AWS_DEFAULT_REGION
   );
 }
 
@@ -75,12 +76,13 @@ function getS3Client() {
 }
 
 async function ensureUploadsConfigLoaded() {
-  if (uploadsConfigLoaded || getUploadsBucket()) {
-    uploadsConfigLoaded = true;
+  if (uploadsConfigLoaded) {
     return;
   }
 
   uploadsConfigLoaded = true;
+  if (process.env.UPLOADS_BUCKET?.trim()) return;
+
   const prefix = getUploadsParamPrefix();
   if (!prefix) return;
 
@@ -89,7 +91,15 @@ async function ensureUploadsConfigLoaded() {
     try {
       const response = await ssm.send(new GetParameterCommand({ Name: name }));
       return response.Parameter?.Value ?? null;
-    } catch {
+    } catch (error) {
+      console.error("[storage] failed to read SSM parameter", {
+        name,
+        region: getUploadsRegion() ?? null,
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message }
+            : String(error),
+      });
       return null;
     }
   };
@@ -103,6 +113,12 @@ async function ensureUploadsConfigLoaded() {
   if (bucket) cachedUploadsBucket = bucket;
   if (region) cachedUploadsRegion = region;
   if (uploadsPrefix) cachedUploadsPrefix = uploadsPrefix;
+
+  if (!getUploadsBucket() && isHostedRuntime()) {
+    throw new Error(
+      "Uploads bucket is not configured for hosted runtime. Set UPLOADS_BUCKET/UPLOADS_REGION or ensure the SSM upload parameters are readable in the correct region.",
+    );
+  }
 }
 
 export function sanitizeFileName(original: string) {
