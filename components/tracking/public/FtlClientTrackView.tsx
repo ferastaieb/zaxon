@@ -84,6 +84,37 @@ function availabilityLabel(status: FtlClientTrackingAvailability) {
   return "Pending";
 }
 
+function checkpointRegionLabel(region: string) {
+  if (region === "uae") return "UAE";
+  if (region === "ksa") return "KSA";
+  if (region === "jordan") return "Jordan";
+  if (region === "syria") return "Syria";
+  return region.toUpperCase();
+}
+
+function checkpointStepLabel(label: string) {
+  const separator = ": ";
+  const index = label.indexOf(separator);
+  if (index < 0) return label;
+  return label.slice(index + separator.length);
+}
+
+function sequenceNodeClassName(state: FtlClientTrackingProgressState) {
+  if (state === "DONE") {
+    return "border-emerald-200 bg-emerald-100 text-emerald-700";
+  }
+  if (state === "IN_PROGRESS") {
+    return "border-sky-200 bg-sky-100 text-sky-700";
+  }
+  return "border-stone-200 bg-stone-100 text-stone-500";
+}
+
+function sequenceLineClassName(state: FtlClientTrackingProgressState) {
+  if (state === "DONE") return "bg-emerald-200";
+  if (state === "IN_PROGRESS") return "bg-sky-200";
+  return "bg-stone-200";
+}
+
 function exceptionTone(risk: string) {
   if (risk === "BLOCKED") return "red";
   if (risk === "AT_RISK") return "yellow";
@@ -119,6 +150,8 @@ export function FtlClientTrackView({
   uploadRequestedDocAction,
 }: Props) {
   const openRequests = requests.filter((request) => request.status === "OPEN");
+  const deliveryMilestone =
+    viewModel.timeline.find((milestone) => milestone.id === "cargo-received") ?? null;
 
   return (
     <div className="space-y-5">
@@ -355,6 +388,18 @@ export function FtlClientTrackView({
                         <MapPin className="h-4 w-4 text-stone-400" />
                         {row.loading_place}
                       </div>
+                      {row.source_shipments.length ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {row.source_shipments.map((shipmentCode) => (
+                            <span
+                              key={`${row.index}-${shipmentCode}`}
+                              className="inline-flex rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800"
+                            >
+                              From shipment {shipmentCode}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     <Badge tone="green">Loaded</Badge>
                   </div>
@@ -583,53 +628,75 @@ export function FtlClientTrackView({
               <Route className="h-5 w-5 text-teal-700" />
               <h3 className="text-lg font-semibold text-stone-950">Shipment Tracking</h3>
             </div>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              {viewModel.tracking_groups.map((group) => (
-                <div
-                  key={group.id}
-                  className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4"
-                >
-                  <div className="text-sm font-semibold text-stone-950">{group.label}</div>
-                  <div className="mt-3 space-y-2">
-                    {group.checkpoints.map((checkpoint) => (
+            <div className="mt-4 rounded-[1.75rem] border border-stone-200 bg-stone-50 p-4 sm:p-5">
+              <div className="space-y-4">
+                {viewModel.compact_checkpoints.map((checkpoint, index) => (
+                  <div key={checkpoint.id} className="relative pl-14">
+                    {index < viewModel.compact_checkpoints.length ? (
                       <div
-                        key={checkpoint.id}
-                        className="rounded-2xl border border-stone-200 bg-white px-3 py-3"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-stone-900">{checkpoint.label}</div>
-                          <Badge tone={progressTone(checkpoint.state)}>
-                            {progressLabel(checkpoint.state)}
-                          </Badge>
+                        className={`absolute left-[1.1rem] top-10 bottom-[-1.4rem] w-px ${sequenceLineClassName(
+                          checkpoint.state,
+                        )}`}
+                      />
+                    ) : null}
+                    <div
+                      className={`absolute left-0 top-0 flex h-9 w-9 items-center justify-center rounded-full border text-xs font-semibold ${sequenceNodeClassName(
+                        checkpoint.state,
+                      )}`}
+                    >
+                      {index + 1}
+                    </div>
+                    <div className="rounded-[1.4rem] border border-stone-200 bg-white px-4 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-600">
+                              {checkpointRegionLabel(checkpoint.region)}
+                            </span>
+                            <div className="text-sm font-semibold text-stone-950">
+                              {checkpointStepLabel(checkpoint.label)}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-stone-600">
+                            {fmtDate(checkpoint.timestamp)}
+                          </div>
+                        </div>
+                        <Badge tone={progressTone(checkpoint.state)}>
+                          {progressLabel(checkpoint.state)}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="relative pl-14">
+                  <div
+                    className={`absolute left-0 top-0 flex h-9 w-9 items-center justify-center rounded-full border text-xs font-semibold ${sequenceNodeClassName(
+                      deliveryMilestone?.state ?? "PENDING",
+                    )}`}
+                  >
+                    {viewModel.compact_checkpoints.length + 1}
+                  </div>
+                  <div className="rounded-[1.4rem] border border-stone-200 bg-white px-4 py-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-stone-600">
+                            Delivery
+                          </span>
+                          <div className="text-sm font-semibold text-stone-950">
+                            Delivered to {viewModel.final_delivery.delivered_to}
+                          </div>
                         </div>
                         <div className="mt-2 text-sm text-stone-600">
-                          {fmtDate(checkpoint.date)}
+                          {fmtDate(viewModel.final_delivery.date)}
                         </div>
                       </div>
-                    ))}
+                      <Badge tone={progressTone(deliveryMilestone?.state ?? "PENDING")}>
+                        {progressLabel(deliveryMilestone?.state ?? "PENDING")}
+                      </Badge>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={sectionClassName()}>
-            <h3 className="text-lg font-semibold text-stone-950">Final Delivery</h3>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
-                  Delivered To
-                </div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {viewModel.final_delivery.delivered_to}
-                </div>
-              </div>
-              <div className="rounded-[1.5rem] border border-stone-200 bg-stone-50 px-4 py-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500">
-                  Delivery Date
-                </div>
-                <div className="mt-2 text-sm text-stone-900">
-                  {fmtDate(viewModel.final_delivery.date)}
                 </div>
               </div>
             </div>

@@ -19,6 +19,7 @@ import {
   listCustomerVisibleDocuments,
   listCustomerVisibleExceptions,
   listCustomerVisibleSteps,
+  listTrackingConnectedShipments,
   listTrackingPortalShipments,
   shipmentBelongsToTrackingCustomer,
 } from "@/lib/data/tracking";
@@ -227,12 +228,14 @@ export default async function TrackShipmentPage({
   const selectedShipment = await getTrackingShipmentById(selectedSummary.id);
   if (!selectedShipment) notFound();
 
-  const [fullShipment, allSteps, docs, requests, exceptions] = await Promise.all([
+  const [fullShipment, allSteps, docs, requests, exceptions, connectedShipments] =
+    await Promise.all([
     getShipment(selectedSummary.id),
     listShipmentSteps(selectedSummary.id),
     listCustomerVisibleDocuments(selectedSummary.id),
     listCustomerDocumentRequests(selectedSummary.id),
     listCustomerVisibleExceptions(selectedSummary.id),
+    listTrackingConnectedShipments(selectedSummary.id),
   ]);
 
   const workflowTemplate = fullShipment?.workflow_template_id
@@ -346,6 +349,7 @@ export default async function TrackShipmentPage({
           field_values_json: step.field_values_json,
         })) as FtlClientTrackingStep[],
         docs,
+        connectedShipments,
         requests,
         exceptions,
       })}

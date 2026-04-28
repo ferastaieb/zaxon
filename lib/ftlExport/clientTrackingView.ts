@@ -158,6 +158,7 @@ export type FtlClientLoadedTruckRow = {
   total_quantity_label: string;
   total_weight_kg: number;
   cargo_description: string;
+  source_shipments: string[];
   photo: { id: number; file_name: string } | null;
 };
 
@@ -414,6 +415,13 @@ function latestDate(dates: Array<string | null>) {
   return filtered[0] ?? null;
 }
 
+function earliestDate(dates: Array<string | null>) {
+  const filtered = dates
+    .filter((value): value is string => !!value)
+    .sort((a, b) => a.localeCompare(b));
+  return filtered[0] ?? null;
+}
+
 function toAvailabilityFromState(
   state: FtlClientTrackingProgressState,
 ): FtlClientTrackingAvailability {
@@ -429,6 +437,20 @@ function checkpointStateFromRuntime(
   if (runtime.done) return "DONE";
   if (runtime.touched) return "IN_PROGRESS";
   return "PENDING";
+}
+
+function parseConnectedShipmentCodes(input: unknown[] | undefined) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const codes: string[] = [];
+  for (const entry of input) {
+    const row = toRecord(entry);
+    const code = getString(row.shipment_code) || getString(row.connected_shipment_code);
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    codes.push(code);
+  }
+  return codes;
 }
 
 function loadingPlaceLabel(row: LoadingTruckRow) {
@@ -1182,6 +1204,14 @@ export function buildFtlClientTrackingViewModel(
     ),
   ).join(" | ");
   const cargoDescription = descriptionFromImports || input.shipment.cargo_description || "N/A";
+  const sourceShipmentCodes = Array.from(
+    new Set(
+      [
+        ...importRows.map((row) => row.import_shipment_reference.trim()),
+        ...parseConnectedShipmentCodes(input.connectedShipments),
+      ].filter((value) => !!value),
+    ),
+  );
 
   const cargoLoadedDetails: FtlClientLoadedTruckRow[] = trucksOverview
     .map((truck) => {
@@ -1198,6 +1228,8 @@ export function buildFtlClientTrackingViewModel(
         total_quantity_label: rowQuantityLabel(load),
         total_weight_kg: Number(rowWeightKg(load).toFixed(2)),
         cargo_description: cargoDescription,
+        source_shipments:
+          load.loading_origin === "EXTERNAL_SUPPLIER" ? [] : sourceShipmentCodes,
         photo: loadingPhoto,
       };
     })
@@ -1256,6 +1288,25 @@ export function buildFtlClientTrackingViewModel(
       return [rowActualLoadingDate(row)];
     }),
   );
+  const cargoCollectedDate = earliestDate(
+    loadingRows.flatMap((row) => {
+      if (row.loading_origin === "MIXED") {
+        return [
+          toDateOrNull(row.mixed_supplier_loading_date),
+          toDateOrNull(row.mixed_zaxon_loading_date),
+        ];
+      }
+      return [rowActualLoadingDate(row)];
+    }),
+  );
+  const cargoCollectedState: FtlClientTrackingProgressState =
+    loadingState === "DONE"
+      ? "DONE"
+      : loadingState === "IN_PROGRESS"
+        ? "IN_PROGRESS"
+        : trucksState === "DONE" || toProgressFromStepStatus(importSelection.status) !== "PENDING"
+          ? "IN_PROGRESS"
+          : "PENDING";
   const cargoExportedRuntime = stageRuntimeById.get("sila_exit");
   const cargoReceivedStageId =
     routeId === "JAFZA_TO_KSA"
@@ -1274,8 +1325,8 @@ export function buildFtlClientTrackingViewModel(
     {
       id: "cargo-collected",
       label: "Cargo Collected",
-      state: "PENDING",
-      date: null,
+      state: cargoCollectedState,
+      date: cargoCollectedDate,
     },
     {
       id: "cargo-loaded",
